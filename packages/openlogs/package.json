@@ -15,6 +15,11 @@
     "build": "tsc --build"
   },
   "dependencies": {
+    "@nextera.one/openlogs-sdk": "^2.2.0",
+    "@nextera.one/tps-standard": "^0.8.0",
     "@openexecution/types": "workspace:*"
-  }
+  },
+  "files": [
+    "dist"
+  ]
 }

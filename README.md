@@ -78,7 +78,7 @@ The audience is professionals, not beginners:
 
 ## Install & build
 
-This is a pnpm monorepo. It is **not published to npm** — you build it from source and run the CLI directly.
+This is a pnpm monorepo. It is **not yet published to npm** — you build it from source and run the CLI directly.
 
 ```bash
 pnpm install
@@ -92,7 +92,15 @@ node packages/cli/bin/idel.js help
 node packages/cli/bin/idel.js version      # idel 1.1.0
 ```
 
-Requires Node.js >= 20. Throughout the rest of this README, `idel <…>` is shorthand for `node packages/cli/bin/idel.js <…>`.
+To put `idel` on your `PATH` and prove the build works end to end:
+
+```bash
+pnpm install:local  # pnpm build + npm link  → `idel` on PATH
+pnpm smoke          # boots idel, asserts the thesis demo is BLOCKED,
+                    # and verifies the signed OpenLogs chain
+```
+
+Requires **Node.js >= 22.3** for the signed-logging path (see [CONCERNS.md](CONCERNS.md) §4; `engines` still says `>=20`). Throughout the rest of this README, `idel <…>` is shorthand for `node packages/cli/bin/idel.js <…>`.
 
 ---
 
@@ -163,7 +171,7 @@ parse → resolve → coerce → safety (two-phase) → policy → plan → exec
 | `packages/policy` | First-match-wins rule evaluation with the CRITICAL hard floor; YAML-subset + JSON policy loading. |
 | `packages/adapters-posix` | POSIX adapter (`spawn`, `shell:false`) plus the in-process `@node` fs adapter. |
 | `packages/adapters-powershell` | Windows PowerShell adapter. |
-| `packages/openlogs` | Append-only JSONL audit writer with secret redaction. |
+| `packages/openlogs` | Signed, hash-chained audit writer (OpenLogs v2) with secret redaction. |
 | `packages/runtime` | Orchestrates the whole pipeline; handles native passthrough, approval, meta commands, and outcome assembly. |
 | `packages/cli` | The `idel` executable, flag parsing, rendering, completion, and the interactive terminal. |
 
@@ -248,14 +256,22 @@ A clean scan is not a safety guarantee — it only means none of the listed patt
 
 ## OpenLogs
 
-Every command produces exactly one JSONL record at `~/.idel/logs/openlogs.jsonl`. The file is append-only (tamper-evident by construction), and every record is redacted before it touches disk.
+Every command produces exactly one record at `~/.idel/logs/openlogs.jsonl`, written through [`@nextera.one/openlogs-sdk`](https://github.com/nextera-one/openlogs) (**OpenLogs v2**). Each record is:
 
-**Secret redaction is two-pronged:**
+- **TPS-stamped** — a [TPS Reality String](https://github.com/nextera-one/tps) encodes the event time.
+- **Hash-chained** — SHA-256-linked to its predecessor, so the log is tamper-*evident*: break a link (edit, reorder, or delete a record) and verification flags the exact index.
+- **Ed25519-signed** — signed with a machine-local key (`~/.idel/keys/openlogs.key.json`, generated on first use, `0600`), so each record proves who recorded it.
+
+The chain can be verified programmatically via `OpenLogWriter.verify()`, which returns the SDK's structured result (`integrity`, `signatures`, `trust`). The log remains append-only.
+
+**Secret redaction runs _before_ signing** (the signed payload is immutable, so secrets must never enter it), and is two-pronged:
 
 - **By key name** — values under keys like `password`, `token`, `api_key`, `secret`, `auth`, `private_key` are redacted regardless of shape.
 - **By value shape** — JWTs, `sk-…` keys, AWS access key IDs, GitHub PATs, and long opaque tokens are redacted no matter what key they sit under.
 
-Anything redacted is replaced with `***REDACTED***`. A policy block is logged as a normal audit event (`result: blocked_before_execution`), not a runtime failure.
+Anything redacted is replaced with `***REDACTED***`. A policy block is logged as a normal (signed) audit event (`result: blocked_before_execution`), not a runtime failure.
+
+> **Note:** the signed-logging path depends on an ESM fix to `@nextera.one/tps-standard` that is not yet on npm; this repo vendors it via a pnpm override. See [CONCERNS.md](CONCERNS.md) §1.
 
 ---
 

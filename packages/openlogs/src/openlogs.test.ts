@@ -34,10 +34,18 @@ function makeRecord(params: Record<string, ParamValue>, command = "noop"): OpenL
 }
 
 const tmpDirs: string[] = [];
-function freshLogPath(): string {
+function freshDir(): string {
   const dir = mkdtempSync(join(tmpdir(), "openlogs-test-"));
   tmpDirs.push(dir);
-  return join(dir, "openlogs.jsonl");
+  return dir;
+}
+/**
+ * A log path + an isolated key path under the same temp dir, so signing tests
+ * never read or write the real `~/.idel/keys/` and don't collide in parallel.
+ */
+function freshPaths(): { path: string; keyPath: string } {
+  const dir = freshDir();
+  return { path: join(dir, "openlogs.jsonl"), keyPath: join(dir, "key.json") };
 }
 
 afterEach(() => {
@@ -169,8 +177,8 @@ describe("redactString()", () => {
 
 describe("OpenLogWriter", () => {
   it("appends JSONL and read() returns parsed records in order", async () => {
-    const path = freshLogPath();
-    const writer = new OpenLogWriter({ path });
+    const { path, keyPath } = freshPaths();
+    const writer = new OpenLogWriter({ path, keyPath });
 
     await writer.append(makeRecord({ i: 1 }, "first"));
     await writer.append(makeRecord({ i: 2 }, "second"));
@@ -186,8 +194,8 @@ describe("OpenLogWriter", () => {
   });
 
   it("redacts secrets before writing to disk", async () => {
-    const path = freshLogPath();
-    const writer = new OpenLogWriter({ path });
+    const { path, keyPath } = freshPaths();
+    const writer = new OpenLogWriter({ path, keyPath });
     await writer.append(makeRecord({ password: "hunter2" }, "do --token abc123longvalueABCDEF"));
 
     const onDisk = readFileSync(path, "utf8");
@@ -197,8 +205,8 @@ describe("OpenLogWriter", () => {
   });
 
   it("read(limit) returns only the last N records", async () => {
-    const path = freshLogPath();
-    const writer = new OpenLogWriter({ path });
+    const { path, keyPath } = freshPaths();
+    const writer = new OpenLogWriter({ path, keyPath });
     for (let i = 0; i < 5; i++) {
       await writer.append(makeRecord({ i }, `cmd-${i}`));
     }
@@ -207,8 +215,8 @@ describe("OpenLogWriter", () => {
   });
 
   it("tolerates a malformed trailing line", async () => {
-    const path = freshLogPath();
-    const writer = new OpenLogWriter({ path });
+    const { path, keyPath } = freshPaths();
+    const writer = new OpenLogWriter({ path, keyPath });
     await writer.append(makeRecord({ i: 1 }, "good-1"));
     await writer.append(makeRecord({ i: 2 }, "good-2"));
 
@@ -225,8 +233,8 @@ describe("OpenLogWriter", () => {
   });
 
   it("records a policy block as a normal event (blocked_before_execution)", async () => {
-    const path = freshLogPath();
-    const writer = new OpenLogWriter({ path });
+    const { path, keyPath } = freshPaths();
+    const writer = new OpenLogWriter({ path, keyPath });
     const blocked: OpenLogRecord = {
       ...makeRecord({ target: "/" }, "remove.folder"),
       policyDecision: "block",
@@ -238,5 +246,109 @@ describe("OpenLogWriter", () => {
     const [got] = await writer.read();
     expect(got?.result).toBe("blocked_before_execution");
     expect(got?.policyDecision).toBe("block");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OpenLogWriter — signed, hash-chained accountability (OpenLogs v2)
+// ---------------------------------------------------------------------------
+
+describe("OpenLogWriter signed chain", () => {
+  it("writes signed v2 records (entry/hash/sig) one per line", async () => {
+    const { path, keyPath } = freshPaths();
+    const writer = new OpenLogWriter({ path, keyPath });
+    await writer.append(makeRecord({ i: 1 }, "first"));
+    await writer.append(makeRecord({ i: 2 }, "second"));
+
+    const lines = readFileSync(path, "utf8").trimEnd().split("\n");
+    expect(lines).toHaveLength(2);
+    const rec0 = JSON.parse(lines[0]!);
+    const rec1 = JSON.parse(lines[1]!);
+    // v2 envelope shape.
+    expect(rec0.entry?.event).toBe("first");
+    // The SDK normalizes a bare time string into a full TPS URI, filling in a
+    // placeholder location (`L:-`) since a local CLI has no coordinate.
+    expect(rec0.entry?.tps).toContain("T:greg.");
+    expect(typeof rec0.hash).toBe("string");
+    expect(rec0.sig?.alg).toBe("ed25519");
+    // The audit record itself rides inside entry.data.
+    expect(rec0.entry?.data?.command).toBe("first");
+    // Chain link: record 1 points back to record 0's hash.
+    expect(rec0.prev_hash).toBeNull();
+    expect(rec1.prev_hash).toBe(rec0.hash);
+  });
+
+  it("verify() passes for an untouched chain", async () => {
+    const { path, keyPath } = freshPaths();
+    const writer = new OpenLogWriter({ path, keyPath });
+    for (let i = 0; i < 4; i++) await writer.append(makeRecord({ i }, `cmd-${i}`));
+
+    const v = await writer.verify();
+    expect(v.records).toBe(4);
+    expect(v.ok).toBe(true);
+    expect(v.integrity.ok).toBe(true);
+    expect(v.signatures.ok).toBe(true);
+  });
+
+  it("verify() FAILS when a record's payload is tampered with", async () => {
+    const { path, keyPath } = freshPaths();
+    const writer = new OpenLogWriter({ path, keyPath });
+    await writer.append(makeRecord({ i: 1 }, "alpha"));
+    await writer.append(makeRecord({ i: 2 }, "beta"));
+    await writer.append(makeRecord({ i: 3 }, "gamma"));
+
+    // Flip the middle record's payload — the hash no longer matches the link.
+    const lines = readFileSync(path, "utf8").trimEnd().split("\n");
+    const mid = JSON.parse(lines[1]!);
+    mid.entry.data.command = "TAMPERED";
+    lines[1] = JSON.stringify(mid);
+    writeFileSync(path, lines.join("\n") + "\n");
+
+    const v = await new OpenLogWriter({ path, keyPath }).verify();
+    expect(v.ok).toBe(false);
+    expect(v.integrity.ok).toBe(false);
+  });
+
+  it("verify() FAILS when a record is removed (chain hole)", async () => {
+    const { path, keyPath } = freshPaths();
+    const writer = new OpenLogWriter({ path, keyPath });
+    await writer.append(makeRecord({ i: 1 }, "one"));
+    await writer.append(makeRecord({ i: 2 }, "two"));
+    await writer.append(makeRecord({ i: 3 }, "three"));
+
+    // Drop the middle line: record 3's prev_hash now dangles.
+    const lines = readFileSync(path, "utf8").trimEnd().split("\n");
+    writeFileSync(path, [lines[0], lines[2]].join("\n") + "\n");
+
+    const v = await new OpenLogWriter({ path, keyPath }).verify();
+    expect(v.ok).toBe(false);
+    expect(v.integrity.ok).toBe(false);
+  });
+
+  it("continues the existing chain across writer instances", async () => {
+    const { path, keyPath } = freshPaths();
+    await new OpenLogWriter({ path, keyPath }).append(makeRecord({ i: 1 }, "a"));
+    // A fresh writer (new process, same files) must link onto the prior head,
+    // not fork a new chain.
+    await new OpenLogWriter({ path, keyPath }).append(makeRecord({ i: 2 }, "b"));
+
+    const v = await new OpenLogWriter({ path, keyPath }).verify();
+    expect(v.records).toBe(2);
+    expect(v.ok).toBe(true);
+    expect(v.integrity.ok).toBe(true);
+  });
+
+  it("redacts secrets before they enter the signed payload", async () => {
+    const { path, keyPath } = freshPaths();
+    const writer = new OpenLogWriter({ path, keyPath });
+    await writer.append(makeRecord({ password: "hunter2" }, "deploy"));
+
+    // The secret must be absent from the on-disk (signed) bytes, and the chain
+    // must still verify — proving redaction happened *before* signing.
+    const onDisk = readFileSync(path, "utf8");
+    expect(onDisk).not.toContain("hunter2");
+    expect(onDisk).toContain(REDACTED);
+    const v = await writer.verify();
+    expect(v.ok).toBe(true);
   });
 });

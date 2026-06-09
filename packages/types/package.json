@@ -14,7 +14,8 @@
   "scripts": {
     "build": "tsc --build"
   },
-  "dependencies": {
-
-  }
+  "dependencies": {},
+  "files": [
+    "dist"
+  ]
 }

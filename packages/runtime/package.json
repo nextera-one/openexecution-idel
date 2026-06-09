@@ -23,5 +23,8 @@
     "@openexecution/openlogs": "workspace:*",
     "@openexecution/adapters-posix": "workspace:*",
     "@openexecution/adapters-powershell": "workspace:*"
-  }
+  },
+  "files": [
+    "dist"
+  ]
 }

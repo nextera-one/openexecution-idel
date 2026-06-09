@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  '@nextera.one/tps-standard': file:./vendor/nextera.one-tps-standard-0.8.1.tgz
+
 importers:
 
   .:
@@ -56,6 +59,12 @@ importers:
 
   packages/openlogs:
     dependencies:
+      '@nextera.one/openlogs-sdk':
+        specifier: ^2.2.0
+        version: 2.2.0
+      '@nextera.one/tps-standard':
+        specifier: file:../../vendor/nextera.one-tps-standard-0.8.1.tgz
+        version: file:vendor/nextera.one-tps-standard-0.8.1.tgz
       '@openexecution/types':
         specifier: workspace:*
         version: link:../types
@@ -255,6 +264,20 @@ packages:
 
   '@jridgewell/sourcemap-codec@1.5.5':
     resolution: {integrity: sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og==}
+
+  '@nextera.one/openlogs-sdk@2.2.0':
+    resolution: {integrity: sha512-+8xLKRcO7Xc4rsC05SuC0vVNIX8jyX03pia8o0v2gAz3FG/4nM7RRhX+BFxBTVXn0QzVme22WR5WwDAxZLEkvQ==}
+
+  '@nextera.one/tps-standard@file:vendor/nextera.one-tps-standard-0.8.1.tgz':
+    resolution: {integrity: sha512-1uSwt0Fisd/4T2WK1hPTEPecuakeuQqB8duICrM2nvrRtVMlPooyOb0JLs878XolW8JF4eS6dKA4xz7y5VIY9w==, tarball: file:vendor/nextera.one-tps-standard-0.8.1.tgz}
+    version: 0.8.1
+
+  '@noble/ed25519@3.1.0':
+    resolution: {integrity: sha512-pfcObRY3CtvwfaG9Mt5XqZdKmAQppl37tHUeuBhDUbiwJBCVY4/A4lbMvb1xKhMDx96AqAqZpMWuBX1HulhX4g==}
+
+  '@noble/hashes@2.2.0':
+    resolution: {integrity: sha512-IYqDGiTXab6FniAgnSdZwgWbomxpy9FtYvLKs7wCUs2a8RkITG+DFGO1DM9cr+E3/RgADRpFjrKVaJ1z6sjtEg==}
+    engines: {node: '>= 20.19.0'}
 
   '@rollup/rollup-android-arm-eabi@4.61.1':
     resolution: {integrity: sha512-JnBB8MdXj45cajvTuO5FmPlvFVJRQgvrz1uSEl3NwqFnReAPGwb8EanbGi4z2nRaqLzjJSv5/JmycoTKlRZxHA==}
@@ -570,6 +593,10 @@ packages:
     engines: {node: '>=14.17'}
     hasBin: true
 
+  ulid@3.0.2:
+    resolution: {integrity: sha512-yu26mwteFYzBAot7KVMqFGCVpsF6g8wXfJzQUHvu1no3+rRRSFcSV2nKeYvNPLD2J4b08jYBDhHUjeH0ygIl9w==}
+    hasBin: true
+
   undici-types@6.21.0:
     resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
 
@@ -711,6 +738,19 @@ snapshots:
     optional: true
 
   '@jridgewell/sourcemap-codec@1.5.5': {}
+
+  '@nextera.one/openlogs-sdk@2.2.0':
+    dependencies:
+      '@nextera.one/tps-standard': file:vendor/nextera.one-tps-standard-0.8.1.tgz
+      '@noble/ed25519': 3.1.0
+      '@noble/hashes': 2.2.0
+      ulid: 3.0.2
+
+  '@nextera.one/tps-standard@file:vendor/nextera.one-tps-standard-0.8.1.tgz': {}
+
+  '@noble/ed25519@3.1.0': {}
+
+  '@noble/hashes@2.2.0': {}
 
   '@rollup/rollup-android-arm-eabi@4.61.1':
     optional: true
@@ -994,6 +1034,8 @@ snapshots:
   tinyspy@3.0.2: {}
 
   typescript@5.9.3: {}
+
+  ulid@3.0.2: {}
 
   undici-types@6.21.0: {}
 

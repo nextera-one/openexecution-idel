@@ -16,5 +16,8 @@
   },
   "dependencies": {
     "@openexecution/types": "workspace:*"
-  }
+  },
+  "files": [
+    "dist"
+  ]
 }

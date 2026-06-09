@@ -9,10 +9,18 @@
     "clean": "tsc --build --clean && rimraf packages/*/dist",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --build --dry"
+    "typecheck": "tsc --build --dry",
+    "smoke": "bash scripts/smoke-test.sh",
+    "install:local": "bash scripts/install-local.sh"
   },
   "engines": {
     "node": ">=20"
+  },
+  "pnpm": {
+    "overrides": {
+      "@nextera.one/tps-standard": "file:./vendor/nextera.one-tps-standard-0.8.1.tgz"
+    },
+    "overridesComment": "TEMPORARY: pins the ESM-fixed tps-standard 0.8.1 (nextera-one/tps PR #2) until it is published to npm. The published 0.7.x/0.8.0 cannot be imported as native ESM, which breaks @nextera.one/openlogs-sdk in this ESM runtime. Remove this override once 0.8.1 is on npm and bump the openlogs dependency. See CONCERNS.md."
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
