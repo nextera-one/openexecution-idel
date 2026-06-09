@@ -117,6 +117,24 @@ override.
 
 ---
 
+## 8. Windows cross-platform bugs found by CI (FIXED)
+
+The new Windows CI leg immediately caught two pre-existing, platform-specific
+**test** bugs (production code was correct), now fixed:
+
+- `registry.test.ts` used `import.meta.url.replace("file://","")` (invalid
+  `/D:/...` path on Windows) and a hardcoded `/` separator → now uses
+  `fileURLToPath` + `path.join`.
+- `safety.test.ts` asserted `root-delete` for `name=/`, but `/` normalizes to a
+  drive root on Windows (`drive-root-delete`) → now accepts either CRITICAL
+  root-class finding.
+
+Both legs (Linux + Windows) are green. Worth a wider audit for other
+POSIX-only assumptions in tests (path separators, `~`, `file://` munging) as
+part of Phase 2.
+
+---
+
 ## Status of the larger plan (for context)
 
 Done: OpenLogs-v2 signed-chain swap (with tamper/chain-hole/cross-instance tests),
