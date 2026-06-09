@@ -1,0 +1,80 @@
+[
+  {
+    "id": "find.files",
+    "version": "1.0.0",
+    "summary": "Find files by name pattern under a path, optionally filtered by recent modification.",
+    "category": "search",
+    "riskDefault": "LOW",
+    "params": {
+      "path": { "type": "path", "default": ".", "description": "Root directory to search from." },
+      "name": { "type": "string", "required": true, "description": "Glob name pattern, e.g. *.js." },
+      "modifiedWithin": { "type": "string", "description": "Only files modified within this window, e.g. 7d." }
+    },
+    "safety": { "targetParam": "path" },
+    "adapters": {
+      "posix": {
+        "command": "find",
+        "args": [
+          { "kind": "value", "param": "path" },
+          { "kind": "literal", "value": "-name" },
+          { "kind": "value", "param": "name" }
+        ],
+        "semanticNotes": "Emitted as `find <path> -name <name>`. `modifiedWithin` is NOT rendered to argv here: find expects `-mtime -7` (days) and the value (e.g. \"7d\") needs unit parsing the structured arg form can't express. The @node search adapter, or a call-site translation to -mtime, handles modifiedWithin; left out of posix argv on purpose rather than emitting a wrong flag."
+      },
+      "powershell": {
+        "command": "Get-ChildItem",
+        "args": [
+          { "kind": "option", "flag": "-Path", "param": "path" },
+          { "kind": "option", "flag": "-Filter", "param": "name" },
+          { "kind": "literal", "value": "-Recurse" }
+        ],
+        "semanticNotes": "DIVERGES: -Filter uses Windows wildcard semantics (different from POSIX glob edge cases) and modifiedWithin requires a downstream Where-Object on LastWriteTime, which the structured arg form can't express. Recursive by default here to match `find`'s descent."
+      },
+      "node": {
+        "command": "@node",
+        "args": [
+          { "kind": "value", "param": "path" },
+          { "kind": "value", "param": "name" }
+        ],
+        "semanticNotes": "The @node search adapter is the only place modifiedWithin (e.g. 7d/24h) is parsed and applied uniformly across platforms."
+      }
+    },
+    "examples": ["find.files path=src name=*.ts", "find.files path=. name=*.log modifiedWithin=7d"],
+    "tests": [{ "input": "find.files path=src name=*.ts", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "find.text",
+    "version": "1.0.0",
+    "summary": "Search file contents for a text pattern, recursively by default.",
+    "category": "search",
+    "riskDefault": "LOW",
+    "params": {
+      "text": { "type": "string", "required": true, "description": "Pattern to search for." },
+      "path": { "type": "path", "default": ".", "description": "File or directory to search in." },
+      "recursive": { "type": "boolean", "default": true, "description": "Descend into subdirectories." }
+    },
+    "safety": { "targetParam": "path" },
+    "adapters": {
+      "posix": {
+        "command": "grep",
+        "args": [
+          { "kind": "flag", "flag": "-r", "when": "recursive" },
+          { "kind": "literal", "value": "-e" },
+          { "kind": "value", "param": "text" },
+          { "kind": "value", "param": "path" }
+        ],
+        "semanticNotes": "`-e <text>` passes the pattern safely even when it starts with a dash. grep uses POSIX basic regex by default; treat `text` as a regex, not a literal."
+      },
+      "powershell": {
+        "command": "Select-String",
+        "args": [
+          { "kind": "option", "flag": "-Pattern", "param": "text" },
+          { "kind": "option", "flag": "-Path", "param": "path" }
+        ],
+        "semanticNotes": "DIVERGES: Select-String uses .NET regex (not POSIX BRE) and is recursive only when -Path is a wildcard or with Get-ChildItem piping; the `recursive` flag has no direct -Recurse equivalent here. Regex dialect and recursion both differ from grep."
+      }
+    },
+    "examples": ["find.text text=TODO path=src", "find.text text=\"function \" path=. recursive=true"],
+    "tests": [{ "input": "find.text text=TODO path=src", "expectRisk": "LOW" }]
+  }
+]

@@ -1,0 +1,316 @@
+# OpenExecution Runtime & IDEL Terminal
+
+**Not prettier Bash — a policy-aware execution runtime that turns human or AI intent into safe, logged, cross-platform execution.**
+
+IDEL is an intent language (`verb.scope param=value`). The OpenExecution Runtime parses it, resolves it through a versioned command registry, classifies its risk, enforces policy, plans a platform-specific execution, runs it through an OS adapter, and records every decision to an append-only audit log. The CLI is `idel`.
+
+The bet of V1 is narrow and defensible: **prove that a runtime can prevent dangerous execution mistakes without slowing developers down.** Readability is a side benefit, not the pitch.
+
+---
+
+## Table of Contents
+
+- [The killer demo](#the-killer-demo)
+- [Why this exists](#why-this-exists)
+- [Install & build](#install--build)
+- [Quick start](#quick-start)
+- [Architecture](#architecture)
+- [Two-phase safety](#two-phase-safety)
+- [Two precedence systems, pointing opposite ways](#two-precedence-systems-pointing-opposite-ways)
+- [Risk levels & policy actions](#risk-levels--policy-actions)
+- [Native passthrough](#native-passthrough)
+- [OpenLogs](#openlogs)
+- [CLI flags](#cli-flags)
+- [Exit codes](#exit-codes)
+- [Testing](#testing)
+- [V1 scope vs. V2 deferred](#v1-scope-vs-v2-deferred)
+- [Further reading](#further-reading)
+
+---
+
+## The killer demo
+
+```text
+$ idel remove.folder name=/ recursive=true force=true
+
+Command: remove.folder
+Risk: CRITICAL
+  - [CRITICAL] root-delete: Destructive target resolves to the filesystem root (/).
+  - [HIGH] recursive-force: Destructive op uses recursive + force together on /.
+Decision: BLOCK [rule #0]
+Reason: Matched rule 0 (action: block).
+BLOCKED. No files were changed.
+Log: ~/.idel/logs/openlogs.jsonl
+```
+
+Process exit code: `4` (blocked). No filesystem traversal happened — the runtime short-circuits a CRITICAL classification and refuses to even walk `/` to estimate a blast radius for a command it is about to block. The block is written to OpenLogs as a normal audit event (`result: blocked_before_execution`), not as an error.
+
+The `--yes` flag does **not** clear this. The CRITICAL floor is enforced by the policy engine itself, so neither `--yes` nor a lax custom policy can downgrade it.
+
+The same thing happens for native passthrough:
+
+```text
+$ idel ! "rm -rf /"
+
+Command: rm -rf /
+Risk: CRITICAL
+  - [CRITICAL] native-rm-rf-root: native `rm` with recursive+force flags
+  - [CRITICAL] native-rm-rf-root-target: native `rm` targeting root or home directory
+Decision: BLOCK [rule #0]
+Reason: Matched rule 0 (action: block).
+BLOCKED. No files were changed.
+```
+
+---
+
+## Why this exists
+
+Traditional shells hide risk in flags and symbols. `rm -rf /`, `chmod -R 777 /`, and `dd if=x of=/dev/sda` are one typo away from catastrophe, and nothing about them is reviewable, audited, or policy-gated. IDEL exposes risk **at the call site** and lets the runtime decide, before anything touches disk.
+
+The audience is professionals, not beginners:
+
+- **Safety** — destructive intent must be explicit (`recursive=true force=true`), and catastrophic targets (root, home, drive roots, raw devices, recursive `777` on broad trees) are blocked by default.
+- **Auditability** — every command, risk decision, adapter, exit code, and duration is appended to a local JSONL audit trail with secret redaction.
+- **Policy** — allow / warn / require dry-run / require approval / block, matched on risk, command, params, source, and environment. Built for CI and team enforcement, not just an interactive prompt.
+- **Portability** — execution is adapter-based (POSIX, PowerShell, in-process Node), not "compile to Bash." Where platforms genuinely diverge, the registry says so honestly instead of faking parity.
+
+---
+
+## Install & build
+
+This is a pnpm monorepo. It is **not published to npm** — you build it from source and run the CLI directly.
+
+```bash
+pnpm install
+pnpm build          # tsc --build across all packages
+```
+
+Run the CLI:
+
+```bash
+node packages/cli/bin/idel.js help
+node packages/cli/bin/idel.js version      # idel 1.1.0
+```
+
+Requires Node.js >= 20. Throughout the rest of this README, `idel <…>` is shorthand for `node packages/cli/bin/idel.js <…>`.
+
+---
+
+## Quick start
+
+```bash
+# Create a file (LOW risk, runs immediately)
+idel create.file name=readme.md
+
+# Plan a recursive delete without touching anything; see the affected-path estimate
+idel remove.folder name=dist recursive=true --dry-run
+
+# Native passthrough — risk-scanned and logged, never an unlogged escape hatch
+idel ! "tar -xvzf backup.tar.gz"
+
+# Inspect how a command resolves and what its adapters do on each platform
+idel registry.explain command=remove.folder
+
+# Review the audit trail
+idel logs.list
+```
+
+A dry-run of a real directory shows the plan and the lower-bound blast-radius estimate:
+
+```text
+$ idel remove.folder name=dist recursive=true --dry-run
+
+Command: remove.folder
+Risk: HIGH
+  - [HIGH] recursive-delete: Recursive deletion of a directory (/repo/dist).
+  affected paths (estimate): 132
+Decision: REQUIRE_DRY_RUN [rule #1]
+Reason: Matched rule 1 (action: require_dry_run).
+Dry run. No files were changed.
+[dry-run] would execute: rm -r dist (cwd=/repo)
+Log: ~/.idel/logs/openlogs.jsonl
+```
+
+Other useful commands: `idel registry.list` (29 core commands), `idel policy.check`, `idel terminal` (interactive), `idel completion <partial>`.
+
+---
+
+## Architecture
+
+The runtime is a single linear pipeline. Each command flows through it once:
+
+```text
+parse → resolve → coerce → safety (two-phase) → policy → plan → execute → OpenLogs
+```
+
+1. **parse** — turn `verb.scope param=value` into a typed AST (booleans become real booleans; `! cmd` becomes a native AST).
+2. **resolve** — find the command definition in the registry (`custom > official > core`).
+3. **coerce** — apply the schema: type-check params, fill defaults, reject unknowns (with the narrow `extraArgs` exception).
+4. **safety** — two passes: an AST/string pass and a resolved-real-path pass. Effective risk is the **max** of the two.
+5. **policy** — map risk + match criteria to an action: allow / warn / require_dry_run / approval_required / block.
+6. **plan** — pick the first available adapter and build a real `argv` from the declarative spec.
+7. **execute** — run the plan (or simulate it for dry-run / block).
+8. **OpenLogs** — append one redacted JSONL record describing everything that happened.
+
+### Packages
+
+| Package | Responsibility |
+| --- | --- |
+| `packages/parser` | Tokenize and parse IDEL into a typed `CommandAst` / `NativeCommandAst`. |
+| `packages/types` | The shared contract every package depends on — the source of truth for all types. |
+| `packages/registry` | Load, validate (fail-closed), and resolve command defs across the three layers; schema-driven param coercion. |
+| `packages/safety` | Deterministic risk classification — the two-phase engine, native scanner, and non-overridable floors. |
+| `packages/policy` | First-match-wins rule evaluation with the CRITICAL hard floor; YAML-subset + JSON policy loading. |
+| `packages/adapters-posix` | POSIX adapter (`spawn`, `shell:false`) plus the in-process `@node` fs adapter. |
+| `packages/adapters-powershell` | Windows PowerShell adapter. |
+| `packages/openlogs` | Append-only JSONL audit writer with secret redaction. |
+| `packages/runtime` | Orchestrates the whole pipeline; handles native passthrough, approval, meta commands, and outcome assembly. |
+| `packages/cli` | The `idel` executable, flag parsing, rendering, completion, and the interactive terminal. |
+
+The core command definitions live in `registries/core/*.json` (filesystem, permissions, archive, find, path/env, meta).
+
+---
+
+## Two-phase safety
+
+Safety runs **twice**, and this is the load-bearing design decision.
+
+- **AST phase** (`assessAst`) — cheap, string-level. Normalizes the target path (expand `~`, resolve, collapse `..`) *without touching the filesystem* and applies the deterministic rules.
+- **Resolved phase** (`assessResolved`) — runs immediately before execution, against live filesystem state. It does the real `fs.realpath`, follows symlinks, and (for destructive ops) estimates the blast radius with a capped directory walk.
+
+The effective risk is `MAX(ast, resolved)`. This is what catches the case the command string hides:
+
+```text
+idel remove.folder name=dist        # looks like deleting a local folder…
+                                    # …but if dist is a symlink to /, the
+                                    # resolved phase classifies it as CRITICAL.
+```
+
+**CRITICAL short-circuits.** If the AST phase already returns CRITICAL, the resolved phase is skipped entirely. CRITICAL is terminal (nothing is higher, and the resolved pass can only escalate), so there is no reason to walk `/` just to count files for a command that is about to be blocked. The block decision must never depend on traversing the very target it refuses to touch.
+
+There is an acknowledged TOCTOU window between the resolved assessment and execution; the runtime takes the higher of the two phases but cannot defend against a path swapped for a symlink-to-root *after* the check. See [docs/safety-rules.md](docs/safety-rules.md) for the full model, the finding codes, and the non-overridable floor list.
+
+---
+
+## Two precedence systems, pointing opposite ways
+
+This is the subtlety worth internalizing:
+
+- **Registry content resolves `custom > official > core`.** A team's custom definition shadows the official one, which shadows the bundled core one. Overrides are visible via `registry.explain`.
+- **Core safety floors resolve `core > everything`.** They are non-overridable. A custom registry, a lax policy file, and `--yes` are all powerless against them: a CRITICAL classification cannot be cleared.
+
+The policy engine is where this is enforced. If a rule matches a CRITICAL command with `allow`, `warn`, or `require_dry_run`, the engine **rewrites the action to `block`** and records why. The only sanctioned escape is an explicit `approval_required` rule — a deliberate, logged team exception — never a silent downgrade.
+
+---
+
+## Risk levels & policy actions
+
+| Risk | Examples | Default action |
+| --- | --- | --- |
+| **LOW** | `read.file`, `list.folder`, `path.current` | allow |
+| **MEDIUM** | `move.file`, `archive.extract` into an existing folder | allow |
+| **HIGH** | `remove.folder recursive=true`, recursive `permission.folder.set` | require_dry_run |
+| **CRITICAL** | root/home delete, raw-device write, recursive `777` on a broad tree | block |
+
+Policy actions: `allow`, `warn`, `require_dry_run`, `approval_required`, `block`.
+
+The **default policy** (used when no `--policy` file is given) is:
+
+```text
+1. risk == CRITICAL   -> block
+2. risk == HIGH       -> require_dry_run
+3. source == native   -> warn
+4. (everything else)   -> allow
+```
+
+Rules are **first-match-wins** — ordering in the file is how you express priority, not "most specific wins."
+
+---
+
+## Native passthrough
+
+Native commands keep developers productive without becoming an unlogged hole. Use `! cmd` or `native.run`:
+
+```bash
+idel ! "tar -xvzf backup.tar.gz"
+idel native.run command="find . -name '*.js' -mtime -7"
+```
+
+Native passthrough is:
+
+- **Risk-scanned** by a deterministic pattern scanner (no AI) for known catastrophe shapes — `rm -rf /`, `dd of=/dev/sd*`, `mkfs`, recursive `chmod 777` on root, fork bombs, `curl | sh`, Windows drive-root deletes.
+- **Logged** as `source=native` with the exact command line (after secret redaction).
+- **Disableable** with `--no-native` for CI and production, where the passthrough is blocked outright.
+
+A clean scan is not a safety guarantee — it only means none of the listed patterns matched.
+
+---
+
+## OpenLogs
+
+Every command produces exactly one JSONL record at `~/.idel/logs/openlogs.jsonl`. The file is append-only (tamper-evident by construction), and every record is redacted before it touches disk.
+
+**Secret redaction is two-pronged:**
+
+- **By key name** — values under keys like `password`, `token`, `api_key`, `secret`, `auth`, `private_key` are redacted regardless of shape.
+- **By value shape** — JWTs, `sk-…` keys, AWS access key IDs, GitHub PATs, and long opaque tokens are redacted no matter what key they sit under.
+
+Anything redacted is replaced with `***REDACTED***`. A policy block is logged as a normal audit event (`result: blocked_before_execution`), not a runtime failure.
+
+---
+
+## CLI flags
+
+| Flag | Effect |
+| --- | --- |
+| `--dry-run` | Plan and classify, but never touch the filesystem. |
+| `--ci` | Non-interactive; approval-required commands fail closed. |
+| `--no-native` | Disable native passthrough (blocks `! cmd` / `native.run`). |
+| `--yes` | Auto-approve approval-required prompts — **cannot clear CRITICAL.** |
+| `--json` | Machine-readable output (risk, findings, decision, result). |
+| `--policy <file>` | Load a policy file (`.yml` or `.json`). |
+| `--env <name>` | Logical environment for policy matching (e.g. `production`). |
+
+---
+
+## Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | success or dry_run |
+| `1` | failed |
+| `3` | approval_required |
+| `4` | blocked_before_execution |
+
+These let CI fail closed: a blocked or approval-required command never returns `0`.
+
+---
+
+## Testing
+
+```bash
+pnpm test           # vitest run — 178 tests across 8 packages
+pnpm typecheck      # tsc --build --dry
+```
+
+Coverage spans the parser (quoting/booleans/paths), registry schema validation, the safety engine (root/home/device/symlink/empty-target/glob cases), policy evaluation (all five actions plus the CRITICAL floor), POSIX and PowerShell plan snapshots, OpenLogs redaction, and end-to-end runtime flows. Destructive tests run only in temp directories.
+
+---
+
+## V1 scope vs. V2 deferred
+
+**Built in V1:** IDEL parser; core registry schema + ~29 commands (filesystem, permissions, archive, find/search, path/env, native, meta); two-phase safety engine; policy engine; native passthrough with a deterministic scanner; OpenLogs with redaction; POSIX, PowerShell, and Node adapters; registry-driven autocomplete; CLI and interactive terminal.
+
+**Explicitly deferred to V2 (not built):**
+
+- **AI translation** (`native.convert`) and **CLI learning** (`native.learn`) — draft-only, behind review/tests/signing.
+- Full **Git / Docker / Kubernetes** registries (many of those commands are already readable).
+- A **registry marketplace** (needs signing, trust, review, versioning, reputation).
+- **Remote / cloud execution** (comes after local safety and logs are proven).
+
+---
+
+## Further reading
+
+- [docs/safety-rules.md](docs/safety-rules.md) — the two-phase safety engine, every finding code, the non-overridable floors, and the native scanner patterns.
+- [docs/registry-schema.md](docs/registry-schema.md) — the `CommandDef` shape, the structured `AdapterArgSpec` union, the three layers, the `semanticNotes` honesty principle, and how to add a custom command.

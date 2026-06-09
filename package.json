@@ -1,0 +1,24 @@
+{
+  "name": "openexecution-idel",
+  "version": "1.1.0",
+  "private": true,
+  "description": "OpenExecution Runtime + IDEL Terminal: a policy-aware, audited, cross-platform execution runtime",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --build",
+    "clean": "tsc --build --clean && rimraf packages/*/dist",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --build --dry"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "packageManager": "pnpm@10.0.0"
+}

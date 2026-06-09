@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist"
+  },
+  "include": ["src/**/*"],
+  "exclude": ["src/**/*.test.ts"],
+  "references": [
+    { "path": "../types" },
+    { "path": "../parser" },
+    { "path": "../registry" },
+    { "path": "../safety" },
+    { "path": "../policy" },
+    { "path": "../openlogs" },
+    { "path": "../adapters-posix" },
+    { "path": "../adapters-powershell" }
+  ]
+}

@@ -1,0 +1,42 @@
+# Example team/CI policy (spec §19, §27).
+#
+# Rules are evaluated FIRST-MATCH-WINS (order = author intent). A rule matches
+# when every field it specifies matches the command. The CRITICAL safety floor
+# is non-overridable: a plain allow/warn on a CRITICAL command is rewritten to
+# block — only an explicit `approval` rule (with approvers) can gate it.
+#
+# Action names accepted in YAML: block, warn, require_dry_run, approval,
+# scan_then_warn, allow. (`approval` normalizes to approval_required and
+# `scan_then_warn` to warn on load.)
+#
+# Use with:  idel --ci --policy ./examples/policies/team.policy.yml <command>
+
+rules:
+  # 1. Anything CRITICAL is blocked outright — defense in depth on top of the
+  #    built-in floor.
+  - match:
+      risk: CRITICAL
+    action: block
+
+  # 2. Recursive folder deletion in production needs a human in the loop.
+  - match:
+      command: remove.folder
+      params:
+        recursive: true
+      environment: production
+    action: approval
+    approvers: ["team-lead", "platform-admin"]
+
+  # 3. Any remaining HIGH-risk command must be dry-run first.
+  - match:
+      risk: HIGH
+    action: require_dry_run
+
+  # 4. Native passthrough is allowed but always surfaced + logged.
+  - match:
+      source: native
+    action: scan_then_warn
+
+  # 5. Everything else is allowed (still classified and logged).
+  - match: {}
+    action: allow

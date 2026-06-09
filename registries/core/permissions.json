@@ -1,0 +1,134 @@
+[
+  {
+    "id": "permission.file.set",
+    "version": "1.0.0",
+    "summary": "Set the permission mode of a file (POSIX chmod).",
+    "category": "permissions",
+    "riskDefault": "HIGH",
+    "params": {
+      "path": { "type": "path", "required": true, "description": "File whose mode to set." },
+      "mode": { "type": "mode", "required": true, "description": "Octal mode, e.g. 644 or 0600." }
+    },
+    "safety": { "targetParam": "path" },
+    "adapters": {
+      "posix": {
+        "command": "chmod",
+        "args": [
+          { "kind": "value", "param": "mode" },
+          { "kind": "value", "param": "path" }
+        ]
+      },
+      "powershell": {
+        "command": "icacls",
+        "args": [{ "kind": "value", "param": "path" }],
+        "semanticNotes": "DIVERGES: Windows ACLs are not POSIX modes. icacls cannot consume an octal `mode`; a faithful translation (owner/group/other rwx -> ACL entries) is non-trivial and lossy. This adapter is best-effort and the octal `mode` is intentionally NOT mapped here — translate at the call site or treat as unsupported on PowerShell."
+      }
+    },
+    "examples": ["permission.file.set path=run.sh mode=755", "permission.file.set path=secret.key mode=600"],
+    "tests": [{ "input": "permission.file.set path=run.sh mode=755", "expectRisk": "HIGH" }]
+  },
+  {
+    "id": "permission.folder.set",
+    "version": "1.0.0",
+    "summary": "Set the permission mode of a directory, optionally recursively (POSIX chmod).",
+    "category": "permissions",
+    "riskDefault": "HIGH",
+    "params": {
+      "path": { "type": "path", "required": true, "description": "Directory whose mode to set." },
+      "mode": { "type": "mode", "required": true, "description": "Octal mode, e.g. 755." },
+      "recursive": { "type": "boolean", "default": false, "description": "Apply recursively to all contents." }
+    },
+    "safety": { "targetParam": "path", "requiresAffectedPathEstimate": true },
+    "adapters": {
+      "posix": {
+        "command": "chmod",
+        "args": [
+          { "kind": "flag", "flag": "-R", "when": "recursive" },
+          { "kind": "value", "param": "mode" },
+          { "kind": "value", "param": "path" }
+        ],
+        "semanticNotes": "Recursive chmod 777 is the classic foot-gun (it makes every file world-writable AND every regular file executable). This is why riskDefault is HIGH rather than MEDIUM."
+      },
+      "powershell": {
+        "command": "icacls",
+        "args": [
+          { "kind": "value", "param": "path" },
+          { "kind": "flag", "flag": "/T", "when": "recursive" }
+        ],
+        "semanticNotes": "DIVERGES: same caveat as permission.file.set — Windows ACLs are not octal modes. /T applies recursively, but the `mode` is not (and cannot faithfully be) mapped to an icacls grant string here. Best-effort only."
+      }
+    },
+    "examples": ["permission.folder.set path=public mode=755 recursive=true"],
+    "tests": [
+      { "input": "permission.folder.set path=public mode=755 recursive=true", "expectRisk": "HIGH" },
+      { "input": "permission.folder.set path=/ mode=777 recursive=true", "expectPolicy": "block" }
+    ]
+  },
+  {
+    "id": "owner.file.set",
+    "version": "1.0.0",
+    "summary": "Change the owner (and optionally group) of a file (POSIX chown).",
+    "category": "permissions",
+    "riskDefault": "HIGH",
+    "params": {
+      "path": { "type": "path", "required": true, "description": "File whose owner to set." },
+      "owner": { "type": "string", "required": true, "description": "Owner spec, e.g. user or user:group." }
+    },
+    "safety": { "targetParam": "path" },
+    "adapters": {
+      "posix": {
+        "command": "chown",
+        "args": [
+          { "kind": "value", "param": "owner" },
+          { "kind": "value", "param": "path" }
+        ]
+      },
+      "powershell": {
+        "command": "icacls",
+        "args": [
+          { "kind": "value", "param": "path" },
+          { "kind": "literal", "value": "/setowner" },
+          { "kind": "value", "param": "owner" }
+        ],
+        "semanticNotes": "DIVERGES: icacls /setowner takes only an owner principal (no group), and changing ownership often requires SeRestorePrivilege/admin. The `user:group` POSIX form is not supported — pass only a principal on Windows."
+      }
+    },
+    "examples": ["owner.file.set path=app.log owner=root", "owner.file.set path=data.db owner=app:app"],
+    "tests": [{ "input": "owner.file.set path=app.log owner=root", "expectRisk": "HIGH" }]
+  },
+  {
+    "id": "owner.folder.set",
+    "version": "1.0.0",
+    "summary": "Change the owner of a directory, optionally recursively (POSIX chown).",
+    "category": "permissions",
+    "riskDefault": "HIGH",
+    "params": {
+      "path": { "type": "path", "required": true, "description": "Directory whose owner to set." },
+      "owner": { "type": "string", "required": true, "description": "Owner spec, e.g. user or user:group." },
+      "recursive": { "type": "boolean", "default": false, "description": "Apply recursively to all contents." }
+    },
+    "safety": { "targetParam": "path", "requiresAffectedPathEstimate": true },
+    "adapters": {
+      "posix": {
+        "command": "chown",
+        "args": [
+          { "kind": "flag", "flag": "-R", "when": "recursive" },
+          { "kind": "value", "param": "owner" },
+          { "kind": "value", "param": "path" }
+        ]
+      },
+      "powershell": {
+        "command": "icacls",
+        "args": [
+          { "kind": "value", "param": "path" },
+          { "kind": "literal", "value": "/setowner" },
+          { "kind": "value", "param": "owner" },
+          { "kind": "flag", "flag": "/T", "when": "recursive" }
+        ],
+        "semanticNotes": "DIVERGES: same ownership caveats as owner.file.set; /T applies recursively. user:group form unsupported on Windows."
+      }
+    },
+    "examples": ["owner.folder.set path=/srv/app owner=app:app recursive=true"],
+    "tests": [{ "input": "owner.folder.set path=/srv/app owner=app recursive=true", "expectRisk": "HIGH" }]
+  }
+]

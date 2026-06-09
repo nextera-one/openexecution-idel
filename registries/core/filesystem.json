@@ -1,0 +1,357 @@
+[
+  {
+    "id": "create.file",
+    "version": "1.0.0",
+    "summary": "Create an empty file (no-op if it already exists, POSIX touch semantics).",
+    "category": "filesystem",
+    "riskDefault": "LOW",
+    "params": {
+      "name": { "type": "path", "required": true, "description": "Path of the file to create." }
+    },
+    "safety": { "targetParam": "name" },
+    "adapters": {
+      "posix": {
+        "command": "touch",
+        "args": [{ "kind": "value", "param": "name" }],
+        "semanticNotes": "touch updates mtime if the file exists; it does not truncate."
+      },
+      "powershell": {
+        "command": "New-Item",
+        "args": [
+          { "kind": "literal", "value": "-ItemType" },
+          { "kind": "literal", "value": "File" },
+          { "kind": "literal", "value": "-Path" },
+          { "kind": "value", "param": "name" }
+        ],
+        "semanticNotes": "New-Item errors if the file exists unless -Force is added; this differs from touch's no-op-on-exists. Use write.file/append.file for content."
+      }
+    },
+    "examples": ["create.file name=readme.md", "create.file name=src/index.ts"],
+    "tests": [{ "input": "create.file name=readme.md", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "create.folder",
+    "version": "1.0.0",
+    "summary": "Create a directory, optionally creating missing parents.",
+    "category": "filesystem",
+    "riskDefault": "LOW",
+    "params": {
+      "name": { "type": "path", "required": true, "description": "Directory path to create." },
+      "parents": { "type": "boolean", "default": false, "description": "Create missing parent directories." }
+    },
+    "safety": { "targetParam": "name" },
+    "adapters": {
+      "posix": {
+        "command": "mkdir",
+        "args": [
+          { "kind": "flag", "flag": "-p", "when": "parents" },
+          { "kind": "value", "param": "name" }
+        ]
+      },
+      "powershell": {
+        "command": "New-Item",
+        "args": [
+          { "kind": "literal", "value": "-ItemType" },
+          { "kind": "literal", "value": "Directory" },
+          { "kind": "literal", "value": "-Path" },
+          { "kind": "value", "param": "name" }
+        ],
+        "semanticNotes": "New-Item -ItemType Directory creates intermediate directories by default, so the `parents` flag is implicit on PowerShell (no -p equivalent emitted)."
+      }
+    },
+    "examples": ["create.folder name=dist", "create.folder name=a/b/c parents=true"],
+    "tests": [{ "input": "create.folder name=dist parents=true", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "read.file",
+    "version": "1.0.0",
+    "summary": "Read and print the contents of a file.",
+    "category": "filesystem",
+    "riskDefault": "LOW",
+    "params": {
+      "name": { "type": "path", "required": true, "description": "File to read." }
+    },
+    "safety": { "targetParam": "name" },
+    "adapters": {
+      "posix": {
+        "command": "cat",
+        "args": [{ "kind": "value", "param": "name" }]
+      },
+      "powershell": {
+        "command": "Get-Content",
+        "args": [
+          { "kind": "literal", "value": "-Path" },
+          { "kind": "value", "param": "name" }
+        ],
+        "semanticNotes": "Get-Content streams lines; cat is byte-faithful. For binary-safe reads prefer the @node fs adapter."
+      },
+      "node": {
+        "command": "@node",
+        "args": [{ "kind": "value", "param": "name" }],
+        "semanticNotes": "In-process fs.readFile; byte-faithful and platform-neutral."
+      }
+    },
+    "examples": ["read.file name=package.json"],
+    "tests": [{ "input": "read.file name=README.md", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "write.file",
+    "version": "1.0.0",
+    "summary": "Write content to a file, replacing any existing content.",
+    "category": "filesystem",
+    "riskDefault": "MEDIUM",
+    "params": {
+      "name": { "type": "path", "required": true, "description": "File to write." },
+      "content": { "type": "string", "default": "", "description": "Content to write." }
+    },
+    "safety": { "destructive": true, "targetParam": "name" },
+    "adapters": {
+      "node": {
+        "command": "@node",
+        "args": [
+          { "kind": "value", "param": "name" },
+          { "kind": "value", "param": "content" }
+        ],
+        "semanticNotes": "Writing via argv is awkward in every shell (stdin/redirection, quoting, encoding). This is handled in-process by the @node fs adapter, which writes `content` to `name` with a single fs.writeFile. There is no faithful posix/powershell argv form, so none is provided."
+      }
+    },
+    "examples": ["write.file name=hello.txt content=\"hello world\""],
+    "tests": [{ "input": "write.file name=hello.txt content=hi", "expectRisk": "MEDIUM" }]
+  },
+  {
+    "id": "append.file",
+    "version": "1.0.0",
+    "summary": "Append content to the end of a file, creating it if missing.",
+    "category": "filesystem",
+    "riskDefault": "LOW",
+    "params": {
+      "name": { "type": "path", "required": true, "description": "File to append to." },
+      "content": { "type": "string", "default": "", "description": "Content to append." }
+    },
+    "safety": { "targetParam": "name" },
+    "adapters": {
+      "node": {
+        "command": "@node",
+        "args": [
+          { "kind": "value", "param": "name" },
+          { "kind": "value", "param": "content" }
+        ],
+        "semanticNotes": "Append via argv requires shell `>>` redirection which the runtime never shells out to. Handled in-process by the @node fs adapter (fs.appendFile). No faithful posix/powershell argv form."
+      }
+    },
+    "examples": ["append.file name=log.txt content=\"line\\n\""],
+    "tests": [{ "input": "append.file name=log.txt content=line", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "list.folder",
+    "version": "1.0.0",
+    "summary": "List directory contents.",
+    "category": "filesystem",
+    "riskDefault": "LOW",
+    "params": {
+      "path": { "type": "path", "default": ".", "description": "Directory to list." },
+      "all": { "type": "boolean", "default": false, "description": "Include hidden entries and long detail." }
+    },
+    "safety": { "targetParam": "path" },
+    "adapters": {
+      "posix": {
+        "command": "ls",
+        "args": [
+          { "kind": "flag", "flag": "-la", "when": "all" },
+          { "kind": "value", "param": "path" }
+        ]
+      },
+      "powershell": {
+        "command": "Get-ChildItem",
+        "args": [
+          { "kind": "literal", "value": "-Path" },
+          { "kind": "value", "param": "path" },
+          { "kind": "flag", "flag": "-Force", "when": "all" }
+        ],
+        "semanticNotes": "ls -la also emits long-format columns; Get-ChildItem -Force only un-hides entries (default view is already detailed). Listing detail differs, hidden-entry behavior matches."
+      }
+    },
+    "examples": ["list.folder path=src", "list.folder path=. all=true"],
+    "tests": [{ "input": "list.folder path=.", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "copy.file",
+    "version": "1.0.0",
+    "summary": "Copy a file or directory to a new location.",
+    "category": "filesystem",
+    "riskDefault": "MEDIUM",
+    "params": {
+      "from": { "type": "path", "required": true, "description": "Source path." },
+      "to": { "type": "path", "required": true, "description": "Destination path." },
+      "recursive": { "type": "boolean", "default": false, "description": "Copy directories recursively." }
+    },
+    "safety": { "destructive": true, "targetParam": "to", "requiresAffectedPathEstimate": false },
+    "adapters": {
+      "posix": {
+        "command": "cp",
+        "args": [
+          { "kind": "flag", "flag": "-r", "when": "recursive" },
+          { "kind": "value", "param": "from" },
+          { "kind": "value", "param": "to" }
+        ]
+      },
+      "powershell": {
+        "command": "Copy-Item",
+        "args": [
+          { "kind": "option", "flag": "-Path", "param": "from" },
+          { "kind": "option", "flag": "-Destination", "param": "to" },
+          { "kind": "flag", "flag": "-Recurse", "when": "recursive" }
+        ],
+        "semanticNotes": "cp overwrites the destination silently; Copy-Item also overwrites but treats an existing directory destination differently (copies INTO it). Verify `to` semantics per platform."
+      }
+    },
+    "examples": ["copy.file from=a.txt to=b.txt", "copy.file from=src to=backup recursive=true"],
+    "tests": [{ "input": "copy.file from=a.txt to=b.txt", "expectRisk": "MEDIUM" }]
+  },
+  {
+    "id": "move.file",
+    "version": "1.0.0",
+    "summary": "Move a file or directory to a new location.",
+    "category": "filesystem",
+    "riskDefault": "MEDIUM",
+    "params": {
+      "from": { "type": "path", "required": true, "description": "Source path." },
+      "to": { "type": "path", "required": true, "description": "Destination path." }
+    },
+    "safety": { "destructive": true, "targetParam": "to" },
+    "adapters": {
+      "posix": {
+        "command": "mv",
+        "args": [
+          { "kind": "value", "param": "from" },
+          { "kind": "value", "param": "to" }
+        ]
+      },
+      "powershell": {
+        "command": "Move-Item",
+        "args": [
+          { "kind": "option", "flag": "-Path", "param": "from" },
+          { "kind": "option", "flag": "-Destination", "param": "to" }
+        ],
+        "semanticNotes": "mv overwrites the destination by default; Move-Item REFUSES to overwrite an existing file without -Force. Overwrite behavior diverges — destructiveness is real on POSIX, blocked-by-default on PowerShell."
+      }
+    },
+    "examples": ["move.file from=old.txt to=new.txt"],
+    "tests": [{ "input": "move.file from=old.txt to=new.txt", "expectRisk": "MEDIUM" }]
+  },
+  {
+    "id": "rename.file",
+    "version": "1.0.0",
+    "summary": "Rename a file or directory in place.",
+    "category": "filesystem",
+    "riskDefault": "MEDIUM",
+    "params": {
+      "from": { "type": "path", "required": true, "description": "Existing name." },
+      "to": { "type": "path", "required": true, "description": "New name." }
+    },
+    "safety": { "destructive": true, "targetParam": "to" },
+    "adapters": {
+      "posix": {
+        "command": "mv",
+        "args": [
+          { "kind": "value", "param": "from" },
+          { "kind": "value", "param": "to" }
+        ],
+        "semanticNotes": "POSIX has no dedicated rename binary; mv performs the rename. Overwrites the target if it exists."
+      },
+      "powershell": {
+        "command": "Rename-Item",
+        "args": [
+          { "kind": "option", "flag": "-Path", "param": "from" },
+          { "kind": "option", "flag": "-NewName", "param": "to" }
+        ],
+        "semanticNotes": "Rename-Item -NewName expects a bare name (not a path) and errors if the target exists, unlike mv which overwrites. Semantics diverge on cross-directory targets and overwrite."
+      }
+    },
+    "examples": ["rename.file from=a.txt to=b.txt"],
+    "tests": [{ "input": "rename.file from=a.txt to=b.txt", "expectRisk": "MEDIUM" }]
+  },
+  {
+    "id": "remove.file",
+    "version": "1.0.0",
+    "summary": "Delete a file.",
+    "category": "filesystem",
+    "riskDefault": "HIGH",
+    "params": {
+      "name": { "type": "path", "required": true, "description": "File to delete." },
+      "force": { "type": "boolean", "default": false, "description": "Ignore nonexistent files; never prompt." },
+      "dryRun": { "type": "boolean", "default": false, "description": "Plan the deletion without performing it." }
+    },
+    "safety": {
+      "destructive": true,
+      "targetParam": "name",
+      "blockTargets": ["/", "C:\\", "~"],
+      "requiresAffectedPathEstimate": true
+    },
+    "adapters": {
+      "posix": {
+        "command": "rm",
+        "args": [
+          { "kind": "flag", "flag": "-f", "when": "force" },
+          { "kind": "value", "param": "name" }
+        ]
+      },
+      "powershell": {
+        "command": "Remove-Item",
+        "args": [
+          { "kind": "option", "flag": "-Path", "param": "name" },
+          { "kind": "flag", "flag": "-Force", "when": "force" }
+        ],
+        "semanticNotes": "rm sends to no recycle bin; Remove-Item likewise bypasses the Recycle Bin. Deletion is permanent on both."
+      }
+    },
+    "examples": ["remove.file name=tmp.log", "remove.file name=cache force=true"],
+    "tests": [
+      { "input": "remove.file name=tmp.log", "expectRisk": "HIGH" },
+      { "input": "remove.file name=/etc/passwd force=true", "expectPolicy": "block" }
+    ]
+  },
+  {
+    "id": "remove.folder",
+    "version": "1.0.0",
+    "summary": "Delete a directory, optionally recursively and forcibly.",
+    "category": "filesystem",
+    "riskDefault": "HIGH",
+    "params": {
+      "name": { "type": "path", "required": true, "description": "Directory to delete." },
+      "recursive": { "type": "boolean", "default": false, "description": "Delete contents recursively." },
+      "force": { "type": "boolean", "default": false, "description": "Ignore nonexistent paths; never prompt." },
+      "dryRun": { "type": "boolean", "default": false, "description": "Plan the deletion without performing it." }
+    },
+    "safety": {
+      "destructive": true,
+      "targetParam": "name",
+      "blockTargets": ["/", "C:\\", "~"],
+      "requiresAffectedPathEstimate": true
+    },
+    "adapters": {
+      "posix": {
+        "command": "rm",
+        "args": [
+          { "kind": "flag", "flag": "-r", "when": "recursive" },
+          { "kind": "flag", "flag": "-f", "when": "force" },
+          { "kind": "value", "param": "name" }
+        ]
+      },
+      "powershell": {
+        "command": "Remove-Item",
+        "args": [
+          { "kind": "option", "flag": "-Path", "param": "name" },
+          { "kind": "flag", "flag": "-Recurse", "when": "recursive" },
+          { "kind": "flag", "flag": "-Force", "when": "force" }
+        ],
+        "semanticNotes": "Remove-Item -Recurse has historically had quirks with reparse points/symlinks (it may traverse them); rm -rf does not follow symlinked dirs into their targets. Treat recursive removal as equally destructive but audit symlink handling per platform."
+      }
+    },
+    "examples": ["remove.folder name=dist recursive=true", "remove.folder name=node_modules recursive=true force=true"],
+    "tests": [
+      { "input": "remove.folder name=dist recursive=true force=true", "expectRisk": "HIGH" },
+      { "input": "remove.folder name=/ recursive=true force=true", "expectPolicy": "block" }
+    ]
+  }
+]
