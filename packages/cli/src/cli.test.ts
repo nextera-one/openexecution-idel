@@ -47,11 +47,12 @@ describe("parseArgv", () => {
     expect(() => parseArgv(["create.file", "--policy"])).toThrow(/requires a value/);
   });
 
-  it("maps help / version / terminal / completion subcommands", () => {
+  it("maps help / version / terminal / serve / completion subcommands", () => {
     expect(parseArgv([]).mode).toBe("help");
     expect(parseArgv(["help"]).mode).toBe("help");
     expect(parseArgv(["version"]).mode).toBe("version");
     expect(parseArgv(["terminal"]).mode).toBe("terminal");
+    expect(parseArgv(["serve"]).mode).toBe("serve");
     const c = parseArgv(["completion", "create."]);
     expect(c.mode).toBe("completion");
     expect(c.command).toBe("create.");
@@ -62,5 +63,28 @@ describe("parseArgv", () => {
     expect(inv.flags.noNative).toBe(true);
     expect(inv.flags.yes).toBe(true);
     expect(inv.native).toBe(true);
+  });
+
+  it("parses serve flags (--port, --host, --static, --open)", () => {
+    const inv = parseArgv([
+      "serve",
+      "--port",
+      "9090",
+      "--host",
+      "0.0.0.0",
+      "--static",
+      "./www",
+      "--open",
+    ]);
+    expect(inv.mode).toBe("serve");
+    expect(inv.flags.port).toBe(9090);
+    expect(inv.flags.host).toBe("0.0.0.0");
+    expect(inv.flags.staticDir).toBe("./www");
+    expect(inv.flags.open).toBe(true);
+  });
+
+  it("rejects an invalid --port", () => {
+    expect(() => parseArgv(["serve", "--port", "notaport"])).toThrow(/valid port/);
+    expect(() => parseArgv(["serve", "--port", "99999"])).toThrow(/valid port/);
   });
 });

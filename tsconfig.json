@@ -10,6 +10,7 @@
     { "path": "packages/adapters-posix" },
     { "path": "packages/adapters-powershell" },
     { "path": "packages/runtime" },
+    { "path": "packages/server" },
     { "path": "packages/cli" }
   ]
 }

@@ -10,9 +10,7 @@
     { "path": "../types" },
     { "path": "../runtime" },
     { "path": "../registry" },
-    { "path": "../parser" },
     { "path": "../openlogs" },
-    { "path": "../policy" },
-    { "path": "../server" }
+    { "path": "../policy" }
   ]
 }

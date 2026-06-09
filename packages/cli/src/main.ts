@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { Runtime } from "@openexecution/runtime";
 import { OpenLogWriter } from "@openexecution/openlogs";
 import { loadPolicy, defaultPolicy } from "@openexecution/policy";
+import { startServer } from "@openexecution/server";
 import type { PolicyConfig, RuntimeContext, RuntimeOutcome } from "@openexecution/runtime";
 
 import { parseArgv, type CliFlags } from "./argv.js";
@@ -65,6 +66,10 @@ export async function main(argv: string[]): Promise<number> {
     return startTerminal(runtime, makeContext(inv.flags));
   }
 
+  if (inv.mode === "serve") {
+    return serve(runtime, inv.flags);
+  }
+
   // run mode
   if (!inv.command.trim()) {
     process.stdout.write(HELP_TEXT);
@@ -82,6 +87,49 @@ export async function main(argv: string[]): Promise<number> {
   }
 
   return exitCodeFor(outcome);
+}
+
+/**
+ * `idel serve` — start the local HTTP server that backs the web/desktop
+ * terminal. Binds loopback only by default. Blocks until interrupted (Ctrl-C),
+ * which the runtime maps to exit code 0. The same runtime instance (registry,
+ * policy, OpenLogs) backs every request, so a GUI command is audited identically
+ * to a CLI command.
+ */
+async function serve(runtime: Runtime, flags: CliFlags): Promise<number> {
+  const server = await startServer({
+    runtime,
+    port: flags.port,
+    host: flags.host,
+    staticDir: flags.staticDir,
+    environment: flags.environment,
+    noNative: flags.noNative,
+  });
+
+  process.stdout.write(
+    color.bold("IDEL Server") +
+      color.gray(`  —  listening on `) +
+      color.blue(server.url) +
+      "\n",
+  );
+  process.stdout.write(
+    color.gray(
+      `  API:  ${server.url}/api/health · /api/registry · /api/run · /api/complete · /api/logs\n` +
+        (flags.staticDir
+          ? `  UI:   serving ${flags.staticDir} at ${server.url}/\n`
+          : `  UI:   none (pass --static <dir> to serve a built terminal UI)\n`) +
+        `  Stop: Ctrl-C\n`,
+    ),
+  );
+
+  // Keep the process alive until a termination signal, then close cleanly.
+  return await new Promise<number>((resolveServe) => {
+    const shutdown = () => {
+      void server.close().finally(() => resolveServe(0));
+    };
+    process.once("SIGINT", shutdown);
+    process.once("SIGTERM", shutdown);
+  });
 }
 
 function makeContext(flags: CliFlags): RuntimeContext {

@@ -1,20 +1,16 @@
 {
-  "name": "@openexecution/cli",
+  "name": "@openexecution/server",
   "version": "1.1.0",
   "type": "module",
   "private": true,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "bin": {
-    "idel": "./bin/idel.js"
-  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist", "bin"],
   "scripts": {
     "build": "tsc --build"
   },
@@ -22,9 +18,10 @@
     "@openexecution/types": "workspace:*",
     "@openexecution/runtime": "workspace:*",
     "@openexecution/registry": "workspace:*",
-    "@openexecution/parser": "workspace:*",
     "@openexecution/openlogs": "workspace:*",
-    "@openexecution/policy": "workspace:*",
-    "@openexecution/server": "workspace:*"
-  }
+    "@openexecution/policy": "workspace:*"
+  },
+  "files": [
+    "dist"
+  ]
 }

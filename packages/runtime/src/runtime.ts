@@ -65,14 +65,14 @@ export interface RuntimeOptions {
 export class Runtime {
   private readonly registry: Registry;
   private readonly policy: PolicyConfig;
-  private readonly logWriter: OpenLogWriter | undefined;
+  private readonly openLogWriter: OpenLogWriter | undefined;
   private readonly adapters: Adapter[];
   private readonly onApproval: ApprovalHandler | undefined;
 
   constructor(opts: RuntimeOptions) {
     this.registry = opts.registry;
     this.policy = opts.policy ?? defaultPolicy();
-    this.logWriter = opts.logWriter;
+    this.openLogWriter = opts.logWriter;
     this.onApproval = opts.onApproval;
     // Default adapter chain: Node fs first (safest), then platform shell.
     this.adapters =
@@ -107,6 +107,15 @@ export class Runtime {
 
   get reg(): Registry {
     return this.registry;
+  }
+
+  /**
+   * The OpenLogs writer, if one was configured. Exposed read-only so a host
+   * (the server's `logs.*` surface, an agent SDK) can read/verify the audit
+   * chain without re-running commands. May be undefined when logging is off.
+   */
+  get logWriter(): OpenLogWriter | undefined {
+    return this.openLogWriter;
   }
 
   /**
@@ -424,7 +433,7 @@ export class Runtime {
     const out = await runMeta(ast, {
       registry: this.registry,
       policy: this.policy,
-      logWriter: this.logWriter,
+      logWriter: this.openLogWriter,
       ctx,
     });
     const result: ExecutionResult = {
@@ -502,9 +511,9 @@ export class Runtime {
       result: outcome,
     };
 
-    if (this.logWriter) {
+    if (this.openLogWriter) {
       // Logging must never sink a command. Swallow log errors but surface once.
-      await this.logWriter.append(record).catch(() => undefined);
+      await this.openLogWriter.append(record).catch(() => undefined);
     }
 
     const assessment: RiskAssessment =

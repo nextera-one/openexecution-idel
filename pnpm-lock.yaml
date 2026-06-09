@@ -53,6 +53,9 @@ importers:
       '@openexecution/runtime':
         specifier: workspace:*
         version: link:../runtime
+      '@openexecution/server':
+        specifier: workspace:*
+        version: link:../server
       '@openexecution/types':
         specifier: workspace:*
         version: link:../types
@@ -116,6 +119,24 @@ importers:
 
   packages/safety:
     dependencies:
+      '@openexecution/types':
+        specifier: workspace:*
+        version: link:../types
+
+  packages/server:
+    dependencies:
+      '@openexecution/openlogs':
+        specifier: workspace:*
+        version: link:../openlogs
+      '@openexecution/policy':
+        specifier: workspace:*
+        version: link:../policy
+      '@openexecution/registry':
+        specifier: workspace:*
+        version: link:../registry
+      '@openexecution/runtime':
+        specifier: workspace:*
+        version: link:../runtime
       '@openexecution/types':
         specifier: workspace:*
         version: link:../types

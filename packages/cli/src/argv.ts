@@ -9,8 +9,8 @@
  */
 
 export interface CliInvocation {
-  /** Top-level subcommand: "run" (default), "terminal", "completion", "help", "version". */
-  mode: "run" | "terminal" | "completion" | "help" | "version";
+  /** Top-level subcommand: "run" (default), "terminal", "serve", "completion", "help", "version". */
+  mode: "run" | "terminal" | "serve" | "completion" | "help" | "version";
   /** The reassembled IDEL command string (for run mode). */
   command: string;
   /** Whether the command is a native passthrough (leading `!`). */
@@ -26,6 +26,14 @@ export interface CliFlags {
   json: boolean;
   policyPath?: string;
   environment?: string;
+  /** `idel serve` HTTP port (default 7878). */
+  port?: number;
+  /** `idel serve` bind host (default 127.0.0.1, loopback only). */
+  host?: string;
+  /** `idel serve` directory of built UI assets to serve at `/`. */
+  staticDir?: string;
+  /** `idel serve` open the URL in the default browser on start. */
+  open?: boolean;
 }
 
 const RUNTIME_FLAGS = new Set([
@@ -34,8 +42,15 @@ const RUNTIME_FLAGS = new Set([
   "--no-native",
   "--yes",
   "--json",
+  "--open",
 ]);
-const RUNTIME_VALUE_FLAGS = new Set(["--policy", "--env"]);
+const RUNTIME_VALUE_FLAGS = new Set([
+  "--policy",
+  "--env",
+  "--port",
+  "--host",
+  "--static",
+]);
 
 export function parseArgv(argv: string[]): CliInvocation {
   const flags: CliFlags = {
@@ -56,6 +71,7 @@ export function parseArgv(argv: string[]): CliInvocation {
       else if (arg === "--no-native") flags.noNative = true;
       else if (arg === "--yes") flags.yes = true;
       else if (arg === "--json") flags.json = true;
+      else if (arg === "--open") flags.open = true;
       continue;
     }
     if (RUNTIME_VALUE_FLAGS.has(arg)) {
@@ -65,6 +81,15 @@ export function parseArgv(argv: string[]): CliInvocation {
       }
       if (arg === "--policy") flags.policyPath = value;
       else if (arg === "--env") flags.environment = value;
+      else if (arg === "--host") flags.host = value;
+      else if (arg === "--static") flags.staticDir = value;
+      else if (arg === "--port") {
+        const port = Number.parseInt(value, 10);
+        if (!Number.isInteger(port) || port < 0 || port > 65535) {
+          throw new Error(`Flag --port requires a valid port number, got "${value}"`);
+        }
+        flags.port = port;
+      }
       i++;
       continue;
     }
@@ -81,6 +106,9 @@ export function parseArgv(argv: string[]): CliInvocation {
   }
   if (first === "terminal") {
     return { mode: "terminal", command: "", native: false, flags };
+  }
+  if (first === "serve") {
+    return { mode: "serve", command: "", native: false, flags };
   }
   if (first === "completion") {
     // `idel completion <partial...>` — used by shells / the interactive REPL.

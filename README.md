@@ -139,7 +139,9 @@ Dry run. No files were changed.
 Log: ~/.idel/logs/openlogs.jsonl
 ```
 
-Other useful commands: `idel registry.list` (29 core commands), `idel policy.check`, `idel terminal` (interactive), `idel completion <partial>`.
+Other useful commands: `idel registry.list` (29 core commands), `idel policy.check`, `idel terminal` (interactive REPL), `idel completion <partial>`.
+
+**Web / desktop terminal.** `idel serve` starts a local HTTP+SSE server (loopback, port 7878 by default) that exposes the same runtime — registry-driven autocomplete, risk/policy classification, and signed OpenLogs — over a small JSON API. It is the boundary the browser and desktop (Javelle) terminals talk to; pass `--static <dir>` to also serve a built UI. A command typed in the GUI is audited identically to one typed at the CLI.
 
 ---
 
@@ -173,7 +175,8 @@ parse → resolve → coerce → safety (two-phase) → policy → plan → exec
 | `packages/adapters-powershell` | Windows PowerShell adapter. |
 | `packages/openlogs` | Signed, hash-chained audit writer (OpenLogs v2) with secret redaction. |
 | `packages/runtime` | Orchestrates the whole pipeline; handles native passthrough, approval, meta commands, and outcome assembly. |
-| `packages/cli` | The `idel` executable, flag parsing, rendering, completion, and the interactive terminal. |
+| `packages/server` | A dependency-free local HTTP+SSE boundary over the runtime (`idel serve`). Backs the web/desktop (Javelle) terminal; every request still flows through the full safety/policy/OpenLogs pipeline. |
+| `packages/cli` | The `idel` executable, flag parsing, rendering, completion, the interactive terminal, and `idel serve`. |
 
 The core command definitions live in `registries/core/*.json` (filesystem, permissions, archive, find, path/env, meta).
 
