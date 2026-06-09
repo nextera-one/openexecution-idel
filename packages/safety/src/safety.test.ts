@@ -129,8 +129,14 @@ describe("assessAst — destructive folder removal", () => {
     );
     expect(a.phase).toBe("ast");
     expect(a.level).toBe("CRITICAL");
-    expect(codes(a.findings)).toContain("root-delete");
-    expect(codes(a.findings)).toContain("recursive-force");
+    // `/` is a filesystem root on POSIX (`root-delete`) but normalizes to a
+    // drive root on Windows (`drive-root-delete`). Both are CRITICAL root-class
+    // findings — assert one of them rather than the POSIX-only code.
+    const found = codes(a.findings);
+    expect(
+      found.includes("root-delete") || found.includes("drive-root-delete"),
+    ).toBe(true);
+    expect(found).toContain("recursive-force");
   });
 
   it("home directory delete => CRITICAL (home-delete)", () => {

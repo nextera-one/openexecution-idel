@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { RegistryError } from "@openexecution/types";
 import type { CommandDef } from "@openexecution/types";
 
@@ -140,8 +142,12 @@ describe("schema — validateCommandDef", () => {
 
 describe("loader — core registry", () => {
   it("locates the registries/core dir by walking up", () => {
-    const dir = findCoreDir(import.meta.url.replace("file://", ""));
-    expect(dir.endsWith("registries/core")).toBe(true);
+    // Use fileURLToPath (not a `file://` string replace) so this resolves on
+    // Windows too, where import.meta.url is `file:///D:/...` and a naive replace
+    // leaves an invalid `/D:/...` path.
+    const dir = findCoreDir(fileURLToPath(import.meta.url));
+    // Compare with the platform's own separator rather than a hardcoded "/".
+    expect(dir.endsWith(join("registries", "core"))).toBe(true);
   });
 
   it("loads the real core dir and indexes commands", async () => {
