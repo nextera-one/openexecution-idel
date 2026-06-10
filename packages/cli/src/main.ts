@@ -6,12 +6,14 @@ import { Runtime } from "@openexecution/runtime";
 import { OpenLogWriter } from "@openexecution/openlogs";
 import { loadPolicy, defaultPolicy } from "@openexecution/policy";
 import { startServer } from "@openexecution/server";
+import { IdelAgent } from "@openexecution/agent";
 import type { PolicyConfig, RuntimeContext, RuntimeOutcome } from "@openexecution/runtime";
 
 import { parseArgv, type CliFlags } from "./argv.js";
 import { complete } from "./complete.js";
 import { color, render, renderJson } from "./render.js";
 import { startTerminal } from "./terminal.js";
+import { ask } from "./ask.js";
 import { HELP_TEXT, VERSION } from "./help.js";
 
 /** Process entry point. Returns the desired process exit code. */
@@ -70,6 +72,23 @@ export async function main(argv: string[]): Promise<number> {
     return serve(runtime, inv.flags);
   }
 
+  if (inv.mode === "ask") {
+    if (!inv.command.trim()) {
+      process.stderr.write(
+        color.gray('Usage: idel ask "<what you want to do>"  (add --yes to allow real runs)\n'),
+      );
+      return 2;
+    }
+    return ask(runtime, inv.command, {
+      cwd: process.cwd(),
+      environment: inv.flags.environment,
+      noNative: inv.flags.noNative,
+      // --yes lets a confirmed command run for real (still prompted per-command);
+      // without it the agent stays propose/dry-run only.
+      allowReal: inv.flags.yes,
+    });
+  }
+
   // run mode
   if (!inv.command.trim()) {
     process.stdout.write(HELP_TEXT);
@@ -97,6 +116,10 @@ export async function main(argv: string[]): Promise<number> {
  * to a CLI command.
  */
 async function serve(runtime: Runtime, flags: CliFlags): Promise<number> {
+  // Wire the embedded Claude console only when a key is present. The hosted
+  // agent is propose/dry-run only (it cannot run a real command without an
+  // approval gate, which the HTTP path doesn't grant), so it never touches disk.
+  const agentEnabled = Boolean(process.env["ANTHROPIC_API_KEY"]);
   const server = await startServer({
     runtime,
     port: flags.port,
@@ -104,6 +127,7 @@ async function serve(runtime: Runtime, flags: CliFlags): Promise<number> {
     staticDir: flags.staticDir,
     environment: flags.environment,
     noNative: flags.noNative,
+    agent: agentEnabled ? (service) => new IdelAgent({ service }) : undefined,
   });
 
   process.stdout.write(
@@ -115,6 +139,8 @@ async function serve(runtime: Runtime, flags: CliFlags): Promise<number> {
   process.stdout.write(
     color.gray(
       `  API:  ${server.url}/api/health · /api/registry · /api/run · /api/complete · /api/logs\n` +
+        `  Ask:  ${server.url}/api/agent/stream  ` +
+        (agentEnabled ? "(Claude console enabled)\n" : "(disabled — set ANTHROPIC_API_KEY)\n") +
         (flags.staticDir
           ? `  UI:   serving ${flags.staticDir} at ${server.url}/\n`
           : `  UI:   none (pass --static <dir> to serve a built terminal UI)\n`) +

@@ -5,7 +5,8 @@ export const HELP_TEXT = `idel ${VERSION} — OpenExecution Runtime CLI
 USAGE
   idel <verb.scope> [key=value ...] [flags]
   idel ! "<native command>"            native passthrough (risk-scanned + logged)
-  idel terminal                        interactive IDEL terminal (readline REPL)
+  idel ask "<natural language>"        ask Claude to do it (proposes IDEL, runs via the runtime)
+  idel terminal                        interactive IDEL terminal (readline REPL; \`? <ask>\` for Claude)
   idel serve [--port N] [--static D]   start the local web/desktop terminal server
   idel completion <partial>            print autocomplete suggestions
   idel help | version
@@ -17,6 +18,7 @@ EXAMPLES
   idel registry.explain command=remove.folder
   idel logs.list
   idel ! "tar -xvzf backup.tar.gz"
+  idel ask "delete the dist folder"          (requires ANTHROPIC_API_KEY; --yes to allow real runs)
 
 FLAGS
   --dry-run        plan + classify, never touch the filesystem

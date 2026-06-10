@@ -28,6 +28,13 @@ import type {
  * over Server-Sent Events (one `event: outcome`, then `event: done`). SSE is
  * used deliberately — it needs no extra dependency and matches Javelle's own
  * patch-stream contract (`EventSource`), so the desktop/web bridge is uniform.
+ *
+ * Agent: `POST /api/agent/stream` {intent} — the embedded Claude console. It
+ * drives the injected agent, streaming one SSE event per AgentEvent
+ * (`text`, `proposed`, `blocked`, ... then `done`). Each command the agent
+ * proposes flows through the same TerminalService.run pipeline (audited as
+ * `source: "agent"`). Returns 501 when no agent was wired. The Anthropic key
+ * stays server-side; loopback-only bind keeps it off the network.
  */
 
 export interface ServerOptions extends ServiceOptions {
@@ -39,6 +46,22 @@ export interface ServerOptions extends ServiceOptions {
   staticDir?: string;
   /** Allow cross-origin browser requests (dev). Default true for loopback dev. */
   cors?: boolean;
+  /**
+   * Factory for the embedded Claude agent, given the server's TerminalService.
+   * Injected (not imported) so the dependency-free server core never pulls in
+   * `@anthropic-ai/sdk`; the host (`idel serve`) wires it. When omitted,
+   * `POST /api/agent/stream` returns 501 and the rest of the API is unchanged.
+   */
+  agent?: (service: TerminalService) => AgentRunner;
+}
+
+/**
+ * The minimal agent surface the server drives — structurally satisfied by
+ * `@openexecution/agent`'s `IdelAgent`, but typed here so the server has no
+ * compile-time dependency on it.
+ */
+export interface AgentRunner {
+  ask(intent: string): AsyncIterable<unknown>;
 }
 
 const VERSION = "1.1.0";
@@ -56,9 +79,12 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
   const host = opts.host ?? "127.0.0.1";
   const cors = opts.cors ?? true;
   const staticDir = opts.staticDir ? resolve(opts.staticDir) : undefined;
+  // Build the agent once and share it (its system prompt — the registry catalog
+  // — is cached by Anthropic across turns). Undefined when the host didn't wire one.
+  const agent = opts.agent ? opts.agent(service) : undefined;
 
   const httpServer = createServer((req, res) => {
-    handle(req, res, service, { cors, staticDir }).catch((err) => {
+    handle(req, res, service, { cors, staticDir, agent }).catch((err) => {
       // A ServiceError carries the intended HTTP status (e.g. 413 for an
       // oversized body thrown while reading the request stream); honor it here
       // so transport-level failures don't all collapse to 500.
@@ -92,9 +118,9 @@ async function handle(
   req: IncomingMessage,
   res: ServerResponse,
   service: TerminalService,
-  cfg: { cors: boolean; staticDir: string | undefined },
+  cfg: { cors: boolean; staticDir: string | undefined; agent: AgentRunner | undefined },
 ): Promise<void> {
-  const { cors, staticDir } = cfg;
+  const { cors, staticDir, agent } = cfg;
   const method = req.method ?? "GET";
   const url = new URL(req.url ?? "/", "http://localhost");
   const path = url.pathname;
@@ -144,6 +170,19 @@ async function handle(
     return runStream(res, service, body, cors);
   }
 
+  if (path === "/api/agent/stream" && method === "POST") {
+    if (!agent) {
+      return sendJson(
+        res,
+        501,
+        { error: "agent not configured on this server (no ANTHROPIC_API_KEY?)" },
+        cors,
+      );
+    }
+    const body = await readJsonBody<{ intent?: string }>(req);
+    return agentStream(res, agent, body.intent ?? "", cors);
+  }
+
   if (path === "/api/logs" && method === "GET") {
     const limit = clampLimit(url.searchParams.get("limit"));
     return sendJson(res, 200, await service.logs(limit), cors);
@@ -181,6 +220,47 @@ async function runStream(
   } catch (err) {
     const status = err instanceof ServiceError ? err.status : 500;
     writeSse(res, "error", { error: String((err as Error).message), status });
+  } finally {
+    writeSse(res, "done", {});
+    res.end();
+  }
+}
+
+/**
+ * Drive the embedded agent and stream its events as SSE. Each AgentEvent becomes
+ * one named SSE event (`event: <event.type>`), then a final `event: done`. The
+ * browser/desktop terminal consumes this with the same EventSource contract as
+ * /api/run/stream. The Anthropic call happens server-side — the key never
+ * reaches the client. A real-run approval gate is intentionally absent here:
+ * the hosted agent is propose/dry-run only, so no client round-trip is needed
+ * to keep it from touching disk. (A future `needs_approval` → re-POST flow can
+ * use the existing RunRequest.approve path.)
+ */
+async function agentStream(
+  res: ServerResponse,
+  agent: AgentRunner,
+  intent: string,
+  cors: boolean,
+): Promise<void> {
+  if (cors) setCors(res);
+  res.writeHead(200, {
+    "content-type": "text/event-stream",
+    "cache-control": "no-cache",
+    connection: "keep-alive",
+  });
+  if (!intent.trim()) {
+    writeSse(res, "error", { error: "empty intent" });
+    writeSse(res, "done", {});
+    res.end();
+    return;
+  }
+  try {
+    for await (const ev of agent.ask(intent)) {
+      const type = (ev as { type?: string }).type ?? "message";
+      writeSse(res, type, ev);
+    }
+  } catch (err) {
+    writeSse(res, "error", { error: String((err as Error)?.message ?? err) });
   } finally {
     writeSse(res, "done", {});
     res.end();

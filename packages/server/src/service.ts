@@ -3,6 +3,7 @@ import { hostname, userInfo, platform } from "node:os";
 import type { Runtime } from "@openexecution/runtime";
 import type {
   CommandDef,
+  CommandOrigin,
   OpenLogRecord,
   RuntimeContext,
   RuntimeOutcome,
@@ -53,6 +54,12 @@ export interface RunRequest {
    * re-submits with `approve: true` to proceed (or `false` to record a refusal).
    */
   approve?: boolean;
+  /**
+   * Logged command origin. Defaults to the service default (`undefined` →
+   * runtime infers idel/ci). The agent layer passes `"agent"` so AI-proposed
+   * commands are audited with `source: "agent"`. Risk/policy are unaffected.
+   */
+  origin?: CommandOrigin;
 }
 
 export interface CompleteRequest {
@@ -95,7 +102,7 @@ export class TerminalService {
       );
     }
     const cwd = req.cwd ?? this.baseCwd;
-    const ctx = this.makeContext(cwd, req.dryRun ?? false, req.approve);
+    const ctx = this.makeContext(cwd, req.dryRun ?? false, req.approve, req.origin);
     const line = req.native ? `! ${req.command}` : req.command;
     return await this.runtime.run(line, ctx);
   }
@@ -140,6 +147,7 @@ export class TerminalService {
     cwd: string,
     dryRun: boolean,
     approve: boolean | undefined,
+    origin: CommandOrigin | undefined,
   ): RuntimeContext {
     const ui = safeUserInfo();
     return {
@@ -147,7 +155,7 @@ export class TerminalService {
       user: ui.username,
       host: hostname(),
       os: platform(),
-      sessionId: `srv_${process.pid}`,
+      sessionId: origin === "agent" ? `agent_${process.pid}` : `srv_${process.pid}`,
       environment: this.environment,
       // When the client has not yet decided on an approval, run in CI mode so an
       // approval_required command fails closed (is returned, not executed)
@@ -155,6 +163,7 @@ export class TerminalService {
       ci: approve === undefined ? true : false,
       dryRun,
       noNative: this.noNative,
+      origin,
     };
   }
 

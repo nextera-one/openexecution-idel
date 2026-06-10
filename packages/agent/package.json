@@ -1,31 +1,31 @@
 {
-  "name": "@openexecution/cli",
+  "name": "@openexecution/agent",
   "version": "1.1.0",
   "type": "module",
   "private": true,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "bin": {
-    "idel": "./bin/idel.js"
-  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist", "bin"],
   "scripts": {
     "build": "tsc --build"
   },
   "dependencies": {
     "@openexecution/types": "workspace:*",
-    "@openexecution/runtime": "workspace:*",
-    "@openexecution/registry": "workspace:*",
-    "@openexecution/parser": "workspace:*",
-    "@openexecution/openlogs": "workspace:*",
-    "@openexecution/policy": "workspace:*",
     "@openexecution/server": "workspace:*",
-    "@openexecution/agent": "workspace:*"
-  }
+    "@anthropic-ai/sdk": "^0.102.0"
+  },
+  "devDependencies": {
+    "@openexecution/registry": "workspace:*",
+    "@openexecution/policy": "workspace:*",
+    "@openexecution/openlogs": "workspace:*",
+    "@openexecution/runtime": "workspace:*"
+  },
+  "files": [
+    "dist"
+  ]
 }

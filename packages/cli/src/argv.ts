@@ -9,9 +9,9 @@
  */
 
 export interface CliInvocation {
-  /** Top-level subcommand: "run" (default), "terminal", "serve", "completion", "help", "version". */
-  mode: "run" | "terminal" | "serve" | "completion" | "help" | "version";
-  /** The reassembled IDEL command string (for run mode). */
+  /** Top-level subcommand: "run" (default), "ask", "terminal", "serve", "completion", "help", "version". */
+  mode: "run" | "ask" | "terminal" | "serve" | "completion" | "help" | "version";
+  /** The reassembled IDEL command string (run mode) or natural-language intent (ask mode). */
   command: string;
   /** Whether the command is a native passthrough (leading `!`). */
   native: boolean;
@@ -109,6 +109,15 @@ export function parseArgv(argv: string[]): CliInvocation {
   }
   if (first === "serve") {
     return { mode: "serve", command: "", native: false, flags };
+  }
+  if (first === "ask") {
+    // `idel ask "<natural language intent>"` — the embedded Claude console.
+    return {
+      mode: "ask",
+      command: rest.slice(1).join(" "),
+      native: false,
+      flags,
+    };
   }
   if (first === "completion") {
     // `idel completion <partial...>` — used by shells / the interactive REPL.

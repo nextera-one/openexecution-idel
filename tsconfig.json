@@ -11,6 +11,7 @@
     { "path": "packages/adapters-powershell" },
     { "path": "packages/runtime" },
     { "path": "packages/server" },
+    { "path": "packages/agent" },
     { "path": "packages/cli" }
   ]
 }
