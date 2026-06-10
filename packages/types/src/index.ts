@@ -18,8 +18,13 @@
 // Parser
 // ---------------------------------------------------------------------------
 
-/** Where a command entered the runtime. */
-export type CommandOrigin = "idel" | "native" | "ci" | "api";
+/**
+ * Where a command entered the runtime. `agent` marks a command an AI proposed
+ * through {@link @openexecution/agent} — it still flows through the identical
+ * safety/policy/OpenLogs pipeline, but the signed audit record carries
+ * `source: "agent"` so AI-initiated actions are distinguishable from human ones.
+ */
+export type CommandOrigin = "idel" | "native" | "ci" | "api" | "agent";
 
 /** A scalar parameter value after type coercion against the schema. */
 export type ParamValue = string | number | boolean;
@@ -323,6 +328,13 @@ export interface RuntimeContext {
   dryRun?: boolean;
   /** Disallow native passthrough (e.g. in CI/production). */
   noNative?: boolean;
+  /**
+   * Override the logged command origin. When omitted, the runtime infers
+   * `"ci"` or `"idel"`. Set to `"agent"` so AI-proposed commands are recorded
+   * with `source: "agent"` in OpenLogs. Does not affect risk/policy — those are
+   * origin-independent; it only changes the audit attribution.
+   */
+  origin?: CommandOrigin;
 }
 
 export interface RuntimeOutcome {
