@@ -140,9 +140,27 @@ part of Phase 2.
 Done: OpenLogs-v2 signed-chain swap (with tamper/chain-hole/cross-instance tests),
 packaging scripts + smoke test, CI (Linux + Windows).
 
-Deferred (next phases, not yet started):
-- **Phase 2** — adversarial safety hardening (TOCTOU between the two-phase scan
-  and execution, Windows/UNC path normalization, `~` expansion, glob target
-  estimation, redaction-bypass shapes).
+Done: **Phase 2** — adversarial safety hardening (commit `a246ad6`). Closed the four
+real gaps an audit surfaced; the fifth (`~` expansion) was found safe by defensive
+over-flagging, so no change:
+- **Windows/UNC normalization** — `paths.ts` now resolves Windows-rooted targets
+  with `path.win32` semantics regardless of host, strips `\\?\`/`\\.\` prefixes, and
+  trims NTFS trailing dots/spaces, so `C:\`, `\\?\C:\`, UNC shares, and drive-relative
+  `C:foo` are classified instead of joined under cwd. (Caveat: the IDEL parser treats
+  an unquoted `\` as a shell escape, so Windows paths must be **quoted** —
+  `name="C:\Windows"` — to reach the classifier with backslashes intact; the server
+  API and GUI pass quoted strings, so this is covered there.)
+- **Glob blast-radius** — a wildcard target walks its static prefix for a lower-bound
+  `affectedPathsEstimate` (`glob-estimate`) or emits `glob-unbounded`.
+- **`requiresAffectedPathEstimate` enforcement** — the formerly-dead flag now fails
+  closed (escalate to ≥ HIGH when no estimate); also fixed a latent bug where a
+  runtime-escalated level/findings weren't surfaced in the outcome.
+- **Secret redaction** — targeted URL-userinfo / query-token / Authorization-header /
+  case-insensitive-AWS passes + `policyReason` scrubbing, without lowering the generic
+  threshold.
+- **TOCTOU** — destructive ops `lstat` the leaf immediately before the syscall and
+  refuse (fail-closed) if it is a symlink, defeating a check→swap→use window.
+
+Deferred (next phase, not yet started):
 - **Phase 3** — V2 `native.learn` draft-only flow (behind the safety engine,
   disabled by default).
