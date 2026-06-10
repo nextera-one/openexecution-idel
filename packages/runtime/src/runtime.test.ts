@@ -148,6 +148,45 @@ describe("two-phase safety: the resolved phase catches symlink-to-root", () => {
   });
 });
 
+describe("Phase 2: requiresAffectedPathEstimate is enforced (fail-closed)", () => {
+  it("escalates to >= HIGH when a required blast-radius estimate is unavailable", async () => {
+    // Override core `remove.folder` (so the real node adapter still resolves it)
+    // with a LOWER riskDefault but keep `requiresAffectedPathEstimate`. An
+    // unbounded glob whose static prefix doesn't exist yields no estimate, so the
+    // fail-closed gate must lift the level above the MEDIUM default.
+    const reg = await Registry.loadCore();
+    reg.addLayer("custom", [
+      {
+        id: "remove.folder",
+        version: "1.0.0",
+        summary: "remove.folder override that requires an estimate (test).",
+        category: "filesystem",
+        riskDefault: "MEDIUM",
+        params: {
+          name: { type: "path", required: true },
+          recursive: { type: "boolean", default: false },
+          force: { type: "boolean", default: false },
+          dryRun: { type: "boolean", default: false },
+        },
+        safety: { destructive: true, requiresAffectedPathEstimate: true, targetParam: "name" },
+        adapters: {
+          node: { command: "@node", args: [{ kind: "value", param: "name" }] },
+        },
+      },
+    ]);
+    const rt = new Runtime({ registry: reg, policy: defaultPolicy() });
+    const dir = await sandbox();
+    // An unbounded glob whose static prefix doesn't exist => no estimate.
+    const out = await rt.run(
+      `remove.folder name=${join(dir, "missing-prefix")}/* recursive=true`,
+      ctx({ cwd: dir, dryRun: true }),
+    );
+    // Without the estimate the op must NOT stay MEDIUM — it escalates fail-closed.
+    expect(["HIGH", "CRITICAL"]).toContain(out.risk.level);
+    expect(out.risk.findings.some((f) => f.code === "missing-affected-estimate")).toBe(true);
+  });
+});
+
 describe("policy: CRITICAL floor cannot be cleared by a lax rule", () => {
   it("an allow-everything policy still blocks CRITICAL", async () => {
     const policy = loadPolicy(

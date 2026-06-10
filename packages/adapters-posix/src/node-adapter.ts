@@ -13,6 +13,7 @@
 import {
   appendFile,
   copyFile,
+  lstat,
   mkdir,
   readdir,
   readFile,
@@ -67,6 +68,37 @@ function resolveParamPath(
 ): string | undefined {
   if (raw === undefined) return undefined;
   return isAbsolute(raw) ? raw : resolvePath(cwd, raw);
+}
+
+/** Raised when a destructive op's leaf turns out to be a symlink at exec time. */
+export class SymlinkRefusedError extends Error {
+  override readonly name = "SymlinkRefusedError";
+}
+
+/**
+ * TOCTOU guard for destructive ops (spec §18). The safety engine classifies the
+ * *resolved real path* before execution; but the executor runs later and would
+ * otherwise follow whatever the path resolves to AT EXECUTION TIME. If the leaf
+ * was swapped for a symlink in that window (e.g. `dist` -> `/` after the scan),
+ * a recursive delete could escape the blessed target. We fail closed: refuse to
+ * operate when the leaf is a symlink. `unlink`/`rm` on a symlink would only
+ * remove the link, but `rm -r` semantics and rename targets make blanket refusal
+ * the safe, deterministic choice — a caller who really means the link target
+ * should pass the resolved path. A missing leaf is fine (e.g. `force` removal).
+ */
+async function refuseSwappedSymlink(target: string): Promise<void> {
+  let st;
+  try {
+    st = await lstat(target);
+  } catch {
+    return; // doesn't exist (or unstattable) — nothing to follow.
+  }
+  if (st.isSymbolicLink()) {
+    throw new SymlinkRefusedError(
+      `Refusing destructive op: '${target}' is a symlink at execution time ` +
+        `(possible time-of-check/time-of-use swap). Re-run against the resolved path.`,
+    );
+  }
 }
 
 export class NodeAdapter implements Adapter {
@@ -183,11 +215,13 @@ export class NodeAdapter implements Adapter {
       }
       case "remove.file": {
         const target = this.requirePath(path("path") ?? path("name"), "path");
+        await refuseSwappedSymlink(target);
         await unlink(target);
         return "";
       }
       case "remove.folder": {
         const target = this.requirePath(path("path") ?? path("name"), "path");
+        await refuseSwappedSymlink(target);
         const recursive = params["recursive"] === "true";
         const force = params["force"] === "true";
         await rm(target, { recursive, force });
@@ -209,6 +243,7 @@ export class NodeAdapter implements Adapter {
       case "rename.file": {
         const from = this.requirePath(path("from") ?? path("source"), "from");
         const to = this.requirePath(path("to") ?? path("dest"), "to");
+        await refuseSwappedSymlink(from);
         await rename(from, to);
         return "";
       }

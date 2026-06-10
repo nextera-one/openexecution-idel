@@ -30,20 +30,73 @@ export function expandHome(target: string, home: string = homeDir()): string {
 }
 
 /**
- * Normalize a destructive target into an absolute, `..`-collapsed path.
+ * A Windows extended-length / device prefix, if present: `\\?\`, `\\.\`, and
+ * the UNC variants `\\?\UNC\`. Returns the stripped remainder plus whether the
+ * prefix denoted the device namespace (`\\.\`), which `isDevicePath` cares about.
  *
- * Steps: expand a leading `~`, then `path.resolve(cwd, target)` which both
- * makes it absolute relative to the issuing cwd and collapses `.`/`..`.
+ * Examples (separators may be `\` or `/`):
+ *   \\?\C:\Windows      -> { rest: "C:\\Windows", device: false }
+ *   \\?\UNC\srv\share   -> { rest: "\\\\srv\\share", device: false }
+ *   \\.\PhysicalDrive0  -> { rest: "\\\\.\\PhysicalDrive0", device: true }
+ */
+function stripWinPrefix(target: string): { rest: string; device: boolean } {
+  // Normalize the leading prefix detection on backslashes specifically; the
+  // extended-length syntax is backslash-based even when the rest uses `/`.
+  const m = target.match(/^[\\/]{2}([?.])[\\/](UNC[\\/])?(.*)$/s);
+  if (!m) return { rest: target, device: false };
+  const kind = m[1]; // "?" extended-length, "." device namespace
+  const isUnc = Boolean(m[2]);
+  const tail = m[3] ?? "";
+  if (kind === ".") {
+    // Device namespace: keep it recognizable as `\\.\...` so isDevicePath fires.
+    return { rest: "\\\\.\\" + tail, device: true };
+  }
+  // Extended-length `\\?\`: `\\?\UNC\srv\share` -> `\\srv\share`; else the tail
+  // is a normal rooted path like `C:\Windows`.
+  return { rest: isUnc ? "\\\\" + tail : tail, device: false };
+}
+
+/** Does `p` look like a Windows-rooted path (drive, drive-relative, or UNC)? */
+function isWindowsRooted(p: string): boolean {
+  return (
+    /^[a-zA-Z]:[\\/]/.test(p) || // C:\ or C:/
+    /^[a-zA-Z]:(?![\\/])/.test(p) || // C:foo (drive-relative)
+    /^[\\/]{2}[^\\/]+[\\/][^\\/]+/.test(p) // \\server\share (UNC)
+  );
+}
+
+/**
+ * Normalize a destructive target into an absolute, `..`-collapsed path —
+ * cross-platform, so a Windows-shaped target is recognized as such even when we
+ * are classifying it on a POSIX host (and vice versa).
  *
- * NOTE: this is a *string-level* normalization. It does NOT follow symlinks or
+ * Steps: strip any `\\?\` / `\\.\` extended-length-or-device prefix, expand a
+ * leading `~`, then resolve. A Windows-rooted target (`C:\`, `C:foo`, UNC) is
+ * resolved with `path.win32` semantics regardless of host — otherwise the host
+ * `path.resolve` on POSIX would join `C:\` under cwd and the drive-root floor
+ * would never fire. Everything else resolves against the issuing cwd.
+ *
+ * Drive-relative `C:foo` has no unambiguous base (its true anchor is the
+ * per-drive cwd, which we don't track), so we fail closed: resolve it to the
+ * drive root so it reads as escaping cwd rather than as a harmless local dir.
+ *
+ * NOTE: still a *string-level* normalization. It does NOT follow symlinks or
  * touch the filesystem — that is the resolved phase's job. Env vars are NOT
  * expanded here on purpose: the runtime treats unexpanded `$VAR`/`%VAR%` as
  * opaque, and we never shell out, so there is nothing to expand.
  */
 export function normalizeTarget(target: string, cwd: string): string {
-  const expanded = expandHome(target);
-  // path.resolve already collapses `..` and `.` segments and yields an
-  // absolute path anchored at `cwd` when `expanded` is relative.
+  const { rest } = stripWinPrefix(target);
+  const expanded = expandHome(rest);
+  if (isWindowsRooted(expanded)) {
+    // Drive-relative `C:foo` -> anchor at the drive root, fail-closed.
+    const driveRel = expanded.match(/^([a-zA-Z]:)(?![\\/])(.*)$/s);
+    if (driveRel) {
+      return path.win32.resolve(driveRel[1] + "\\", driveRel[2] ?? "");
+    }
+    return path.win32.resolve(expanded);
+  }
+  // POSIX / relative: path.resolve collapses `..`/`.` and anchors at cwd.
   return path.resolve(cwd, expanded);
 }
 
@@ -58,9 +111,28 @@ export function isAbsoluteCrossPlatform(p: string): boolean {
   return false;
 }
 
-/** Normalize separators + lowercase a Windows drive letter for comparison. */
+/**
+ * Canonicalize for comparison: unify separators, strip a trailing slash, and
+ * strip NTFS-style trailing dots/spaces from each segment. Windows silently
+ * trims trailing dots and spaces from path components, so `C:\Windows ` and
+ * `C:\test.` refer to `C:\Windows` / `C:\test`; without trimming, those evade
+ * the root/escape comparisons. POSIX names legitimately can't end in `/`, and a
+ * trailing dot/space is exotic enough that trimming for *classification* (never
+ * for execution) is the safe, fail-closed choice.
+ */
 function canon(p: string): string {
-  return p.replace(/\\/g, "/").replace(/\/+$/g, "") || "/";
+  const unified = p
+    .replace(/\\/g, "/")
+    .split("/")
+    .map((seg) => {
+      // Don't collapse all-dot segments ("." / ".." / the "\\.\" device marker)
+      // to empty — only trim trailing dots/spaces from segments that have other
+      // content (e.g. "Windows " -> "Windows", "test." -> "test").
+      if (/^[. ]*$/.test(seg)) return seg;
+      return seg.replace(/[. ]+$/g, "");
+    })
+    .join("/");
+  return unified.replace(/\/+$/g, "") || "/";
 }
 
 /**
@@ -157,20 +229,36 @@ export function hasGlob(rawTarget: string): boolean {
 }
 
 /**
+ * The static directory prefix of a glob target — the absolute, normalized path
+ * formed by the segments BEFORE the first wildcard segment. For `/var/log/*.log`
+ * this is `/var/log`; for a recursive `logs` glob it resolves `logs` against cwd;
+ * for a glob whose very first segment is itself a wildcard the prefix is the cwd
+ * (or root, if the target is absolute). This is the directory whose contents the
+ * glob can match, so it's the right place to estimate the blast radius.
+ */
+export function staticGlobPrefix(rawTarget: string, cwd: string): string {
+  const { rest } = stripWinPrefix(rawTarget);
+  const expanded = expandHome(rest).replace(/\\/g, "/");
+  const segs = expanded.split("/");
+  const firstWildIdx = segs.findIndex((s) => GLOB_RE.test(s));
+  // Keep the leading empty segment (from a leading "/") so the joined prefix
+  // stays ABSOLUTE — otherwise normalizeTarget would re-anchor it under cwd and
+  // we'd walk the wrong directory.
+  const prefixSegs = segs.slice(0, firstWildIdx).filter((s, i) => i === 0 || s.length > 0);
+  const joined = prefixSegs.join("/");
+  if (joined.replace(/^\/+/, "").length > 0 || joined.startsWith("/")) {
+    return normalizeTarget(joined || "/", cwd);
+  }
+  return isAbsoluteCrossPlatform(expanded) ? "/" : path.resolve(cwd);
+}
+
+/**
  * Is this a *broad* glob — one whose wildcard sits at or very near the root of
  * the path, so it could match an enormous set (e.g. `/*`, `~/*`, `C:\*`)?
  */
 export function isBroadGlob(rawTarget: string, cwd: string): boolean {
   if (!hasGlob(rawTarget)) return false;
-  const expanded = expandHome(rawTarget).replace(/\\/g, "/");
-  // The directory portion before the first wildcard segment.
-  const segs = expanded.split("/");
-  const firstWildIdx = segs.findIndex((s) => GLOB_RE.test(s));
-  const prefixSegs = segs.slice(0, firstWildIdx).filter((s) => s.length > 0);
-  // Resolve the static prefix against cwd to see how high up it is.
-  const prefix = prefixSegs.length
-    ? path.resolve(cwd, prefixSegs.join("/"))
-    : (isAbsoluteCrossPlatform(expanded) ? "/" : cwd);
+  const prefix = staticGlobPrefix(rawTarget, cwd);
   // Broad if the wildcard sits directly under root, a drive root, or home.
   return isRoot(prefix) || isDriveRoot(prefix) || isHome(prefix);
 }

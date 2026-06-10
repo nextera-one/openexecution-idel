@@ -32,6 +32,7 @@ export {
   isDevicePath,
   hasGlob,
   isBroadGlob,
+  staticGlobPrefix,
   hasParentTraversal,
   isOutsideCwd,
   escapesCwd,

@@ -6,6 +6,7 @@ import {
   scanNative,
   levelOfFindings,
   maxRisk,
+  higherRisk,
 } from "@openexecution/safety";
 import { evaluate, defaultPolicy } from "@openexecution/policy";
 import { OpenLogWriter } from "@openexecution/openlogs";
@@ -128,12 +129,16 @@ export class Runtime {
    * outcomes so they still get logged.
    */
   async run(input: string, ctx: RuntimeContext): Promise<RuntimeOutcome> {
+    // Origin attribution: an explicit ctx.origin (e.g. "agent" for an
+    // AI-proposed command) wins; otherwise infer ci vs interactive. This only
+    // labels the audit record — risk and policy are origin-independent.
+    const origin = ctx.origin ?? (ctx.ci ? "ci" : "idel");
     let ast: AnyAst;
     try {
-      ast = parse(input, { cwd: ctx.cwd, source: ctx.ci ? "ci" : "idel" });
+      ast = parse(input, { cwd: ctx.cwd, source: origin });
     } catch (err) {
       if (err instanceof ParseError) {
-        return this.failBeforeClassification(input, ctx, "idel", err.message);
+        return this.failBeforeClassification(input, ctx, origin, err.message);
       }
       throw err;
     }
@@ -205,11 +210,32 @@ export class Runtime {
       }
     }
 
-    const effectiveRisk: RiskLevel = resolvedRisk
+    let effectiveRisk: RiskLevel = resolvedRisk
       ? maxRisk(astRisk, resolvedRisk)
       : astRisk.level;
     const findings = mergeFindings(astRisk, resolvedRisk);
     const affected = resolvedRisk?.affectedPathsEstimate;
+
+    // 4b) Enforce requiresAffectedPathEstimate (fail-closed). A command that
+    //     declares it needs a blast-radius estimate but for which we could not
+    //     produce one — an unbounded glob, a target we couldn't walk, or the
+    //     resolved phase was skipped — must not be treated as low/medium just
+    //     because the count is unknown. Escalate to at least HIGH so the policy
+    //     gets to gate it (warn/dry-run/approval/block per its rules). The CRITICAL
+    //     short-circuit above already handles the worst case, so we never lower it.
+    if (
+      resolved.def.safety?.requiresAffectedPathEstimate === true &&
+      affected === undefined &&
+      effectiveRisk !== "CRITICAL"
+    ) {
+      effectiveRisk = higherRisk(effectiveRisk, "HIGH");
+      findings.push({
+        code: "missing-affected-estimate",
+        level: "HIGH",
+        message:
+          "Destructive command requires a blast-radius estimate, but none could be computed; escalated to HIGH (fail-closed).",
+      });
+    }
 
     // 5) Policy decision.
     const decision = evaluate(
@@ -516,13 +542,21 @@ export class Runtime {
       await this.openLogWriter.append(record).catch(() => undefined);
     }
 
-    const assessment: RiskAssessment =
-      risk.assessment ?? {
-        phase: "ast",
-        level: risk.level,
-        findings: risk.findings,
-        affectedPathsEstimate: risk.affected,
-      };
+    // Build the returned assessment from the AUTHORITATIVE merged values
+    // (risk.level/findings/affected) rather than echoing risk.assessment
+    // verbatim: the runtime may have escalated the level and appended findings
+    // (e.g. the requiresAffectedPathEstimate fail-closed gate) after the
+    // resolved-phase assessment was produced, and those must surface in the
+    // outcome and the signed record alike.
+    const assessment: RiskAssessment = {
+      phase: risk.assessment?.phase ?? "ast",
+      level: risk.level,
+      findings: risk.findings,
+      affectedPathsEstimate: risk.affected,
+      ...(risk.assessment?.affectedBytesEstimate !== undefined
+        ? { affectedBytesEstimate: risk.assessment.affectedBytesEstimate }
+        : {}),
+    };
 
     return { record, result, plan, decision, risk: assessment };
   }

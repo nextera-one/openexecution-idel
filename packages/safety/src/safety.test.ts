@@ -213,6 +213,66 @@ describe("assessAst — destructive folder removal", () => {
   });
 });
 
+describe("assessAst — Windows/UNC cross-platform normalization (Phase 2)", () => {
+  // These classify Windows-shaped targets even when running on a POSIX host:
+  // before the fix, path.resolve joined them under cwd so the drive-root floor
+  // never fired. cwd is POSIX to prove the classifier is host-independent.
+  const POSIX_CWD = { cwd: "/home/u/project" };
+  const rm = (name: string) =>
+    assessAst(
+      makeAst("remove.folder", { name, recursive: true, force: true }, POSIX_CWD),
+      removeFolderDef(),
+    );
+
+  it("drive root C:\\ => CRITICAL (drive-root-delete)", () => {
+    const a = rm("C:\\");
+    expect(a.level).toBe("CRITICAL");
+    expect(codes(a.findings)).toContain("drive-root-delete");
+  });
+
+  it("extended-length drive root \\\\?\\C:\\ => CRITICAL (drive-root-delete)", () => {
+    const a = rm("\\\\?\\C:\\");
+    expect(a.level).toBe("CRITICAL");
+    expect(codes(a.findings)).toContain("drive-root-delete");
+  });
+
+  it("UNC share root \\\\server\\share => CRITICAL (drive-root-delete)", () => {
+    const a = rm("\\\\server\\share");
+    expect(a.level).toBe("CRITICAL");
+    expect(codes(a.findings)).toContain("drive-root-delete");
+  });
+
+  it("extended-length UNC \\\\?\\UNC\\server\\share => CRITICAL", () => {
+    const a = rm("\\\\?\\UNC\\server\\share");
+    expect(a.level).toBe("CRITICAL");
+    expect(codes(a.findings)).toContain("drive-root-delete");
+  });
+
+  it("Windows raw device \\\\.\\PhysicalDrive0 => CRITICAL (device-write)", () => {
+    const a = rm("\\\\.\\PhysicalDrive0");
+    expect(a.level).toBe("CRITICAL");
+    expect(codes(a.findings)).toContain("device-write");
+  });
+
+  it("drive-relative C:foo => escapes cwd (>= MEDIUM, fail-closed)", () => {
+    // C:foo has no unambiguous base; we anchor it at the drive root so it reads
+    // as outside the POSIX cwd rather than as a harmless local dir.
+    const a = rm("C:foo");
+    expect(RISK_ORDER.indexOf(a.level)).toBeGreaterThanOrEqual(
+      RISK_ORDER.indexOf("MEDIUM"),
+    );
+    expect(codes(a.findings)).toContain("outside-cwd");
+  });
+
+  it("trailing-space evasion C:\\Windows\\u0020 is not treated as a drive root", () => {
+    // The trailing space is trimmed in canonicalization, so this is the dir
+    // C:\\Windows (still outside the POSIX cwd), NOT a spurious root match.
+    const a = rm("C:\\Windows ");
+    expect(codes(a.findings)).not.toContain("drive-root-delete");
+    expect(codes(a.findings)).toContain("outside-cwd");
+  });
+});
+
 describe("assessAst — permissions", () => {
   it("recursive chmod 777 on root => CRITICAL (recursive-chmod-777-broad)", () => {
     const a = assessAst(
@@ -375,6 +435,31 @@ describe("assessResolved — real path resolution", () => {
     const a = await assessResolved(ast, removeFolderDef());
     expect(a.affectedPathsEstimate).toBeGreaterThanOrEqual(2);
     expect(a.affectedBytesEstimate).toBeGreaterThan(0);
+  });
+
+  it("glob target estimates the blast radius from its static prefix (Phase 2)", async () => {
+    // `<realDir>/*.txt` resolved literally would lstat-fail and leave the
+    // estimate undefined; we now walk the static prefix <realDir> instead.
+    const ast = makeAst(
+      "remove.folder",
+      { name: path.join(realDir, "*.txt"), recursive: true },
+      { cwd },
+    );
+    const a = await assessResolved(ast, removeFolderDef());
+    expect(a.affectedPathsEstimate).toBeGreaterThanOrEqual(2);
+    expect(codes(a.findings)).toContain("glob-estimate");
+  });
+
+  it("glob with no walkable static prefix => 'glob-unbounded' (fail-closed)", async () => {
+    // Point the static prefix at a nonexistent dir so it can't be walked.
+    const ast = makeAst(
+      "remove.folder",
+      { name: path.join(tmpRoot, "nope-missing", "*"), recursive: true },
+      { cwd },
+    );
+    const a = await assessResolved(ast, removeFolderDef());
+    expect(a.affectedPathsEstimate).toBeUndefined();
+    expect(codes(a.findings)).toContain("glob-unbounded");
   });
 
   it("cwd that IS the temp root => resolved classifies the real path", async () => {

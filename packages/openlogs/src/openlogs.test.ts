@@ -13,7 +13,11 @@ import { OpenLogWriter } from "./writer.js";
 // ---------------------------------------------------------------------------
 
 /** Build a baseline record; override `ast.params` (and anything else) per-test. */
-function makeRecord(params: Record<string, ParamValue>, command = "noop"): OpenLogRecord {
+function makeRecord(
+  params: Record<string, ParamValue>,
+  command = "noop",
+  policyReason = "ok",
+): OpenLogRecord {
   return {
     timestamp: "2026-06-09T00:00:00.000Z",
     sessionId: "sess-1",
@@ -27,7 +31,7 @@ function makeRecord(params: Record<string, ParamValue>, command = "noop"): OpenL
     risk: "LOW",
     riskFindings: [],
     policyDecision: "allow",
-    policyReason: "ok",
+    policyReason,
     dryRun: false,
     result: "success",
   };
@@ -168,6 +172,47 @@ describe("redactString()", () => {
   it("leaves a command with no secrets untouched", () => {
     const cmd = "ls -la /tmp --color=auto";
     expect(redactString(cmd)).toBe(cmd);
+  });
+
+  // --- Phase 2: targeted high-confidence bypass shapes -------------------
+  it("redacts URL userinfo (user:pass@host)", () => {
+    const out = redactString("curl https://alice:hunter2@example.com/repo.git");
+    expect(out).not.toContain("hunter2");
+    expect(out).toContain("example.com"); // host kept
+    expect(out).toContain(REDACTED);
+  });
+
+  it("redacts a secret-bearing URL query param (?token=…)", () => {
+    const out = redactString(
+      "fetch https://api.example.com/v1/data?token=abc123SECRETvalue&page=2",
+    );
+    expect(out).not.toContain("abc123SECRETvalue");
+    expect(out).toContain("page=2"); // non-secret query param kept
+    expect(out).toContain(REDACTED);
+  });
+
+  it("redacts an Authorization: Bearer header", () => {
+    const out = redactString(
+      'curl -H "Authorization: Bearer sk-test-ABCDEFGHIJKLMNOP1234" https://x',
+    );
+    expect(out).not.toContain("sk-test-ABCDEFGHIJKLMNOP1234");
+    expect(out).toContain(REDACTED);
+  });
+
+  it("redacts a lowercase AWS access key id", () => {
+    // Valid shape: AKIA + 16 chars = 20 total, lowercased.
+    const out = redactString("export KEYID akiaiosfodnn7example");
+    expect(out).not.toContain("akiaiosfodnn7example");
+    expect(out).toContain(REDACTED);
+  });
+
+  it("redact() scrubs a secret embedded in policyReason", () => {
+    const jwt =
+      "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
+    const rec = makeRecord({ name: "x" }, "create.file", `blocked: token ${jwt} present`);
+    const out = redact(rec);
+    expect(out.policyReason).not.toContain(jwt);
+    expect(out.policyReason).toContain(REDACTED);
   });
 });
 

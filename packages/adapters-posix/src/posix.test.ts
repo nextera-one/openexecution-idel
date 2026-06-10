@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -349,6 +349,39 @@ describe("NodeAdapter", () => {
     const r = await run("path.current", {}, { dryRun: false });
     expect(r.exitCode).toBe(0);
     expect(r.stdout.trim()).toBe(dir);
+  });
+
+  // --- Phase 2: TOCTOU symlink-swap refusal -----------------------------
+  it("remove.folder refuses when the leaf is a symlink at execution time", async () => {
+    // Simulate a swap: the safety scan blessed a real dir, but by execution the
+    // leaf is a symlink pointing elsewhere. The executor must refuse, fail-closed,
+    // and must NOT delete the symlink's victim.
+    const victim = join(dir, "victim");
+    await mkdir(victim);
+    await writeFile(join(victim, "keep.txt"), "precious");
+    const link = join(dir, "swapped");
+    await symlink(victim, link, "dir");
+
+    const r = await run(
+      "remove.folder",
+      { path: "swapped", recursive: true, force: true },
+      { dryRun: false },
+    );
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toMatch(/symlink at execution time|time-of-check/i);
+    // The victim and its contents are intact.
+    expect((await stat(victim)).isDirectory()).toBe(true);
+    expect(await readFile(join(victim, "keep.txt"), "utf8")).toBe("precious");
+  });
+
+  it("remove.file refuses a symlink leaf (fail-closed)", async () => {
+    const real = join(dir, "real.txt");
+    await writeFile(real, "data");
+    await symlink(real, join(dir, "link.txt"));
+    const r = await run("remove.file", { path: "link.txt" }, { dryRun: false });
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toMatch(/symlink/i);
+    expect(await readFile(real, "utf8")).toBe("data"); // real file untouched
   });
 
   it("dryRun does NOT touch the filesystem", async () => {
