@@ -275,4 +275,268 @@ describe("startServer (HTTP)", () => {
     });
     expect(res.status).toBe(413);
   });
+
+  it("GET /api/registry/:id with a malformed id → 400 (not a registry miss)", async () => {
+    const res = await fetch(`${base}/api/registry/${encodeURIComponent("../../etc/passwd")}`);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/invalid command id/);
+  });
+
+  it("GET /api/registry/:id with a valid id → resolved entry", async () => {
+    const res = await fetch(`${base}/api/registry/create.file`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { resolved: { id: string } | null };
+    expect(body.resolved?.id).toBe("create.file");
+  });
+
+  it("POST /api/agent/stream → 501 when no agent is wired", async () => {
+    const res = await fetch(`${base}/api/agent/stream`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ intent: "do something" }),
+    });
+    expect(res.status).toBe(501);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Static UI + injected agent
+// ---------------------------------------------------------------------------
+
+describe("startServer — static UI", () => {
+  let server: RunningServer;
+  let base: string;
+  let dir: string;
+
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "idel-static-"));
+    await writeFile(join(dir, "index.html"), "<!doctype html><title>UI</title>");
+    await writeFile(join(dir, "app.js"), "console.log('hi')");
+    const runtime = new Runtime({ registry, policy: defaultPolicy() });
+    server = await startServer({ runtime, port: 0, cwd: tmpdir(), staticDir: dir });
+    base = server.url;
+  });
+  afterAll(async () => {
+    await server.close();
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  });
+
+  it("serves index.html at /", async () => {
+    const res = await fetch(`${base}/`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    expect(await res.text()).toContain("<title>UI</title>");
+  });
+
+  it("serves a real asset with its mime type", async () => {
+    const res = await fetch(`${base}/app.js`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("javascript");
+  });
+
+  it("does not leak files outside the static dir on traversal", async () => {
+    // A decoded traversal must never return the real file outside `dir`. The
+    // guard either 404s or falls back to index.html — never the escaped target.
+    const res = await fetch(`${base}/%2e%2e%2f%2e%2e%2fetc%2fpasswd`);
+    const body = await res.text();
+    expect(body).not.toMatch(/root:.*:0:0:/); // no /etc/passwd content
+  });
+
+  it("API routes still work alongside static serving", async () => {
+    const res = await fetch(`${base}/api/health`);
+    expect((await res.json()).ok).toBe(true);
+  });
+});
+
+describe("startServer — injected agent", () => {
+  it("drives an injected agent and streams its events over SSE", async () => {
+    const runtime = new Runtime({ registry, policy: defaultPolicy() });
+    // A fake agent runner: structurally an AgentRunner, no Anthropic dependency.
+    const fakeAgent = () => ({
+      // eslint-disable-next-line require-yield
+      async *ask(): AsyncGenerator<unknown> {
+        yield { type: "text", text: "thinking" };
+        yield { type: "proposed", command: "registry.list", dryRun: true };
+        yield { type: "done", reason: "end_turn" };
+      },
+    });
+    const server = await startServer({ runtime, port: 0, cwd: tmpdir(), agent: fakeAgent });
+    try {
+      const res = await fetch(`${server.url}/api/agent/stream`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ intent: "list commands" }),
+      });
+      expect(res.headers.get("content-type")).toContain("text/event-stream");
+      const text = await res.text();
+      expect(text).toContain("event: text");
+      expect(text).toContain("event: proposed");
+      expect(text).toContain("event: done");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("rejects an empty intent with an SSE error", async () => {
+    const runtime = new Runtime({ registry, policy: defaultPolicy() });
+    const fakeAgent = () => ({
+      async *ask(): AsyncGenerator<unknown> {
+        yield { type: "text", text: "unreached" };
+      },
+    });
+    const server = await startServer({ runtime, port: 0, cwd: tmpdir(), agent: fakeAgent });
+    try {
+      const res = await fetch(`${server.url}/api/agent/stream`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ intent: "  " }),
+      });
+      const text = await res.text();
+      expect(text).toContain("event: error");
+      expect(text).toContain("empty intent");
+    } finally {
+      await server.close();
+    }
+  });
+});
+
+describe("startServer — real-run approval round-trip", () => {
+  // A fake agent that, when given an `approve` gate, asks for one real run and
+  // yields a different final event depending on the answer — exactly the shape
+  // IdelAgent produces, but deterministic and network-free.
+  const approvalAgent = () => ({
+    // eslint-disable-next-line require-yield
+    async *ask(_intent: string, approve?: (info: { command: string; outcome: unknown }) => Promise<boolean>) {
+      if (!approve) {
+        yield { type: "proposed", command: "create.file name=x", dryRun: true };
+        yield { type: "done", reason: "end_turn" };
+        return;
+      }
+      const ok = await approve({ command: "create.file name=x", outcome: { dry: true } });
+      if (ok) yield { type: "proposed", command: "create.file name=x", dryRun: false };
+      else yield { type: "needs_approval", command: "create.file name=x" };
+      yield { type: "done", reason: "end_turn" };
+    },
+  });
+
+  /** Stream an SSE response, calling onFrame(event, data) per frame. */
+  async function streamSse(
+    res: Response,
+    onFrame: (event: string, data: Record<string, unknown>) => void,
+  ): Promise<void> {
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf("\n\n")) !== -1) {
+        const frame = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        let event = "message";
+        let data = "";
+        for (const l of frame.split("\n")) {
+          if (l.startsWith("event:")) event = l.slice(6).trim();
+          else if (l.startsWith("data:")) data += l.slice(5).trim();
+        }
+        onFrame(event, data ? JSON.parse(data) : {});
+      }
+    }
+  }
+
+  it("emits approval_request, parks, and runs for real after POST /approve true", async () => {
+    const runtime = new Runtime({ registry, policy: defaultPolicy() });
+    const server = await startServer({ runtime, port: 0, cwd: tmpdir(), agent: approvalAgent });
+    try {
+      const res = await fetch(`${server.url}/api/agent/stream`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ intent: "make x", allowReal: true }),
+      });
+      const events: { event: string; data: Record<string, unknown> }[] = [];
+      await streamSse(res, (event, data) => {
+        events.push({ event, data });
+        // When the agent parks for approval, approve it (the stream resumes).
+        if (event === "approval_request") {
+          void fetch(`${server.url}/api/agent/approve`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ approvalId: data["approvalId"], approve: true }),
+          });
+        }
+      });
+      const types = events.map((e) => e.event);
+      expect(types).toContain("approval_request");
+      // After approval, the agent ran for real (dryRun:false).
+      const ran = events.find((e) => e.event === "proposed");
+      expect(ran?.data["dryRun"]).toBe(false);
+      expect(types).toContain("done");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("declines (POST /approve false) → agent leaves the dry-run standing", async () => {
+    const runtime = new Runtime({ registry, policy: defaultPolicy() });
+    const server = await startServer({ runtime, port: 0, cwd: tmpdir(), agent: approvalAgent });
+    try {
+      const res = await fetch(`${server.url}/api/agent/stream`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ intent: "make x", allowReal: true }),
+      });
+      const events: { event: string; data: Record<string, unknown> }[] = [];
+      await streamSse(res, (event, data) => {
+        events.push({ event, data });
+        if (event === "approval_request") {
+          void fetch(`${server.url}/api/agent/approve`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ approvalId: data["approvalId"], approve: false }),
+          });
+        }
+      });
+      const types = events.map((e) => e.event);
+      expect(types).toContain("approval_request");
+      expect(types).toContain("needs_approval"); // declined
+      expect(types).not.toContain("proposed");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("stays propose-only (no approval_request) when allowReal is omitted", async () => {
+    const runtime = new Runtime({ registry, policy: defaultPolicy() });
+    const server = await startServer({ runtime, port: 0, cwd: tmpdir(), agent: approvalAgent });
+    try {
+      const res = await fetch(`${server.url}/api/agent/stream`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ intent: "make x" }), // no allowReal
+      });
+      const text = await res.text();
+      expect(text).not.toContain("event: approval_request");
+      expect(text).toContain("event: proposed");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("POST /api/agent/approve with an unknown id → 404", async () => {
+    const runtime = new Runtime({ registry, policy: defaultPolicy() });
+    const server = await startServer({ runtime, port: 0, cwd: tmpdir(), agent: approvalAgent });
+    try {
+      const res = await fetch(`${server.url}/api/agent/approve`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ approvalId: "appr_999", approve: true }),
+      });
+      expect(res.status).toBe(404);
+    } finally {
+      await server.close();
+    }
+  });
 });

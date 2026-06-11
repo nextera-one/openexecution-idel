@@ -11,10 +11,13 @@
     "test:watch": "vitest",
     "typecheck": "tsc --build --dry",
     "smoke": "bash scripts/smoke-test.sh",
-    "install:local": "bash scripts/install-local.sh"
+    "install:local": "bash scripts/install-local.sh",
+    "serve": "node packages/cli/bin/idel.js serve --static packages/web/public",
+    "ui": "node packages/cli/bin/idel.js serve --static packages/web/public --open",
+    "ui:dev": "bash scripts/run-ui.sh"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.3"
   },
   "pnpm": {
     "overrides": {

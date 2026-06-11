@@ -80,6 +80,36 @@ function tpsOf(record: OpenLogRecord): string {
   return TPS.fromDate(when, "greg");
 }
 
+/**
+ * Bridge an {@link OpenLogRecord} into the SDK's structurally-typed envelope
+ * `data` slot. The SDK types `data` as an open `Record<string, unknown>`; our
+ * record is a closed interface of JSON-safe scalars, so it satisfies that shape
+ * but TypeScript can't prove the structural relation across the package
+ * boundary. This single localized cast documents the invariant — "a redacted
+ * audit record is valid envelope data" — instead of scattering `as unknown as`
+ * at call sites.
+ */
+function toEnvelopeData(record: OpenLogRecord): Record<string, unknown> {
+  return record as unknown as Record<string, unknown>;
+}
+
+/**
+ * Inverse of {@link toEnvelopeData}: unwrap envelope `data` back to an
+ * {@link OpenLogRecord}. Defensive — returns null for anything that isn't a
+ * record-shaped object (a malformed or non-audit payload), so a single bad line
+ * never produces a half-typed record downstream.
+ */
+function fromEnvelopeData(data: unknown): OpenLogRecord | null {
+  if (!data || typeof data !== "object") return null;
+  const d = data as Record<string, unknown>;
+  // A real audit record always has these required string fields; use them as a
+  // cheap shape gate before trusting the cast.
+  if (typeof d["command"] !== "string" || typeof d["result"] !== "string") {
+    return null;
+  }
+  return d as unknown as OpenLogRecord;
+}
+
 export class OpenLogWriter {
   /** Absolute, fully-resolved path to the JSONL log file. */
   readonly path: string;
@@ -161,7 +191,7 @@ export class OpenLogWriter {
         actor: actorOf(safe),
         tps: tpsOf(safe),
         event: safe.command,
-        data: safe as unknown as Record<string, unknown>,
+        data: toEnvelopeData(safe),
       },
       prevHash,
     );
@@ -228,9 +258,8 @@ export class OpenLogWriter {
     const out: OpenLogRecord[] = [];
     for (const rec of signed) {
       const data = rec.entry?.data;
-      if (data && typeof data === "object") {
-        out.push(data as unknown as OpenLogRecord);
-      }
+      const record = fromEnvelopeData(data);
+      if (record) out.push(record);
     }
     return out;
   }

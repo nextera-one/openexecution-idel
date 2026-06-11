@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>IDEL Terminal</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body class="terminal-page">
+    <header class="term-bar">
+      <a href="/" class="brand small">OpenExecution<span class="brand-dot">·</span>IDEL</a>
+      <span class="term-status" id="status">connecting…</span>
+      <span class="term-modes">
+        <button class="mode-btn active" id="mode-idel" title="Type IDEL commands">IDEL</button>
+        <button class="mode-btn" id="mode-ask" title="Ask Claude in natural language">Ask Claude</button>
+      </span>
+    </header>
+
+    <main class="term-main">
+      <section class="term-output" id="output" aria-live="polite">
+        <div class="line muted">
+          IDEL web terminal. Type a command like
+          <code>list.folder name=.</code> and press Enter. Every command flows
+          through the same safety → policy → signed-log pipeline as the CLI.
+        </div>
+        <div class="line muted">
+          Switch to <strong>Ask Claude</strong> (top right) to describe what you
+          want in natural language — the runtime stays the enforcement boundary.
+        </div>
+      </section>
+
+      <form class="term-input" id="form" autocomplete="off">
+        <span class="term-prompt" id="prompt">idel&gt;</span>
+        <input
+          id="input"
+          type="text"
+          spellcheck="false"
+          autocapitalize="off"
+          autocomplete="off"
+          placeholder="verb.scope param=value   (Tab to complete, ↑/↓ history)"
+          aria-label="command input"
+        />
+      </form>
+      <ul class="completions" id="completions" hidden></ul>
+    </main>
+
+    <aside class="term-side">
+      <div class="side-head">
+        <span>Recent audit log</span>
+        <button id="refresh-logs" title="Reload">↻</button>
+      </div>
+      <div class="logs" id="logs"></div>
+    </aside>
+
+    <script src="/terminal.js" type="module"></script>
+  </body>
+</html>

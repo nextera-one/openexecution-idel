@@ -85,13 +85,20 @@ export class IdelAgent {
   /**
    * Run one natural-language request to completion, yielding events as it goes.
    *
+   * `approve` is an optional per-call real-run gate. When provided it OVERRIDES
+   * the constructor-time `approve` for this call — the server uses this to inject
+   * a gate that round-trips to the browser, while the CLI passes its gate at
+   * construction. When neither is set, the agent stays propose/dry-run only.
+   *
    * `messages` is carried across calls by the caller if it wants a multi-turn
    * conversation; the simplest use is a fresh ask each time.
    */
   async *ask(
     userIntent: string,
+    approve?: AgentApproval,
     messages: Anthropic.MessageParam[] = [],
   ): AsyncGenerator<AgentEvent, void, unknown> {
+    const gate = approve ?? this.approve;
     messages.push({ role: "user", content: userIntent });
 
     for (let step = 0; step < this.maxSteps; step++) {
@@ -128,7 +135,7 @@ export class IdelAgent {
       const toolResults: Anthropic.ToolResultBlockParam[] = [];
       for (const block of res.content) {
         if (block.type !== "tool_use") continue;
-        const { result, event } = await this.dispatch(block);
+        const { result, event } = await this.dispatch(block, gate);
         if (event) yield event;
         toolResults.push({
           type: "tool_result",
@@ -146,11 +153,12 @@ export class IdelAgent {
   /** Route one tool_use block to the matching service call. */
   private async dispatch(
     block: Anthropic.ToolUseBlock,
+    gate: AgentApproval | undefined,
   ): Promise<{ result: { content: string; isError?: boolean }; event?: AgentEvent }> {
     try {
       switch (block.name) {
         case "run_idel":
-          return await this.runIdel(block.input as { command: string; dryRun?: boolean });
+          return await this.runIdel(block.input as { command: string; dryRun?: boolean }, gate);
         case "complete_idel": {
           const { input } = block.input as { input: string };
           return { result: { content: JSON.stringify(this.service.complete({ input })) } };
@@ -185,11 +193,12 @@ export class IdelAgent {
    */
   private async runIdel(
     input: { command: string; dryRun?: boolean },
+    gate: AgentApproval | undefined,
   ): Promise<{ result: { content: string; isError?: boolean }; event?: AgentEvent }> {
     const command = input.command;
     // Propose-only by default: dry-run unless the caller explicitly opted into
     // real execution via an approval gate AND the model didn't force dryRun.
-    const wantsReal = input.dryRun === false && this.approve !== undefined;
+    const wantsReal = input.dryRun === false && gate !== undefined;
 
     const dry = await this.service.run({ command, origin: "agent", dryRun: true });
 
@@ -208,7 +217,7 @@ export class IdelAgent {
     }
 
     // Approval-gated real run.
-    const approved = await this.approve!({ command, outcome: dry });
+    const approved = await gate!({ command, outcome: dry });
     if (!approved) {
       return {
         result: {

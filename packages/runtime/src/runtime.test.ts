@@ -271,3 +271,44 @@ describe("meta commands", () => {
     expect(out.result?.stdout).toMatch(/riskDefault: HIGH/);
   });
 });
+
+describe("OpenLogs append failure is surfaced, not silently swallowed (CONCERNS §2)", () => {
+  it("completes the command but warns once on stderr when append fails", async () => {
+    const dir = await sandbox();
+    let appendCalls = 0;
+    // A log writer whose append always rejects — simulates the prev_hash bug that
+    // previously meant "no record written, but the demo still printed BLOCKED".
+    const failingWriter = {
+      append: async () => {
+        appendCalls++;
+        throw new Error("simulated append failure");
+      },
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rt = new Runtime({ registry, policy: defaultPolicy(), logWriter: failingWriter as any });
+
+    const writes: string[] = [];
+    const original = process.stderr.write.bind(process.stderr);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (process.stderr as any).write = (chunk: any): boolean => {
+      writes.push(String(chunk));
+      return true;
+    };
+    try {
+      // Two commands → two failed appends, but only ONE warning (once per runtime).
+      const a = await rt.run("create.file name=a.txt", ctx({ cwd: dir }));
+      const b = await rt.run("create.file name=b.txt", ctx({ cwd: dir }));
+      // The command itself must still succeed — logging never sinks a command.
+      expect(a.record.result).toBe("success");
+      expect(b.record.result).toBe("success");
+    } finally {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (process.stderr as any).write = original;
+    }
+
+    expect(appendCalls).toBe(2);
+    const warnings = writes.filter((w) => w.includes("audit trail may be incomplete"));
+    expect(warnings).toHaveLength(1); // warned exactly once, not per-command
+    expect(warnings[0]).toContain("simulated append failure");
+  });
+});

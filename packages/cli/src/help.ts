@@ -6,6 +6,7 @@ USAGE
   idel <verb.scope> [key=value ...] [flags]
   idel ! "<native command>"            native passthrough (risk-scanned + logged)
   idel ask "<natural language>"        ask Claude to do it (proposes IDEL, runs via the runtime)
+  idel learn <cli> [--write]           teach IDEL an installed CLI (drafts IDEL commands from its --help)
   idel terminal                        interactive IDEL terminal (readline REPL; \`? <ask>\` for Claude)
   idel serve [--port N] [--static D]   start the local web/desktop terminal server
   idel completion <partial>            print autocomplete suggestions
@@ -18,7 +19,14 @@ EXAMPLES
   idel registry.explain command=remove.folder
   idel logs.list
   idel ! "tar -xvzf backup.tar.gz"
-  idel ask "delete the dist folder"          (requires ANTHROPIC_API_KEY; --yes to allow real runs)
+  idel ask "delete the dist folder"          (uses your Claude subscription or ANTHROPIC_API_KEY; --yes to allow real runs)
+  idel learn gh --write                      (drafts IDEL commands for the gh CLI into the custom layer)
+
+CLAUDE
+  The Claude console (idel ask, \`?\` in terminal, the web "Ask Claude") reaches
+  Claude via — in order — the installed \`claude\` CLI (your Pro/Max SUBSCRIPTION;
+  run \`claude login\` once), else ANTHROPIC_API_KEY (pay-per-token API). Force one
+  with IDEL_CLAUDE_PROVIDER=cli|api.
 
 FLAGS
   --dry-run        plan + classify, never touch the filesystem

@@ -8,6 +8,7 @@
   "exclude": ["src/**/*.test.ts"],
   "references": [
     { "path": "../types" },
-    { "path": "../server" }
+    { "path": "../server" },
+    { "path": "../registry" }
   ]
 }

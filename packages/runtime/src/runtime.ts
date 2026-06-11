@@ -69,6 +69,8 @@ export class Runtime {
   private readonly openLogWriter: OpenLogWriter | undefined;
   private readonly adapters: Adapter[];
   private readonly onApproval: ApprovalHandler | undefined;
+  /** Set once an OpenLogs append has failed, so we warn only on the first miss. */
+  private logFailureWarned = false;
 
   constructor(opts: RuntimeOptions) {
     this.registry = opts.registry;
@@ -538,8 +540,19 @@ export class Runtime {
     };
 
     if (this.openLogWriter) {
-      // Logging must never sink a command. Swallow log errors but surface once.
-      await this.openLogWriter.append(record).catch(() => undefined);
+      // Logging must never sink a command — a failed append cannot fail the
+      // command. But an accountability layer that silently stops recording is
+      // worse than one that complains, so surface the FIRST failure to stderr
+      // (once per runtime) instead of swallowing it entirely (CONCERNS §2).
+      await this.openLogWriter.append(record).catch((err: unknown) => {
+        if (!this.logFailureWarned) {
+          this.logFailureWarned = true;
+          const detail = (err as Error)?.message ?? String(err);
+          process.stderr.write(
+            `openlogs: failed to record this command — audit trail may be incomplete (${detail})\n`,
+          );
+        }
+      });
     }
 
     // Build the returned assessment from the AUTHORITATIVE merged values

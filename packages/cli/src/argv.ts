@@ -9,9 +9,9 @@
  */
 
 export interface CliInvocation {
-  /** Top-level subcommand: "run" (default), "ask", "terminal", "serve", "completion", "help", "version". */
-  mode: "run" | "ask" | "terminal" | "serve" | "completion" | "help" | "version";
-  /** The reassembled IDEL command string (run mode) or natural-language intent (ask mode). */
+  /** Top-level subcommand: "run" (default), "ask", "learn", "terminal", "serve", "completion", "help", "version". */
+  mode: "run" | "ask" | "learn" | "terminal" | "serve" | "completion" | "help" | "version";
+  /** The reassembled IDEL command string (run mode), NL intent (ask), or CLI name (learn). */
   command: string;
   /** Whether the command is a native passthrough (leading `!`). */
   native: boolean;
@@ -34,6 +34,8 @@ export interface CliFlags {
   staticDir?: string;
   /** `idel serve` open the URL in the default browser on start. */
   open?: boolean;
+  /** `idel learn` write accepted defs to the custom draft layer (default: preview only). */
+  write?: boolean;
 }
 
 const RUNTIME_FLAGS = new Set([
@@ -43,6 +45,7 @@ const RUNTIME_FLAGS = new Set([
   "--yes",
   "--json",
   "--open",
+  "--write",
 ]);
 const RUNTIME_VALUE_FLAGS = new Set([
   "--policy",
@@ -72,6 +75,7 @@ export function parseArgv(argv: string[]): CliInvocation {
       else if (arg === "--yes") flags.yes = true;
       else if (arg === "--json") flags.json = true;
       else if (arg === "--open") flags.open = true;
+      else if (arg === "--write") flags.write = true;
       continue;
     }
     if (RUNTIME_VALUE_FLAGS.has(arg)) {
@@ -115,6 +119,15 @@ export function parseArgv(argv: string[]): CliInvocation {
     return {
       mode: "ask",
       command: rest.slice(1).join(" "),
+      native: false,
+      flags,
+    };
+  }
+  if (first === "learn") {
+    // `idel learn <cli>` — introspect an installed CLI and draft IDEL defs.
+    return {
+      mode: "learn",
+      command: rest.slice(1).join(" ").trim(),
       native: false,
       flags,
     };

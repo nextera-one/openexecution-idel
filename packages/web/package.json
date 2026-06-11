@@ -1,0 +1,13 @@
+{
+  "name": "@openexecution/web",
+  "version": "1.1.0",
+  "type": "module",
+  "private": true,
+  "description": "Static web terminal + landing page for the OpenExecution Runtime. Pure HTML/CSS/JS, no build step — served by `idel serve --static`.",
+  "scripts": {
+    "build": "node -e \"process.exit(0)\""
+  },
+  "files": [
+    "public"
+  ]
+}

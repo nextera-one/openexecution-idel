@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenExecution Runtime · IDEL</title>
+    <meta
+      name="description"
+      content="A policy-aware execution runtime that turns human or AI intent into safe, logged, cross-platform execution. Not prettier Bash."
+    />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body class="landing">
+    <header class="hero">
+      <nav class="nav">
+        <span class="brand">OpenExecution<span class="brand-dot">·</span>IDEL</span>
+        <span class="nav-links">
+          <a href="#why">Why</a>
+          <a href="#how">How</a>
+          <a href="#learn">Learn a CLI</a>
+          <a href="#claude">Claude console</a>
+          <a href="/terminal.html" class="cta-link">Open terminal →</a>
+        </span>
+      </nav>
+
+      <div class="hero-body">
+        <p class="eyebrow">Protocol Zero</p>
+        <h1>Not prettier Bash.</h1>
+        <p class="lede">
+          A <strong>policy-aware execution runtime</strong> that turns human or
+          AI intent into <strong>safe, logged, cross-platform</strong> execution.
+          IDEL is the intent language; the runtime parses it, classifies its
+          risk, enforces policy, and records every decision to a signed,
+          append-only audit log — <em>before</em> anything touches disk.
+        </p>
+        <div class="hero-actions">
+          <a href="/terminal.html" class="btn btn-primary">Launch the web terminal</a>
+          <a href="#how" class="btn btn-ghost">See how it works</a>
+        </div>
+        <p class="hero-note" id="server-status">checking local runtime…</p>
+      </div>
+    </header>
+
+    <main>
+      <!-- The killer demo -->
+      <section class="band">
+        <h2>The killer demo</h2>
+        <p class="section-lede">
+          The same typo that nukes a laptop in a normal shell is refused here —
+          and the refusal is itself an audited event.
+        </p>
+        <pre class="demo"><span class="prompt">$ idel remove.folder name=/ recursive=true force=true</span>
+
+Command: remove.folder
+Risk: <span class="crit">CRITICAL</span>
+  - [CRITICAL] root-delete: Destructive target resolves to the filesystem root (/).
+  - [HIGH] recursive-force: Destructive op uses recursive + force together on /.
+Decision: <span class="crit">BLOCK</span> [rule #0]
+Reason: Matched rule 0 (action: block).
+<span class="crit">BLOCKED. No files were changed.</span>
+Log: ~/.idel/logs/openlogs.jsonl</pre>
+        <p class="section-note">
+          Exit code <code>4</code>. No filesystem traversal happened — the
+          runtime short-circuits a CRITICAL classification and refuses to even
+          walk <code>/</code>. <code>--yes</code> does <strong>not</strong> clear
+          it: the CRITICAL floor is enforced by the policy engine itself.
+        </p>
+      </section>
+
+      <!-- Why -->
+      <section class="band alt" id="why">
+        <h2>Why this exists</h2>
+        <p class="section-lede">
+          Traditional shells hide risk in flags and symbols.
+          <code>rm -rf /</code>, <code>chmod -R 777 /</code>, and
+          <code>dd if=x of=/dev/sda</code> are one typo from catastrophe, and
+          nothing about them is reviewable, audited, or policy-gated. IDEL
+          exposes risk <strong>at the call site</strong> and lets the runtime
+          decide.
+        </p>
+        <div class="grid">
+          <div class="card">
+            <h3>🛡️ Safety</h3>
+            <p>
+              Destructive intent must be explicit
+              (<code>recursive=true force=true</code>). Catastrophic targets —
+              root, home, drive roots, raw devices, recursive <code>777</code> on
+              broad trees — are blocked by a non-overridable floor.
+            </p>
+          </div>
+          <div class="card">
+            <h3>📜 Auditability</h3>
+            <p>
+              Every command, risk decision, adapter, exit code, and duration is
+              appended to a signed, hash-chained JSONL trail — with secret
+              redaction <em>before</em> signing.
+            </p>
+          </div>
+          <div class="card">
+            <h3>⚖️ Policy</h3>
+            <p>
+              allow / warn / require-dry-run / require-approval / block, matched
+              on risk, command, params, source, and environment. Built for CI and
+              team enforcement, not just an interactive prompt.
+            </p>
+          </div>
+          <div class="card">
+            <h3>🧭 Portability</h3>
+            <p>
+              Execution is adapter-based (POSIX, PowerShell, in-process Node) —
+              not "compile to Bash." Where platforms genuinely diverge, the
+              registry says so honestly.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- How -->
+      <section class="band" id="how">
+        <h2>One linear pipeline</h2>
+        <p class="section-lede">
+          Each command flows through the runtime exactly once. The runtime — not
+          the model, not the shell — is the enforcement boundary.
+        </p>
+        <ol class="pipeline">
+          <li><span class="step">parse</span> <code>verb.scope param=value</code> → typed AST</li>
+          <li><span class="step">resolve</span> command in the registry (custom &gt; official &gt; core)</li>
+          <li><span class="step">coerce</span> type-check params, fill defaults, reject unknowns</li>
+          <li><span class="step">safety</span> two passes (AST + resolved real-path); effective risk = MAX</li>
+          <li><span class="step">policy</span> map risk + match → allow / warn / dry-run / approval / block</li>
+          <li><span class="step">plan</span> pick an adapter, build a real argv (no string templates)</li>
+          <li><span class="step">execute</span> run the plan (or simulate for dry-run / block)</li>
+          <li><span class="step">openlogs</span> append one signed, redacted audit record</li>
+        </ol>
+        <div class="callout">
+          <strong>Two precedence systems, pointing opposite ways.</strong>
+          Registry <em>content</em> resolves custom&nbsp;&gt;&nbsp;official&nbsp;&gt;&nbsp;core
+          (a team can shadow a definition). Core safety <em>floors</em> resolve
+          core&nbsp;&gt;&nbsp;everything (a CRITICAL classification can never be
+          cleared — not by a custom registry, a lax policy, or <code>--yes</code>).
+        </div>
+      </section>
+
+      <!-- Learn a CLI -->
+      <section class="band alt" id="learn">
+        <h2>Teach IDEL any installed CLI</h2>
+        <p class="section-lede">
+          Install a tool, and IDEL can learn it. <code>idel learn</code>
+          introspects a CLI's own <code>--help</code>, asks Claude to draft IDEL
+          command definitions, and validates each against the registry schema —
+          fail-closed. Accepted drafts land in the custom layer and are then
+          governed by the <em>same</em> runtime: risk-classified, policy-gated,
+          audited.
+        </p>
+        <pre class="demo"><span class="prompt">$ idel learn gh --write</span>
+
+Introspecting "gh" and drafting IDEL commands…
+Learned gh  (7 accepted, 2 rejected)
+
+  ✓ gh.repo.clone    [MEDIUM]  Clone a repository into a new directory.
+  ✓ gh.pr.create     [LOW]     Create a pull request.
+  ✓ gh.pr.merge      [HIGH]    Merge a pull request into its base branch.
+  ✓ gh.repo.delete   [CRITICAL] Permanently delete a repository.
+  ✗ gh.alias.import  — adapters.posix: args[1] unknown arg kind
+
+✓ wrote 7 learned command(s) to ~/.idel/registries/custom/learned-gh.json</pre>
+        <p class="section-note">
+          A learned <code>delete</code>-shaped command is classified by the same
+          two-phase safety engine as a hand-written one. <strong>Learning a
+          destructive tool weakens no guarantee.</strong> Preview is the default;
+          <code>--write</code> persists.
+        </p>
+      </section>
+
+      <!-- Claude console -->
+      <section class="band" id="claude">
+        <h2>Claude, on the runtime's leash</h2>
+        <p class="section-lede">
+          The embedded Claude console doesn't wrap Claude around the runtime — it
+          puts the runtime <em>in front of</em> Claude. The model
+          <strong>proposes</strong> an IDEL command; the runtime parses,
+          classifies, applies policy, and executes (or refuses). A CRITICAL
+          command the model hallucinates is blocked by the same floor that
+          catches a human typo, and recorded as <code>source:&nbsp;"agent"</code>.
+        </p>
+        <div class="grid two">
+          <div class="card">
+            <h3>Propose, then confirm</h3>
+            <p>
+              Every write/move/delete is dry-run first. Before any real run, the
+              web console pauses and asks you to <strong>Approve</strong> or
+              <strong>Decline</strong> — the agent never auto-approves, and a
+              decline leaves the dry-run result standing.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Key stays server-side</h3>
+            <p>
+              The Anthropic call happens in the <code>idel serve</code> process,
+              over a loopback-only bind. Your key never reaches the browser.
+            </p>
+          </div>
+        </div>
+        <p class="hero-actions" style="margin-top: 1.4rem">
+          <a href="/terminal.html#ask" class="btn btn-primary">Try the Claude console →</a>
+        </p>
+      </section>
+
+      <!-- Audit -->
+      <section class="band alt">
+        <h2>OpenLogs: tamper-evident by construction</h2>
+        <p class="section-lede">
+          Every command produces exactly one record. Each is TPS-stamped,
+          SHA-256 hash-chained to its predecessor, and Ed25519-signed with a
+          machine-local key. Break a link — edit, reorder, or delete a record —
+          and verification flags the exact index.
+        </p>
+        <ul class="check">
+          <li>Secret redaction runs <em>before</em> signing (by key name and by value shape: JWTs, <code>sk-…</code>, AWS keys, GitHub PATs).</li>
+          <li>A policy block is a normal signed audit event (<code>result: blocked_before_execution</code>), not an error.</li>
+          <li>The chain verifies programmatically; the log is append-only.</li>
+        </ul>
+      </section>
+
+      <footer class="footer">
+        <p>
+          OpenExecution Runtime &amp; IDEL Terminal · v1.1 ·
+          <a href="https://openexecution.org/">openexecution.org</a>
+        </p>
+        <p class="footer-sub">
+          Prove that a runtime can prevent dangerous execution mistakes without
+          slowing developers down. Readability is a side benefit, not the pitch.
+        </p>
+      </footer>
+    </main>
+
+    <script>
+      // Live signal: is a local `idel serve` actually backing this page?
+      fetch("/api/health")
+        .then((r) => (r.ok ? r.json() : Promise.reject()))
+        .then((d) => {
+          const el = document.getElementById("server-status");
+          el.textContent = "● local runtime online — idel " + (d.version || "");
+          el.classList.add("online");
+        })
+        .catch(() => {
+          const el = document.getElementById("server-status");
+          el.textContent =
+            "○ no local runtime detected — run `idel serve --static …` to power the terminal";
+        });
+    </script>
+  </body>
+</html>

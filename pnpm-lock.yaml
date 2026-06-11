@@ -41,6 +41,9 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.102.0
         version: 0.102.0
+      '@openexecution/registry':
+        specifier: workspace:*
+        version: link:../registry
       '@openexecution/server':
         specifier: workspace:*
         version: link:../server
@@ -54,9 +57,6 @@ importers:
       '@openexecution/policy':
         specifier: workspace:*
         version: link:../policy
-      '@openexecution/registry':
-        specifier: workspace:*
-        version: link:../registry
       '@openexecution/runtime':
         specifier: workspace:*
         version: link:../runtime
@@ -170,6 +170,8 @@ importers:
         version: link:../types
 
   packages/types: {}
+
+  packages/web: {}
 
 packages:
 

@@ -19,6 +19,8 @@ The bet of V1 is narrow and defensible: **prove that a runtime can prevent dange
 - [Two precedence systems, pointing opposite ways](#two-precedence-systems-pointing-opposite-ways)
 - [Risk levels & policy actions](#risk-levels--policy-actions)
 - [Native passthrough](#native-passthrough)
+- [Web terminal & teaching IDEL a CLI](#quick-start)
+- [Using your Claude subscription](#using-your-claude-subscription)
 - [OpenLogs](#openlogs)
 - [CLI flags](#cli-flags)
 - [Exit codes](#exit-codes)
@@ -100,7 +102,7 @@ pnpm smoke          # boots idel, asserts the thesis demo is BLOCKED,
                     # and verifies the signed OpenLogs chain
 ```
 
-Requires **Node.js >= 22.3** for the signed-logging path (see [CONCERNS.md](CONCERNS.md) §4; `engines` still says `>=20`). Throughout the rest of this README, `idel <…>` is shorthand for `node packages/cli/bin/idel.js <…>`.
+Requires **Node.js >= 22.3** for the signed-logging path; `engines` declares `>=22.3` to match (see [CONCERNS.md](CONCERNS.md) §4). Throughout the rest of this README, `idel <…>` is shorthand for `node packages/cli/bin/idel.js <…>`.
 
 ---
 
@@ -143,6 +145,46 @@ Other useful commands: `idel registry.list` (29 core commands), `idel policy.che
 
 **Web / desktop terminal.** `idel serve` starts a local HTTP+SSE server (loopback, port 7878 by default) that exposes the same runtime — registry-driven autocomplete, risk/policy classification, and signed OpenLogs — over a small JSON API. It is the boundary the browser and desktop (Javelle) terminals talk to; pass `--static <dir>` to also serve a built UI. A command typed in the GUI is audited identically to one typed at the CLI.
 
+A ready-made, dependency-free web terminal + landing page ships in `packages/web/public`. The fastest way to see it:
+
+```bash
+pnpm ui            # builds if needed, then serves the terminal at http://127.0.0.1:7878
+# (equivalently: idel serve --static packages/web/public)
+```
+
+The page at `/` explains the runtime; `/terminal.html` is a live terminal with an **IDEL** mode (registry completion, history, a live audit-log panel) and an **Ask Claude** mode that drives the embedded console over `/api/agent/stream`. The Claude console lights up when Claude is reachable on the `idel serve` process (see [Using your Claude subscription](#using-your-claude-subscription)) — the credential never reaches the browser.
+
+Every command rendered in the terminal — typed or AI-proposed — shows what it **translates to**: the real adapter invocation (e.g. `remove.file name=x force=true` → `rm -f x`, `list.folder` → `ls`), so the mapping from intent to execution is visible at the call site. In the interactive `idel terminal`, a sensitive (HIGH/CRITICAL) command is previewed with its translation and risk and held for confirmation before any real run (and a `require_dry_run`-policy command is shown as dry-run-only, never silently promoted).
+
+The web console can run commands **for real**, behind an explicit approval. Before any real run, the agent pauses and the terminal shows the dry-run plus **Approve / Decline** buttons; the server parks the agent (over `POST /api/agent/approve`) until you choose. A decline leaves the dry-run result standing, and a forgotten approval fails closed after a timeout — the agent never touches disk without a human "Approve."
+
+**Teach IDEL an installed CLI.** `idel learn <cli>` introspects a CLI's own `--help`, asks Claude to draft IDEL command definitions, validates each against the registry schema (fail-closed), and **replays each def's declared `tests[]` through a real runtime** to prove its risk/policy classification. Accepted drafts land in the custom layer and are then governed by the same runtime — risk-classified, policy-gated, audited:
+
+```bash
+idel learn gh             # preview the drafted gh.* commands (uses your Claude subscription or API key)
+idel learn gh --write     # persist them to ~/.idel/registries/custom/learned-gh.json
+```
+
+A learned def must clear **two** gates to be accepted: schema validation, and every declared test matching the runtime's actual classification (a schema-valid-but-misclassifying def is shown with its failures but not written). It is introspection-only (it never runs a real subcommand), draft-layer-only, and a learned destructive command is classified by the same two-phase safety engine as a hand-written one — so learning a tool weakens no guarantee.
+
+---
+
+## Using your Claude subscription
+
+The Claude console (`idel ask`, the `?` prefix in `idel terminal`, and the web **Ask Claude** mode) reaches Claude through one of two providers, picked automatically:
+
+1. **Your Pro/Max subscription via the `claude` CLI** *(preferred — no API key)*. If [Claude Code](https://claude.com/claude-code) is installed and you've run `claude login`, IDEL shells out to `claude -p` using your subscription. IDEL **unsets `ANTHROPIC_API_KEY` in the spawned process**, so a stray key never silently bills per token.
+2. **`ANTHROPIC_API_KEY` via the Anthropic SDK** *(fallback)* — for CI/servers without the CLI.
+
+Precedence: `claude` CLI → API key → none. Force a provider with `IDEL_CLAUDE_PROVIDER=cli|api`. When neither is available, the console prints how to enable one.
+
+The two providers differ only in transport — the runtime is the enforcement boundary in both. With the subscription CLI, Claude has no tools and cannot touch your filesystem: it replies with the IDEL command(s) to run, and IDEL parses → classifies → policy-checks → executes-or-refuses → audits each one, then feeds the outcome back (via `claude -p --resume`) so Claude can adapt. A CRITICAL command Claude proposes is blocked by the same floor that catches a human typo, and recorded as `source: "agent"`.
+
+```bash
+claude login            # once — authenticates the CLI to your subscription
+idel ask "clean the build directory"   # Claude proposes IDEL; the runtime runs it
+```
+
 ---
 
 ## Architecture
@@ -176,7 +218,9 @@ parse → resolve → coerce → safety (two-phase) → policy → plan → exec
 | `packages/openlogs` | Signed, hash-chained audit writer (OpenLogs v2) with secret redaction. |
 | `packages/runtime` | Orchestrates the whole pipeline; handles native passthrough, approval, meta commands, and outcome assembly. |
 | `packages/server` | A dependency-free local HTTP+SSE boundary over the runtime (`idel serve`). Backs the web/desktop (Javelle) terminal; every request still flows through the full safety/policy/OpenLogs pipeline. |
-| `packages/cli` | The `idel` executable, flag parsing, rendering, completion, the interactive terminal, and `idel serve`. |
+| `packages/agent` | The embedded Claude console: exposes IDEL to Claude as a small tool surface, plus `idel learn` (CLI → IDEL draft). The only package that depends on `@anthropic-ai/sdk`; the key lives in the host process, never the browser. |
+| `packages/web` | The dependency-free static web terminal + landing page (no build step). Served by `idel serve --static`. |
+| `packages/cli` | The `idel` executable, flag parsing, rendering, completion, the interactive terminal, `idel ask`, `idel learn`, and `idel serve`. |
 
 The core command definitions live in `registries/core/*.json` (filesystem, permissions, archive, find, path/env, meta).
 
@@ -308,11 +352,11 @@ These let CI fail closed: a blocked or approval-required command never returns `
 ## Testing
 
 ```bash
-pnpm test           # vitest run — 178 tests across 8 packages
+pnpm test           # vitest run — 280 tests across 11 packages
 pnpm typecheck      # tsc --build --dry
 ```
 
-Coverage spans the parser (quoting/booleans/paths), registry schema validation, the safety engine (root/home/device/symlink/empty-target/glob cases), policy evaluation (all five actions plus the CRITICAL floor), POSIX and PowerShell plan snapshots, OpenLogs redaction, and end-to-end runtime flows. Destructive tests run only in temp directories.
+Coverage spans the parser (quoting/booleans/paths), registry schema validation, the safety engine (root/home/device/symlink/empty-target/glob cases), policy evaluation (all five actions plus the CRITICAL floor), POSIX and PowerShell plan snapshots, OpenLogs redaction, end-to-end runtime flows (including the OpenLogs-append-failure warning), the agent loop on **both** providers — the API/SDK path (multi-turn tool use, max-steps cap, tool-error recovery, API-error handling, per-call approval gate) and the subscription/`claude`-CLI path (a fake spawn driving multi-round plans, block enforcement, real-run approval, non-JSON fallback) — provider selection precedence, `idel learn` (fail-closed validation, hostile-name rejection, and test round-tripping through a real runtime), and the HTTP server (static serving, traversal guard, registry-id validation, injected-agent SSE, and the real-run approval round-trip). Destructive tests run only in temp directories.
 
 ---
 
@@ -322,8 +366,8 @@ Coverage spans the parser (quoting/booleans/paths), registry schema validation, 
 
 **Explicitly deferred to V2 (not built):**
 
-- **AI translation** (`native.convert`) and **CLI learning** (`native.learn`) — draft-only, behind review/tests/signing.
-- Full **Git / Docker / Kubernetes** registries (many of those commands are already readable).
+- **AI translation** (`native.convert`) — draft-only, behind review/tests/signing. (Note: **CLI learning** now ships as `idel learn <cli>` — see above. Promoting a learned draft to the signed `official` layer is the remaining V2 piece.)
+- Full **Git / Docker / Kubernetes** registries (many of those commands are already readable — or learnable via `idel learn`).
 - A **registry marketplace** (needs signing, trust, review, versioning, reputation).
 - **Remote / cloud execution** (comes after local safety and logs are proven).
 

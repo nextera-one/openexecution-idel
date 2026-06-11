@@ -29,12 +29,17 @@ import type {
  * used deliberately — it needs no extra dependency and matches Javelle's own
  * patch-stream contract (`EventSource`), so the desktop/web bridge is uniform.
  *
- * Agent: `POST /api/agent/stream` {intent} — the embedded Claude console. It
- * drives the injected agent, streaming one SSE event per AgentEvent
- * (`text`, `proposed`, `blocked`, ... then `done`). Each command the agent
- * proposes flows through the same TerminalService.run pipeline (audited as
- * `source: "agent"`). Returns 501 when no agent was wired. The Anthropic key
- * stays server-side; loopback-only bind keeps it off the network.
+ * Agent: `POST /api/agent/stream` {intent, allowReal?} — the embedded Claude
+ * console. It drives the injected agent, streaming one SSE event per AgentEvent
+ * (`text`, `proposed`, `blocked`, `approval_request`, ... then `done`). Each
+ * command the agent proposes flows through the same TerminalService.run pipeline
+ * (audited as `source: "agent"`). Returns 501 when no agent was wired. The
+ * Anthropic key stays server-side; loopback-only bind keeps it off the network.
+ *
+ * Real-run approval: with `allowReal: true`, a real run pauses on an
+ * `approval_request` SSE event and the stream parks until the client posts
+ * `POST /api/agent/approve` {approvalId, approve}. Without it the agent is
+ * propose/dry-run only.
  */
 
 export interface ServerOptions extends ServiceOptions {
@@ -59,10 +64,24 @@ export interface ServerOptions extends ServiceOptions {
  * The minimal agent surface the server drives — structurally satisfied by
  * `@openexecution/agent`'s `IdelAgent`, but typed here so the server has no
  * compile-time dependency on it.
+ *
+ * `ask` optionally takes an `approve` gate. When supplied, the agent calls it
+ * before promoting a (non-blocked) command from a dry run to a REAL run, and
+ * only executes for real if it resolves true. The server passes a gate that
+ * round-trips to the browser (emit `needs_approval`, await the client's
+ * `POST /api/agent/approve`), so the hosted console can run for real with an
+ * explicit human confirmation — never silently. When `approve` is omitted the
+ * agent stays propose/dry-run only.
  */
 export interface AgentRunner {
-  ask(intent: string): AsyncIterable<unknown>;
+  ask(intent: string, approve?: AgentApprovalGate): AsyncIterable<unknown>;
 }
+
+/** Resolves true to allow a real (non-dry-run) execution of `command`. */
+export type AgentApprovalGate = (info: {
+  command: string;
+  outcome: unknown;
+}) => Promise<boolean>;
 
 const VERSION = "1.1.0";
 const DEFAULT_PORT = 7878;
@@ -82,13 +101,32 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
   // Build the agent once and share it (its system prompt — the registry catalog
   // — is cached by Anthropic across turns). Undefined when the host didn't wire one.
   const agent = opts.agent ? opts.agent(service) : undefined;
+  // Coordinates the async approval round-trip: an agent stream that proposes a
+  // real run parks here on an id; POST /api/agent/approve resolves it.
+  const approvals = new PendingApprovals();
 
   const httpServer = createServer((req, res) => {
-    handle(req, res, service, { cors, staticDir, agent }).catch((err) => {
+    handle(req, res, service, { cors, staticDir, agent, approvals }).catch((err) => {
       // A ServiceError carries the intended HTTP status (e.g. 413 for an
       // oversized body thrown while reading the request stream); honor it here
       // so transport-level failures don't all collapse to 500.
       const status = err instanceof ServiceError ? err.status : 500;
+      // An unexpected (non-ServiceError) failure is a real bug, not a client
+      // error — surface it to the operator's stderr instead of letting it vanish
+      // into an opaque 500 the user can't diagnose. ServiceErrors are expected
+      // control flow and stay quiet.
+      if (!(err instanceof ServiceError)) {
+        process.stderr.write(
+          `idel serve: unhandled error on ${req.method} ${req.url}: ` +
+            `${(err as Error)?.stack ?? String(err)}\n`,
+        );
+      }
+      // The response may already be partially written (e.g. an SSE stream that
+      // failed mid-flight set its headers). Guard against a double-write throw.
+      if (res.headersSent) {
+        res.end();
+        return;
+      }
       sendJson(res, status, { error: String((err as Error)?.message ?? err) }, cors);
     });
   });
@@ -107,10 +145,14 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
   return {
     url,
     port: addr.port,
-    close: () =>
-      new Promise<void>((resolveClose, reject) =>
+    close: () => {
+      // Release any parked approvals (deny) so suspended agent loops unwind
+      // instead of keeping handles open across shutdown.
+      approvals.cancelAll();
+      return new Promise<void>((resolveClose, reject) =>
         httpServer.close((err) => (err ? reject(err) : resolveClose())),
-      ),
+      );
+    },
   };
 }
 
@@ -118,9 +160,14 @@ async function handle(
   req: IncomingMessage,
   res: ServerResponse,
   service: TerminalService,
-  cfg: { cors: boolean; staticDir: string | undefined; agent: AgentRunner | undefined },
+  cfg: {
+    cors: boolean;
+    staticDir: string | undefined;
+    agent: AgentRunner | undefined;
+    approvals: PendingApprovals;
+  },
 ): Promise<void> {
-  const { cors, staticDir, agent } = cfg;
+  const { cors, staticDir, agent, approvals } = cfg;
   const method = req.method ?? "GET";
   const url = new URL(req.url ?? "/", "http://localhost");
   const path = url.pathname;
@@ -144,6 +191,12 @@ async function handle(
 
   if (path.startsWith("/api/registry/") && method === "GET") {
     const id = decodeURIComponent(path.slice("/api/registry/".length));
+    // Validate the shape up front (defense in depth) rather than relying on the
+    // registry to reject it downstream: a command id is dotted lowercase, never
+    // a path. Anything else is a 400, not a registry miss.
+    if (!/^[a-z][a-z0-9]*(\.[a-z0-9]+)*$/.test(id)) {
+      return sendJson(res, 400, { error: `invalid command id: ${id}` }, cors);
+    }
     return sendJson(res, 200, service.explain(id), cors);
   }
 
@@ -179,8 +232,21 @@ async function handle(
         cors,
       );
     }
-    const body = await readJsonBody<{ intent?: string }>(req);
-    return agentStream(res, agent, body.intent ?? "", cors);
+    const body = await readJsonBody<{ intent?: string; allowReal?: boolean }>(req);
+    return agentStream(res, agent, body.intent ?? "", cors, body.allowReal ?? false, approvals);
+  }
+
+  // Resolve a pending real-run approval the agent stream is parked on. The
+  // browser POSTs { approvalId, approve } after the user confirms (or declines)
+  // the dry-run shown in the needs_approval SSE event. Idempotent-ish: an
+  // unknown/expired id is a 404 (the stream already moved on or timed out).
+  if (path === "/api/agent/approve" && method === "POST") {
+    const body = await readJsonBody<{ approvalId?: string; approve?: boolean }>(req);
+    const ok = approvals.resolve(body.approvalId ?? "", body.approve === true);
+    if (!ok) {
+      return sendJson(res, 404, { error: "no pending approval with that id" }, cors);
+    }
+    return sendJson(res, 200, { ok: true }, cors);
   }
 
   if (path === "/api/logs" && method === "GET") {
@@ -231,16 +297,24 @@ async function runStream(
  * one named SSE event (`event: <event.type>`), then a final `event: done`. The
  * browser/desktop terminal consumes this with the same EventSource contract as
  * /api/run/stream. The Anthropic call happens server-side — the key never
- * reaches the client. A real-run approval gate is intentionally absent here:
- * the hosted agent is propose/dry-run only, so no client round-trip is needed
- * to keep it from touching disk. (A future `needs_approval` → re-POST flow can
- * use the existing RunRequest.approve path.)
+ * reaches the client.
+ *
+ * Real-run approval: when `allowReal` is set, the agent is given a gate that
+ * round-trips to the browser. Before a (non-blocked) command is promoted from
+ * dry-run to a REAL run, the gate emits an `approval_request` SSE event carrying
+ * an `approvalId` + the dry-run outcome, then PARKS on {@link PendingApprovals}
+ * (on THIS connection — the loop is suspended) until the client POSTs
+ * `/api/agent/approve { approvalId, approve }`. The agent only touches disk on an
+ * explicit human yes. Without `allowReal`, no gate is passed and the agent stays
+ * propose/dry-run only — identical to the prior behavior.
  */
 async function agentStream(
   res: ServerResponse,
   agent: AgentRunner,
   intent: string,
   cors: boolean,
+  allowReal: boolean,
+  approvals: PendingApprovals,
 ): Promise<void> {
   if (cors) setCors(res);
   res.writeHead(200, {
@@ -254,16 +328,93 @@ async function agentStream(
     res.end();
     return;
   }
+
+  // The gate the agent calls before a real run (only wired when allowReal).
+  // Track this stream's own outstanding approval id so a disconnect denies only
+  // THIS stream's pending approval, never another concurrent stream's.
+  let outstandingId: string | undefined;
+  const gate: AgentApprovalGate = async ({ command, outcome }) => {
+    const { id, decision } = approvals.create();
+    outstandingId = id;
+    writeSse(res, "approval_request", { approvalId: id, command, outcome });
+    // Suspend the agent loop here until the client resolves this id (or it is
+    // cancelled when the connection drops). Default-deny on cancellation.
+    try {
+      return await decision;
+    } finally {
+      outstandingId = undefined;
+    }
+  };
+
+  // If the client disconnects mid-park, release only this stream's pending
+  // approval as a deny so its agent resumes (the dry-run result stands) instead
+  // of hanging — without disturbing other concurrent agent streams.
+  const onClose = () => {
+    if (outstandingId) approvals.resolve(outstandingId, false);
+  };
+  res.on("close", onClose);
+
   try {
-    for await (const ev of agent.ask(intent)) {
+    for await (const ev of agent.ask(intent, allowReal ? gate : undefined)) {
       const type = (ev as { type?: string }).type ?? "message";
       writeSse(res, type, ev);
     }
   } catch (err) {
     writeSse(res, "error", { error: String((err as Error)?.message ?? err) });
   } finally {
+    res.off("close", onClose);
     writeSse(res, "done", {});
     res.end();
+  }
+}
+
+/**
+ * Coordinates the async approval round-trip between an agent SSE stream (which
+ * parks on a promise) and the `/api/agent/approve` route (which resolves it).
+ *
+ * Kept deliberately tiny and per-server: at most a handful of approvals are ever
+ * outstanding (one per active agent stream that hit a real run). Each gets an id;
+ * `resolve(id, approved)` settles its promise; `create()` also arms a timeout so
+ * a forgotten approval defaults to DENY rather than leaking a parked agent loop.
+ */
+class PendingApprovals {
+  private seq = 0;
+  private readonly pending = new Map<string, (approved: boolean) => void>();
+  /** How long a parked approval waits before auto-denying. */
+  private static readonly TIMEOUT_MS = 5 * 60_000;
+
+  /** Mint an approval id and the promise the agent gate awaits. */
+  create(): { id: string; decision: Promise<boolean> } {
+    const id = `appr_${++this.seq}`;
+    const decision = new Promise<boolean>((resolveDecision) => {
+      const timer = setTimeout(() => {
+        if (this.pending.delete(id)) resolveDecision(false); // fail-closed
+      }, PendingApprovals.TIMEOUT_MS);
+      // Unref so a pending approval never keeps the process alive on its own.
+      if (typeof timer.unref === "function") timer.unref();
+      this.pending.set(id, (approved: boolean) => {
+        clearTimeout(timer);
+        resolveDecision(approved);
+      });
+    });
+    return { id, decision };
+  }
+
+  /** Settle a pending approval. Returns false if the id is unknown/expired. */
+  resolve(id: string, approved: boolean): boolean {
+    const settle = this.pending.get(id);
+    if (!settle) return false;
+    this.pending.delete(id);
+    settle(approved);
+    return true;
+  }
+
+  /** Deny every outstanding approval (e.g. on client disconnect / shutdown). */
+  cancelAll(): void {
+    for (const [id, settle] of this.pending) {
+      this.pending.delete(id);
+      settle(false);
+    }
   }
 }
 

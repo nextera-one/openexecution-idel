@@ -1,6 +1,6 @@
 import { createInterface } from "node:readline";
 
-import { IdelAgent, type AgentEvent } from "@openexecution/agent";
+import { createAgent, type AgentEvent } from "@openexecution/agent";
 import { TerminalService } from "@openexecution/server";
 import type { Runtime } from "@openexecution/runtime";
 
@@ -11,9 +11,12 @@ import { color, render } from "./render.js";
  * in the terminal. Natural language goes to the agent, which proposes IDEL
  * commands; each one runs through the same runtime pipeline as a typed command,
  * so safety/policy/OpenLogs are identical and AI-run commands are audited as
- * `source: "agent"`. The Anthropic key stays in this process.
+ * `source: "agent"`. The Claude credential stays in this process.
  *
- * `confirmReal` controls whether a proposed command may run for real after the
+ * Claude is reached via the user's SUBSCRIPTION (the installed `claude` CLI,
+ * preferred) or the ANTHROPIC_API_KEY (fallback) — {@link createAgent} picks.
+ *
+ * `allowReal` controls whether a proposed command may run for real after the
  * dry run. The CLI prompts the human (readline); declining leaves the dry-run
  * result standing. The agent never auto-approves.
  */
@@ -22,14 +25,6 @@ export async function ask(
   intent: string,
   opts: { cwd: string; environment?: string; noNative?: boolean; allowReal: boolean },
 ): Promise<number> {
-  if (!process.env["ANTHROPIC_API_KEY"]) {
-    process.stderr.write(
-      color.red("ANTHROPIC_API_KEY is not set. ") +
-        color.gray("Export it to use `idel ask`.\n"),
-    );
-    return 2;
-  }
-
   const service = new TerminalService({
     runtime,
     cwd: opts.cwd,
@@ -37,7 +32,7 @@ export async function ask(
     noNative: opts.noNative,
   });
 
-  const agent = new IdelAgent({
+  const selection = await createAgent({
     service,
     // Only wire a real-run gate when the user opted in (--yes). Otherwise the
     // agent stays in propose/dry-run-only mode and nothing touches disk.
@@ -45,6 +40,18 @@ export async function ask(
       ? async ({ command }) => promptYesNo(`Run for real: ${command}?`)
       : undefined,
   });
+  if (!selection) {
+    process.stderr.write(noClaudeMessage());
+    return 2;
+  }
+  process.stderr.write(
+    color.gray(
+      selection.kind === "cli"
+        ? "Using your Claude subscription (claude CLI).\n"
+        : "Using the Anthropic API (ANTHROPIC_API_KEY).\n",
+    ),
+  );
+  const agent = selection.agent;
 
   let exitCode = 0;
   // The model decides dryRun per call; when --yes is passed we also let it ask
@@ -106,4 +113,16 @@ function promptYesNo(question: string): Promise<boolean> {
       resolveP(/^y(es)?$/i.test(answer.trim()));
     });
   });
+}
+
+/** Guidance shown when neither the claude CLI nor an API key is available. */
+export function noClaudeMessage(): string {
+  return (
+    color.red("Claude is not available. ") +
+    color.gray(
+      "To use `idel ask` / `?`, either:\n" +
+        "  • install Claude Code and run `claude login` (uses your Pro/Max subscription), or\n" +
+        "  • set ANTHROPIC_API_KEY (uses the pay-per-token API).\n",
+    )
+  );
 }

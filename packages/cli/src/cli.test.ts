@@ -58,6 +58,22 @@ describe("parseArgv", () => {
     expect(c.command).toBe("create.");
   });
 
+  it("maps `ask` and `learn` subcommands", () => {
+    const a = parseArgv(["ask", "delete", "the", "dist", "folder"]);
+    expect(a.mode).toBe("ask");
+    expect(a.command).toBe("delete the dist folder");
+
+    const l = parseArgv(["learn", "gh"]);
+    expect(l.mode).toBe("learn");
+    expect(l.command).toBe("gh");
+    expect(l.flags.write).toBeFalsy();
+
+    const lw = parseArgv(["learn", "gh", "--write"]);
+    expect(lw.mode).toBe("learn");
+    expect(lw.command).toBe("gh");
+    expect(lw.flags.write).toBe(true);
+  });
+
   it("handles --no-native and --yes", () => {
     const inv = parseArgv(["!", "echo hi", "--no-native", "--yes"]);
     expect(inv.flags.noNative).toBe(true);

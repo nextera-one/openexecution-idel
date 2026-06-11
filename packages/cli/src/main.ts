@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { Runtime } from "@openexecution/runtime";
 import { OpenLogWriter } from "@openexecution/openlogs";
 import { loadPolicy, defaultPolicy } from "@openexecution/policy";
-import { startServer } from "@openexecution/server";
-import { IdelAgent } from "@openexecution/agent";
+import { startServer, type TerminalService } from "@openexecution/server";
+import { IdelAgent, IdelCliAgent, detectProvider } from "@openexecution/agent";
 import type { PolicyConfig, RuntimeContext, RuntimeOutcome } from "@openexecution/runtime";
 
 import { parseArgv, type CliFlags } from "./argv.js";
@@ -14,6 +14,7 @@ import { complete } from "./complete.js";
 import { color, render, renderJson } from "./render.js";
 import { startTerminal } from "./terminal.js";
 import { ask } from "./ask.js";
+import { learn } from "./learn.js";
 import { HELP_TEXT, VERSION } from "./help.js";
 
 /** Process entry point. Returns the desired process exit code. */
@@ -33,6 +34,16 @@ export async function main(argv: string[]): Promise<number> {
   if (inv.mode === "version") {
     process.stdout.write(`idel ${VERSION}\n`);
     return 0;
+  }
+
+  // `idel learn <cli>` introspects an installed CLI and drafts IDEL defs. It
+  // needs no runtime/policy/registry of its own (it only writes the draft
+  // layer), so handle it before building the runtime.
+  if (inv.mode === "learn") {
+    return learn(inv.command, {
+      write: inv.flags.write ?? false,
+      json: inv.flags.json,
+    });
   }
 
   let policy: PolicyConfig;
@@ -116,10 +127,20 @@ export async function main(argv: string[]): Promise<number> {
  * to a CLI command.
  */
 async function serve(runtime: Runtime, flags: CliFlags): Promise<number> {
-  // Wire the embedded Claude console only when a key is present. The hosted
-  // agent is propose/dry-run only (it cannot run a real command without an
-  // approval gate, which the HTTP path doesn't grant), so it never touches disk.
-  const agentEnabled = Boolean(process.env["ANTHROPIC_API_KEY"]);
+  // Pick how the embedded Claude console reaches Claude: the user's Pro/Max
+  // SUBSCRIPTION via the installed `claude` CLI (preferred), else the API key.
+  // Detected once at startup so the (synchronous) agent factory can build the
+  // matching agent per request. The hosted agent can run for real, but only
+  // behind the browser approval round-trip (`allowReal` + POST
+  // /api/agent/approve) — it never touches disk without an explicit "Approve."
+  const provider = await detectProvider();
+  const agentFactory =
+    provider === "cli"
+      ? (service: TerminalService) => new IdelCliAgent({ service })
+      : provider === "api"
+        ? (service: TerminalService) => new IdelAgent({ service })
+        : undefined;
+
   const server = await startServer({
     runtime,
     port: flags.port,
@@ -127,7 +148,7 @@ async function serve(runtime: Runtime, flags: CliFlags): Promise<number> {
     staticDir: flags.staticDir,
     environment: flags.environment,
     noNative: flags.noNative,
-    agent: agentEnabled ? (service) => new IdelAgent({ service }) : undefined,
+    agent: agentFactory,
   });
 
   process.stdout.write(
@@ -136,11 +157,17 @@ async function serve(runtime: Runtime, flags: CliFlags): Promise<number> {
       color.blue(server.url) +
       "\n",
   );
+  const claudeNote =
+    provider === "cli"
+      ? "(Claude console enabled — your subscription, via the claude CLI)\n"
+      : provider === "api"
+        ? "(Claude console enabled — Anthropic API)\n"
+        : "(disabled — install Claude Code + `claude login`, or set ANTHROPIC_API_KEY)\n";
   process.stdout.write(
     color.gray(
       `  API:  ${server.url}/api/health · /api/registry · /api/run · /api/complete · /api/logs\n` +
         `  Ask:  ${server.url}/api/agent/stream  ` +
-        (agentEnabled ? "(Claude console enabled)\n" : "(disabled — set ANTHROPIC_API_KEY)\n") +
+        claudeNote +
         (flags.staticDir
           ? `  UI:   serving ${flags.staticDir} at ${server.url}/\n`
           : `  UI:   none (pass --static <dir> to serve a built terminal UI)\n`) +

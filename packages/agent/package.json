@@ -17,10 +17,10 @@
   "dependencies": {
     "@openexecution/types": "workspace:*",
     "@openexecution/server": "workspace:*",
+    "@openexecution/registry": "workspace:*",
     "@anthropic-ai/sdk": "^0.102.0"
   },
   "devDependencies": {
-    "@openexecution/registry": "workspace:*",
     "@openexecution/policy": "workspace:*",
     "@openexecution/openlogs": "workspace:*",
     "@openexecution/runtime": "workspace:*"
