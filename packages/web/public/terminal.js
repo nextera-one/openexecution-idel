@@ -218,7 +218,12 @@ async function runAsk(intent) {
         break;
     }
   });
-  if (!sawAgent) line("(no response — is ANTHROPIC_API_KEY set on the server?)", "muted");
+  if (!sawAgent) {
+    line(
+      "(no response — install Claude Code + run `claude login`, or set ANTHROPIC_API_KEY on the server)",
+      "muted",
+    );
+  }
   refreshLogs();
 }
 
@@ -310,12 +315,70 @@ function hideCompletions() {
 
 function applyCompletion(c) {
   // The server returns whole-token suggestions; replace the last token.
-  const parts = input.value.split(/\s+/);
-  if (c.includes("=") || !input.value.endsWith(" ")) parts[parts.length - 1] = c;
-  else parts.push(c);
-  input.value = parts.join(" ") + (c.endsWith(".") ? "" : " ");
+  const bounds = lastTokenBounds(input.value);
+  input.value =
+    input.value.slice(0, bounds.start) +
+    c +
+    input.value.slice(bounds.end) +
+    completionSuffix(c);
   hideCompletions();
   input.focus();
+}
+
+function completionSuffix(c) {
+  if (c.endsWith("=") || c.endsWith("/") || c.endsWith("\\") || c.endsWith(".")) return "";
+  return " ";
+}
+
+function lastTokenBounds(value) {
+  if (endsWithTokenSeparator(value)) return { start: value.length, end: value.length };
+  let start = 0;
+  let quote;
+  let escaped = false;
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (ch === quote) quote = undefined;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      continue;
+    }
+    if (/\s/.test(ch)) start = i + 1;
+  }
+  return { start, end: value.length };
+}
+
+function endsWithTokenSeparator(value) {
+  if (!/\s$/.test(value)) return false;
+  let quote;
+  let escaped = false;
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (ch === quote) quote = undefined;
+      continue;
+    }
+    if (ch === "'" || ch === '"') quote = ch;
+  }
+  return quote === undefined && !escaped;
 }
 
 // ---------------------------------------------------------------------------
@@ -429,12 +492,18 @@ async function boot() {
     if (d?.ok) {
       statusEl.textContent = "● online · idel " + (d.version ?? "");
       statusEl.classList.add("online");
+      if (d.agentAvailable === false) {
+        $("mode-ask").disabled = true;
+        $("mode-ask").title =
+          "Claude console disabled — install Claude Code + run `claude login`, or set ANTHROPIC_API_KEY on the server";
+      }
     } else throw new Error();
   } catch {
     statusEl.textContent = "○ offline — start `idel serve --static …`";
     statusEl.classList.add("offline");
   }
-  // Probe whether the Claude console is wired (501 when no key).
+  // Probe whether the Claude console is wired on older servers that do not
+  // expose health.agentAvailable yet.
   try {
     const probe = await fetch("/api/agent/stream", {
       method: "POST",
@@ -443,7 +512,8 @@ async function boot() {
     });
     if (probe.status === 501) {
       $("mode-ask").disabled = true;
-      $("mode-ask").title = "Claude console disabled — no ANTHROPIC_API_KEY on the server";
+      $("mode-ask").title =
+        "Claude console disabled — install Claude Code + run `claude login`, or set ANTHROPIC_API_KEY on the server";
     }
   } catch {
     /* ignore */

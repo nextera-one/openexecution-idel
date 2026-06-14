@@ -68,7 +68,7 @@ export class Runtime {
   private readonly policy: PolicyConfig;
   private readonly openLogWriter: OpenLogWriter | undefined;
   private readonly adapters: Adapter[];
-  private readonly onApproval: ApprovalHandler | undefined;
+  private onApproval: ApprovalHandler | undefined;
   /** Set once an OpenLogs append has failed, so we warn only on the first miss. */
   private logFailureWarned = false;
 
@@ -119,6 +119,15 @@ export class Runtime {
    */
   get logWriter(): OpenLogWriter | undefined {
     return this.openLogWriter;
+  }
+
+  /**
+   * Replace the approval handler used for future runs. Hosts with their own
+   * prompt surface, such as the readline REPL, can install this after the
+   * Runtime is constructed without rebuilding the registry/logging stack.
+   */
+  setApprovalHandler(handler: ApprovalHandler | undefined): void {
+    this.onApproval = handler;
   }
 
   /**

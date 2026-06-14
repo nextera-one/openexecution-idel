@@ -93,6 +93,15 @@ describe("schema — validateCommandDef", () => {
     expect(res.errors.join("\n")).toMatch(/unknown adapter/);
   });
 
+  it("rejects @node outside the node adapter", () => {
+    const bad = goodDef({
+      adapters: { powershell: { command: "@node", args: [] } },
+    });
+    const res = checkCommandDef(bad);
+    expect(res.ok).toBe(false);
+    expect(res.errors.join("\n")).toMatch(/@node is only valid/);
+  });
+
   it("rejects missing required fields (summary/category)", () => {
     expect(checkCommandDef(goodDef({ summary: "" })).ok).toBe(false);
     expect(checkCommandDef(goodDef({ category: "" })).ok).toBe(false);

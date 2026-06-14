@@ -2,7 +2,6 @@
   "name": "@openexecution/cli",
   "version": "1.1.0",
   "type": "module",
-  "private": true,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
@@ -14,7 +13,10 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist", "bin"],
+  "files": [
+    "dist",
+    "bin"
+  ],
   "scripts": {
     "build": "tsc --build"
   },
@@ -27,5 +29,23 @@
     "@openexecution/policy": "workspace:*",
     "@openexecution/server": "workspace:*",
     "@openexecution/agent": "workspace:*"
+  },
+  "description": "Command-line interface, REPL, and local server entrypoint for IDEL.",
+  "license": "MIT",
+  "author": "Nextera One",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nextera-one/openexecution-idel.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/nextera-one/openexecution-idel#readme",
+  "bugs": {
+    "url": "https://github.com/nextera-one/openexecution-idel/issues"
+  },
+  "engines": {
+    "node": ">=22.3"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

@@ -94,11 +94,31 @@ describe("TerminalService.complete", () => {
     await mkdir(join(dir, "buildout"));
     await writeFile(join(dir, "readme.md"), "hi");
     const svc = makeService(dir);
-    // `name=./` lists the cwd's contents (a bare `name=` lists the parent, by the
-    // shared completer's contract — same as the CLI readline completer).
+    const bare = svc.complete({ input: "remove.folder name=", cwd: dir });
+    expect(bare).toContain("name=buildout/");
+    expect(bare).toContain("name=readme.md");
+
     const out = svc.complete({ input: "remove.folder name=./", cwd: dir });
     expect(out).toContain("name=./buildout/");
     expect(out).toContain("name=./readme.md");
+  });
+
+  it("completes quoted paths with spaces", async () => {
+    const dir = await sandbox();
+    await mkdir(join(dir, "my folder"));
+    await writeFile(join(dir, "my file.sh"), "echo hi\n");
+    const svc = makeService(dir);
+    const out = svc.complete({ input: 'create.file name="my ', cwd: dir });
+    expect(out).toContain('name="my folder/');
+    expect(out).toContain('name="my file.sh"');
+  });
+
+  it("completes native passthrough script paths", async () => {
+    const dir = await sandbox();
+    await writeFile(join(dir, "script.sh"), "echo hi\n");
+    const svc = makeService(dir);
+    const out = svc.complete({ input: "! ./", cwd: dir });
+    expect(out).toContain("./script.sh");
   });
 });
 
@@ -218,6 +238,7 @@ describe("startServer (HTTP)", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(true);
+    expect(body.agentAvailable).toBe(false);
   });
 
   it("GET /api/registry → catalog", async () => {
@@ -297,6 +318,8 @@ describe("startServer (HTTP)", () => {
       body: JSON.stringify({ intent: "do something" }),
     });
     expect(res.status).toBe(501);
+    const body = await res.json();
+    expect(body.error).toMatch(/claude login|ANTHROPIC_API_KEY/i);
   });
 });
 

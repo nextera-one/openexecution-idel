@@ -2,7 +2,6 @@
   "name": "@openexecution/runtime",
   "version": "1.1.0",
   "type": "module",
-  "private": true,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -26,5 +25,23 @@
   },
   "files": [
     "dist"
-  ]
+  ],
+  "description": "Policy-aware OpenExecution Runtime pipeline for parsing, safety, execution, and audit logging.",
+  "license": "MIT",
+  "author": "Nextera One",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nextera-one/openexecution-idel.git",
+    "directory": "packages/runtime"
+  },
+  "homepage": "https://github.com/nextera-one/openexecution-idel#readme",
+  "bugs": {
+    "url": "https://github.com/nextera-one/openexecution-idel/issues"
+  },
+  "engines": {
+    "node": ">=22.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }

@@ -5,7 +5,7 @@ import { TerminalService } from "@openexecution/server";
 import type { Runtime } from "@openexecution/runtime";
 import type { RuntimeContext } from "@openexecution/runtime";
 
-import { complete } from "./complete.js";
+import { complete, completionFragment } from "./complete.js";
 import { render, translateLine } from "./render.js";
 import { color } from "./render.js";
 import { renderEvent, noClaudeMessage } from "./ask.js";
@@ -18,6 +18,7 @@ import { renderEvent, noClaudeMessage } from "./ask.js";
 export async function startTerminal(
   runtime: Runtime,
   baseCtx: RuntimeContext,
+  opts: { autoApprove?: boolean } = {},
 ): Promise<number> {
   const rl = createInterface({
     input: process.stdin,
@@ -25,8 +26,19 @@ export async function startTerminal(
     prompt: color.blue("idel> "),
     completer: (line: string): [string[], string] => {
       const suggestions = complete(line, runtime.reg, process.cwd());
-      return [suggestions, line];
+      return [suggestions, completionFragment(line)];
     },
+  });
+
+  runtime.setApprovalHandler(async ({ command, risk, reason, approvers }) => {
+    if (opts.autoApprove) return true;
+    const approverText = approvers?.length
+      ? ` approvers: ${approvers.join(", ")}.`
+      : "";
+    return promptYesNo(
+      rl,
+      `Policy requires approval for ${command} (${risk}): ${reason}.${approverText} Run for real?`,
+    );
   });
 
   // The agent (Claude console) is built lazily on first `?` use, so the absence

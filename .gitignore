@@ -1,5 +1,6 @@
 node_modules/
 packages/*/dist/
+packages/registry/registries/
 packages/*/*.tsbuildinfo
 *.tsbuildinfo
 .DS_Store

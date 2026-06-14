@@ -239,6 +239,28 @@ describe("approval flow", () => {
     expect(out.record.result).toBe("success");
     expect(await readdir(dir)).not.toContain("dist");
   });
+
+  it("lets hosts replace the approval handler after construction", async () => {
+    const policy = loadPolicy(
+      JSON.stringify({
+        rules: [
+          { match: { command: "remove.folder" }, action: "approval", approvers: ["lead"] },
+        ],
+      }),
+    );
+    const dir = await sandbox();
+    await mkdir(join(dir, "dist"));
+    const rt = new Runtime({ registry, policy, onApproval: async () => false });
+    rt.setApprovalHandler(async () => true);
+
+    const out = await rt.run(
+      "remove.folder name=dist recursive=true",
+      ctx({ cwd: dir }),
+    );
+
+    expect(out.record.result).toBe("success");
+    expect(await readdir(dir)).not.toContain("dist");
+  });
 });
 
 describe("usage errors are returned, not thrown", () => {

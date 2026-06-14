@@ -19,6 +19,9 @@ EXAMPLES
   idel registry.explain command=remove.folder
   idel logs.list
   idel ! "tar -xvzf backup.tar.gz"
+  idel ! "bash ./scripts/deploy.sh"          run a shell script on Linux/macOS/Git Bash/WSL
+  idel ! "./scripts/deploy.sh"               run an executable script with a shebang
+  idel ! "cmd /c scripts\\deploy.bat"        run a Windows batch file
   idel ask "delete the dist folder"          (uses your Claude subscription or ANTHROPIC_API_KEY; --yes to allow real runs)
   idel learn gh --write                      (drafts IDEL commands for the gh CLI into the custom layer)
 

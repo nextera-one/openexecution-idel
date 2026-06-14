@@ -200,6 +200,8 @@ function validateAdapterSpec(
   }
   if (!isNonEmptyString(raw.command)) {
     errors.push(`${scope}.command: must be a non-empty string`);
+  } else if (raw.command === "@node" && name !== "node") {
+    errors.push(`${scope}.command: @node is only valid on the node adapter`);
   }
   if (!Array.isArray(raw.args)) {
     errors.push(`${scope}.args: must be an array`);

@@ -15,7 +15,7 @@ import type {
  * local boundary the web and desktop (Javelle/Electron) terminals talk to.
  *
  * Endpoints (all JSON unless noted):
- *   GET  /api/health                 → { ok, version }
+ *   GET  /api/health                 → { ok, version, agentAvailable }
  *   GET  /api/registry               → RegistryEntry[]
  *   GET  /api/registry/:id           → { resolved, shadowed }
  *   POST /api/complete   {input,cwd} → string[]
@@ -182,7 +182,7 @@ async function handle(
 
   // --- API routes ---------------------------------------------------------
   if (path === "/api/health") {
-    return sendJson(res, 200, { ok: true, version: VERSION }, cors);
+    return sendJson(res, 200, { ok: true, version: VERSION, agentAvailable: Boolean(agent) }, cors);
   }
 
   if (path === "/api/registry" && method === "GET") {
@@ -228,7 +228,10 @@ async function handle(
       return sendJson(
         res,
         501,
-        { error: "agent not configured on this server (no ANTHROPIC_API_KEY?)" },
+        {
+          error:
+            "agent not configured on this server (install Claude Code + run `claude login`, or set ANTHROPIC_API_KEY)",
+        },
         cors,
       );
     }

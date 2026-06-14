@@ -86,9 +86,12 @@
         "semanticNotes": "tar -tzf lists entries without extracting."
       },
       "powershell": {
-        "command": "@node",
-        "args": [{ "kind": "value", "param": "file" }],
-        "semanticNotes": "DIVERGES: PowerShell has no built-in tar/zip listing cmdlet that matches `tar -t` across formats. Listing is delegated to the @node adapter (which can introspect either container) for cross-platform parity."
+        "command": "tar",
+        "args": [
+          { "kind": "literal", "value": "-tf" },
+          { "kind": "value", "param": "file" }
+        ],
+        "semanticNotes": "Uses the Windows-bundled bsdtar (`tar -tf <file>`) through the PowerShell host. This lists tar/gzip archives and, on modern Windows, ZIP archives too; exact format support depends on the installed tar.exe."
       }
     },
     "examples": ["archive.list file=dist.tar.gz"],

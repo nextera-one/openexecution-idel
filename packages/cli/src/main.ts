@@ -76,7 +76,9 @@ export async function main(argv: string[]): Promise<number> {
   }
 
   if (inv.mode === "terminal") {
-    return startTerminal(runtime, makeContext(inv.flags));
+    return startTerminal(runtime, makeContext(inv.flags), {
+      autoApprove: inv.flags.yes,
+    });
   }
 
   if (inv.mode === "serve") {

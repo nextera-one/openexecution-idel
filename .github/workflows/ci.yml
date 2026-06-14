@@ -21,7 +21,7 @@ jobs:
         # Spec §31 "Definition of Live": tests must pass on Linux/macOS and
         # Windows. The Windows leg also exercises the PowerShell adapter path
         # (and the one Windows-only test that is skipped elsewhere).
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
         node: [22]
     steps:
       - uses: actions/checkout@v4
@@ -49,9 +49,7 @@ jobs:
       - name: Test
         run: pnpm test
 
-      # The smoke test is a bash script; run it only on Linux. It boots the real
-      # `idel` binary, asserts the thesis demo is BLOCKED, and verifies the
-      # signed OpenLogs chain end to end.
+      # Boots the real `idel` binary, asserts the thesis demo is BLOCKED, and
+      # verifies the signed OpenLogs chain end to end on every supported OS.
       - name: Smoke test (CLI + signed OpenLogs)
-        if: runner.os == 'Linux'
         run: pnpm smoke
