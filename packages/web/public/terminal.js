@@ -17,7 +17,34 @@ const completionsEl = $("completions");
 const statusEl = $("status");
 const logsEl = $("logs");
 const tabsEl = $("tabs");
+const modeIdelBtn = $("mode-idel");
+const modeAskBtn = $("mode-ask");
 const newTerminalBtn = $("new-terminal");
+const dictionaryDialog = $("dictionary-dialog");
+const dictionaryOpen = $("dictionary-open");
+const dictionaryClose = $("dictionary-close");
+const dictionarySearch = $("dictionary-search");
+const dictionaryResults = $("dictionary-results");
+const dictionaryEmpty = $("dictionary-empty");
+const dictionaryCount = $("dictionary-count");
+const preferencesDialog = $("preferences-dialog");
+const preferencesOpen = $("preferences-open");
+const preferencesClose = $("preferences-close");
+const claudeSetupDialog = $("claude-setup-dialog");
+const claudeSetupClose = $("claude-setup-close");
+const claudeSetupCheck = $("claude-setup-check");
+const claudeSetupStatus = $("claude-setup-status");
+const showLogsInput = $("pref-show-logs");
+const themeButtons = Array.from(document.querySelectorAll("[data-theme]"));
+const paletteButtons = Array.from(document.querySelectorAll("[data-palette]"));
+const fontSizeButtons = Array.from(document.querySelectorAll("[data-font-size]"));
+const screenshotDialog = $("screenshot-dialog");
+const screenshotClose = $("screenshot-close");
+const screenshotRedact = $("screenshot-redact");
+const screenshotRedactText = $("screenshot-redact-text");
+const screenshotCopy = $("screenshot-copy");
+const screenshotDownload = $("screenshot-download");
+const screenshotScopeButtons = Array.from(document.querySelectorAll("[data-screenshot-scope]"));
 
 let mode = location.hash === "#ask" ? "ask" : "idel";
 let completions = [];
@@ -27,6 +54,581 @@ let terminalCount = 0;
 let activeTabId = "";
 let lastTerminalTabId = "";
 const tabs = [];
+const compactInputMedia = typeof window.matchMedia === "function" ? window.matchMedia("(max-width: 520px)") : null;
+let commandBusy = false;
+let screenshotScope = "visible";
+let screenshotSource = null;
+let agentAvailable = true;
+let agentStatusKnown = false;
+let switchToAskAfterSetup = false;
+let dictionaryEntries = [];
+let dictionaryLoaded = false;
+let dictionaryLoading = false;
+
+const THEMES = new Set(["dark", "light"]);
+const PALETTES = new Set(["cyan", "blue", "teal", "green", "amber", "orange", "rose", "red", "violet", "slate"]);
+const FONT_SIZES = new Set(["small", "normal", "large", "xlarge"]);
+const PREF_KEYS = {
+  theme: "idel.theme",
+  palette: "idel.palette",
+  fontSize: "idel.fontSize",
+  showLogs: "idel.showLogs",
+};
+const PAGE_EXIT_MESSAGE =
+  "Refresh or leave IDEL terminal? Current terminal output, running commands, and unsaved editor changes may be lost.";
+const DEFAULT_PREFERENCES = {
+  theme: "dark",
+  palette: "cyan",
+  fontSize: "normal",
+  showLogs: true,
+};
+
+function initPreferences() {
+  applyPreferences(readPreferences(), false);
+  for (const btn of themeButtons) {
+    btn.addEventListener("click", () => {
+      applyPreferences({ ...currentPreferences(), theme: btn.dataset.theme });
+    });
+  }
+  for (const btn of paletteButtons) {
+    btn.addEventListener("click", () => {
+      applyPreferences({ ...currentPreferences(), palette: btn.dataset.palette });
+    });
+  }
+  for (const btn of fontSizeButtons) {
+    btn.addEventListener("click", () => {
+      applyPreferences({ ...currentPreferences(), fontSize: btn.dataset.fontSize });
+    });
+  }
+  showLogsInput?.addEventListener("change", () => {
+    applyPreferences({ ...currentPreferences(), showLogs: showLogsInput.checked });
+  });
+  preferencesOpen?.addEventListener("click", openPreferences);
+  preferencesClose?.addEventListener("click", closePreferences);
+  preferencesDialog?.addEventListener("click", (e) => {
+    if (e.target === preferencesDialog) closePreferences();
+  });
+}
+
+function initClaudeSetupDialog() {
+  claudeSetupClose?.addEventListener("click", closeClaudeSetupDialog);
+  claudeSetupDialog?.addEventListener("click", (e) => {
+    if (e.target === claudeSetupDialog) closeClaudeSetupDialog();
+  });
+  claudeSetupCheck?.addEventListener("click", () => void checkClaudeSetup());
+}
+
+function initDictionary() {
+  dictionaryOpen?.addEventListener("click", () => void openDictionary());
+  dictionaryClose?.addEventListener("click", closeDictionary);
+  dictionaryDialog?.addEventListener("click", (e) => {
+    if (e.target === dictionaryDialog) closeDictionary();
+  });
+  dictionarySearch?.addEventListener("input", renderDictionary);
+  dictionarySearch?.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeDictionary();
+  });
+}
+
+async function openDictionary() {
+  if (!dictionaryDialog) return;
+  if (typeof dictionaryDialog.showModal === "function") dictionaryDialog.showModal();
+  else dictionaryDialog.setAttribute("open", "");
+  await loadDictionary();
+  renderDictionary();
+  dictionarySearch?.focus();
+  dictionarySearch?.select();
+}
+
+function closeDictionary() {
+  if (!dictionaryDialog) return;
+  if (typeof dictionaryDialog.close === "function" && dictionaryDialog.open) dictionaryDialog.close();
+  else dictionaryDialog.removeAttribute("open");
+  if (activeTab()?.type !== "editor") input.focus();
+}
+
+async function loadDictionary() {
+  if (dictionaryLoaded || dictionaryLoading) return;
+  dictionaryLoading = true;
+  dictionaryCount.textContent = "Loading...";
+  try {
+    const res = await fetch("/api/registry");
+    dictionaryEntries = res.ok ? await res.json() : [];
+    dictionaryEntries.sort((a, b) => a.category.localeCompare(b.category) || a.id.localeCompare(b.id));
+    dictionaryLoaded = true;
+  } catch {
+    dictionaryEntries = [];
+  } finally {
+    dictionaryLoading = false;
+  }
+}
+
+function renderDictionary() {
+  if (!dictionaryResults || !dictionaryEmpty || !dictionaryCount) return;
+  const query = String(dictionarySearch?.value ?? "").trim();
+  const tokens = dictionaryQueryTokens(query);
+  const matches = dictionaryEntries
+    .map((entry) => ({ entry, score: dictionaryScore(entry, query, tokens) }))
+    .filter((match) => match.score >= 0)
+    .sort((a, b) => b.score - a.score || a.entry.id.localeCompare(b.entry.id))
+    .slice(0, 80);
+
+  dictionaryResults.innerHTML = "";
+  for (const { entry } of matches) {
+    dictionaryResults.appendChild(dictionaryEntryNode(entry, query));
+  }
+  dictionaryEmpty.hidden = matches.length > 0;
+  dictionaryCount.textContent = dictionaryLoaded
+    ? `${matches.length} of ${dictionaryEntries.length}`
+    : "Loading...";
+}
+
+function dictionaryQueryTokens(query) {
+  return tokenizeIdel(query.toLowerCase()).filter(Boolean);
+}
+
+function dictionaryScore(entry, query, tokens) {
+  if (!query) return 1;
+  const normalizedQuery = query.toLowerCase();
+  const first = tokens[0] ?? "";
+  const haystack = dictionaryHaystack(entry);
+  let score = 0;
+
+  if (entry.id.toLowerCase() === normalizedQuery) score += 140;
+  if (entry.id.toLowerCase().includes(normalizedQuery)) score += 80;
+  if (dictionaryAliases(entry).some((alias) => alias.includes(normalizedQuery))) score += 70;
+
+  for (const adapter of entry.adapters ?? []) {
+    const command = String(adapter.command ?? "").toLowerCase();
+    if (command === first) score += 120;
+    else if (command.includes(first) && first) score += 45;
+    if (String(adapter.pattern ?? "").toLowerCase().includes(normalizedQuery)) score += 30;
+  }
+
+  for (const token of tokens) {
+    if (haystack.includes(token)) score += 12;
+  }
+  return score > 0 ? score : -1;
+}
+
+function dictionaryHaystack(entry) {
+  const parts = [
+    entry.id,
+    ...dictionaryAliases(entry),
+    entry.summary,
+    entry.category,
+    entry.risk,
+    ...(entry.examples ?? []),
+  ];
+  for (const param of entry.params ?? []) {
+    parts.push(param.name, param.type, param.description ?? "");
+  }
+  for (const adapter of entry.adapters ?? []) {
+    parts.push(adapter.name, adapter.command, adapter.pattern, adapter.semanticNotes ?? "");
+  }
+  return parts.join(" ").toLowerCase();
+}
+
+function dictionaryAliases(entry) {
+  const aliases = [];
+  if (entry.id.includes("folder")) aliases.push(entry.id.replaceAll("folder", "directory"));
+  if (entry.id.includes("directory")) aliases.push(entry.id.replaceAll("directory", "folder"));
+  return aliases;
+}
+
+function dictionaryEntryNode(entry, query) {
+  const card = document.createElement("article");
+  card.className = "dictionary-item";
+
+  const head = document.createElement("div");
+  head.className = "dictionary-item-head";
+  const title = document.createElement("div");
+  title.className = "dictionary-title";
+  const id = document.createElement("code");
+  id.textContent = entry.id;
+  const risk = document.createElement("span");
+  risk.className = `dictionary-risk risk-${entry.risk}`;
+  risk.textContent = entry.risk;
+  const category = document.createElement("span");
+  category.className = "dictionary-category";
+  category.textContent = entry.category;
+  title.append(id, risk, category);
+
+  const insert = document.createElement("button");
+  insert.type = "button";
+  insert.className = "editor-btn dictionary-insert";
+  insert.textContent = "Insert";
+  insert.title = "Insert first example into the terminal";
+  insert.addEventListener("click", () => {
+    input.value = dictionaryInsertLine(entry);
+    closeDictionary();
+    input.focus();
+  });
+  head.append(title, insert);
+
+  const summary = document.createElement("p");
+  summary.className = "dictionary-summary";
+  summary.textContent = entry.summary;
+
+  card.append(head, summary);
+
+  const conversion = nativeQueryToIdel(entry, query);
+  if (conversion) {
+    const converted = document.createElement("div");
+    converted.className = "dictionary-conversion";
+    converted.append("Native search maps to ");
+    const code = document.createElement("code");
+    code.textContent = conversion;
+    converted.appendChild(code);
+    card.appendChild(converted);
+  }
+
+  const mappings = document.createElement("div");
+  mappings.className = "dictionary-mappings";
+  if (entry.adapters?.length) {
+    for (const adapter of entry.adapters) mappings.appendChild(dictionaryMappingNode(adapter));
+  } else {
+    const internal = document.createElement("div");
+    internal.className = "dictionary-mapping muted";
+    internal.textContent = "Runtime/internal command. No direct OS argv mapping.";
+    mappings.appendChild(internal);
+  }
+  card.appendChild(mappings);
+
+  if (entry.params?.length) card.appendChild(dictionaryParamsNode(entry.params));
+  if (entry.examples?.length) card.appendChild(dictionaryExamplesNode(entry.examples));
+
+  const aliases = dictionaryAliases(entry);
+  if (aliases.length) {
+    const alias = document.createElement("div");
+    alias.className = "dictionary-aliases";
+    alias.textContent = `Search-only aliases: ${aliases.join(", ")}`;
+    card.appendChild(alias);
+  }
+
+  return card;
+}
+
+function dictionaryMappingNode(adapter) {
+  const row = document.createElement("div");
+  row.className = "dictionary-mapping";
+  const label = document.createElement("span");
+  label.className = "dictionary-map-label";
+  label.textContent = adapterLabel(adapter.name);
+  const code = document.createElement("code");
+  code.textContent = adapter.pattern || adapter.command;
+  row.append(label, code);
+  if (adapter.semanticNotes) {
+    const note = document.createElement("small");
+    note.textContent = adapter.semanticNotes;
+    row.appendChild(note);
+  }
+  return row;
+}
+
+function dictionaryParamsNode(params) {
+  const wrap = document.createElement("div");
+  wrap.className = "dictionary-params";
+  for (const param of params) {
+    const chip = document.createElement("span");
+    chip.className = "dictionary-param";
+    chip.title = param.description ?? "";
+    chip.textContent = `${param.name}:${param.type}${param.required ? "*" : ""}`;
+    wrap.appendChild(chip);
+  }
+  return wrap;
+}
+
+function dictionaryExamplesNode(examples) {
+  const wrap = document.createElement("div");
+  wrap.className = "dictionary-examples";
+  for (const example of examples.slice(0, 3)) {
+    const code = document.createElement("code");
+    code.textContent = example;
+    wrap.appendChild(code);
+  }
+  return wrap;
+}
+
+function adapterLabel(name) {
+  switch (name) {
+    case "posix":
+      return "POSIX";
+    case "powershell":
+      return "PowerShell";
+    case "node":
+      return "IDEL runtime";
+    default:
+      return String(name);
+  }
+}
+
+function dictionaryInsertLine(entry) {
+  return entry.examples?.[0] ?? `${entry.id} `;
+}
+
+function nativeQueryToIdel(entry, query) {
+  const tokens = tokenizeIdel(String(query ?? "").trim());
+  if (!tokens.length) return "";
+  const nativeCommand = tokens[0].toLowerCase();
+  for (const adapter of entry.adapters ?? []) {
+    if (String(adapter.command ?? "").toLowerCase() !== nativeCommand) continue;
+    const params = paramsFromNativeArgs(adapter, tokens.slice(1));
+    const rendered = Object.entries(params).map(([key, value]) => `${key}=${quoteDictionaryValue(value)}`);
+    return [entry.id, ...rendered].join(" ");
+  }
+  return "";
+}
+
+function paramsFromNativeArgs(adapter, argv) {
+  const remaining = [...argv];
+  const params = {};
+  for (const arg of adapter.args ?? []) {
+    switch (arg.kind) {
+      case "flag": {
+        const index = remaining.indexOf(arg.flag);
+        if (index !== -1) {
+          params[arg.when] = true;
+          remaining.splice(index, 1);
+        }
+        break;
+      }
+      case "option": {
+        const index = remaining.indexOf(arg.flag);
+        if (index !== -1 && index + 1 < remaining.length) {
+          params[arg.param] = remaining[index + 1];
+          remaining.splice(index, 2);
+        }
+        break;
+      }
+      case "literal": {
+        const index = remaining.indexOf(arg.value);
+        if (index !== -1) remaining.splice(index, 1);
+        break;
+      }
+      case "value": {
+        if (params[arg.param] !== undefined || !remaining.length) break;
+        const index = remaining.findIndex((value) => value !== "");
+        if (index !== -1) {
+          params[arg.param] = remaining[index];
+          remaining.splice(index, 1);
+        }
+        break;
+      }
+    }
+  }
+  return params;
+}
+
+function quoteDictionaryValue(value) {
+  const text = String(value);
+  if (!/[\s"'\\]/.test(text)) return text;
+  return `"${text.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+}
+
+function openClaudeSetupDialog({ switchToAsk = false, message = "" } = {}) {
+  switchToAskAfterSetup = switchToAsk;
+  setClaudeSetupStatus(message || "Ask Claude is not configured on this server.");
+  if (!claudeSetupDialog) return;
+  if (typeof claudeSetupDialog.showModal === "function") claudeSetupDialog.showModal();
+  else claudeSetupDialog.setAttribute("open", "");
+}
+
+function closeClaudeSetupDialog() {
+  switchToAskAfterSetup = false;
+  if (!claudeSetupDialog) return;
+  if (typeof claudeSetupDialog.close === "function" && claudeSetupDialog.open) claudeSetupDialog.close();
+  else claudeSetupDialog.removeAttribute("open");
+}
+
+function setClaudeSetupStatus(message) {
+  if (claudeSetupStatus) claudeSetupStatus.textContent = message;
+}
+
+async function checkClaudeSetup() {
+  if (claudeSetupCheck) claudeSetupCheck.disabled = true;
+  setClaudeSetupStatus("Checking this IDEL server...");
+  try {
+    const available = await refreshAgentAvailability();
+    if (available) {
+      const shouldSwitchToAsk = switchToAskAfterSetup;
+      setClaudeSetupStatus("Ask Claude is ready.");
+      closeClaudeSetupDialog();
+      if (shouldSwitchToAsk) activateAskMode();
+    } else {
+      setClaudeSetupStatus("Still not configured. Restart this UI after installing Claude Code or setting ANTHROPIC_API_KEY.");
+    }
+  } finally {
+    if (claudeSetupCheck) claudeSetupCheck.disabled = false;
+  }
+}
+
+function setAgentAvailability(available) {
+  agentStatusKnown = true;
+  agentAvailable = available;
+  modeAskBtn.disabled = false;
+  modeAskBtn.classList.toggle("unavailable", !available);
+  modeAskBtn.setAttribute("aria-disabled", String(!available));
+  modeAskBtn.title = available
+    ? "Ask Claude in natural language"
+    : "Ask Claude is not set up. Click for setup instructions.";
+  if (!available && mode === "ask") setMode("idel", { suppressSetup: true });
+}
+
+function askClaudeUnavailable() {
+  return agentStatusKnown && !agentAvailable;
+}
+
+async function refreshAgentAvailability() {
+  try {
+    const res = await fetch("/api/health");
+    const d = res.ok ? await res.json() : null;
+    if (d?.ok && Object.prototype.hasOwnProperty.call(d, "agentAvailable")) {
+      setAgentAvailability(d.agentAvailable !== false);
+      return agentAvailable;
+    }
+  } catch {
+    return agentAvailable;
+  }
+  return await probeAgentAvailability();
+}
+
+async function probeAgentAvailability() {
+  try {
+    const probe = await fetch("/api/agent/stream", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ intent: "" }),
+    });
+    if (probe.body?.cancel) await probe.body.cancel().catch(() => undefined);
+    if (probe.status === 501) {
+      setAgentAvailability(false);
+      return false;
+    }
+    if (probe.ok) {
+      setAgentAvailability(true);
+      return true;
+    }
+  } catch {
+    /* keep the last known state */
+  }
+  return agentAvailable;
+}
+
+function initScreenshotActions() {
+  for (const btn of screenshotScopeButtons) {
+    btn.addEventListener("click", () => setScreenshotScope(btn.dataset.screenshotScope));
+  }
+  screenshotClose?.addEventListener("click", closeScreenshotDialog);
+  screenshotDialog?.addEventListener("click", (e) => {
+    if (e.target === screenshotDialog) closeScreenshotDialog();
+  });
+  screenshotCopy?.addEventListener("click", () => void exportScreenshot("copy"));
+  screenshotDownload?.addEventListener("click", () => void exportScreenshot("download"));
+  setScreenshotScope("visible");
+}
+
+function setScreenshotScope(scope) {
+  screenshotScope = scope === "full" ? "full" : "visible";
+  for (const btn of screenshotScopeButtons) {
+    const active = btn.dataset.screenshotScope === screenshotScope;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-pressed", String(active));
+  }
+}
+
+function readPreferences() {
+  const theme = storageGet(PREF_KEYS.theme);
+  const palette = storageGet(PREF_KEYS.palette);
+  const fontSize = storageGet(PREF_KEYS.fontSize);
+  const showLogs = storageGet(PREF_KEYS.showLogs);
+  return {
+    theme: THEMES.has(theme) ? theme : DEFAULT_PREFERENCES.theme,
+    palette: PALETTES.has(palette) ? palette : DEFAULT_PREFERENCES.palette,
+    fontSize: FONT_SIZES.has(fontSize) ? fontSize : DEFAULT_PREFERENCES.fontSize,
+    showLogs: showLogs === null ? DEFAULT_PREFERENCES.showLogs : showLogs !== "false",
+  };
+}
+
+function currentPreferences() {
+  return {
+    theme: classChoice(THEMES, "theme", DEFAULT_PREFERENCES.theme),
+    palette: classChoice(PALETTES, "palette", DEFAULT_PREFERENCES.palette),
+    fontSize: classChoice(FONT_SIZES, "font", DEFAULT_PREFERENCES.fontSize),
+    showLogs: !document.body.classList.contains("logs-hidden"),
+  };
+}
+
+function classChoice(options, prefix, fallback) {
+  for (const option of options) {
+    if (document.body.classList.contains(`${prefix}-${option}`)) return option;
+  }
+  return fallback;
+}
+
+function applyPreferences(next, persist = true) {
+  const prefs = {
+    theme: THEMES.has(next.theme) ? next.theme : DEFAULT_PREFERENCES.theme,
+    palette: PALETTES.has(next.palette) ? next.palette : DEFAULT_PREFERENCES.palette,
+    fontSize: FONT_SIZES.has(next.fontSize) ? next.fontSize : DEFAULT_PREFERENCES.fontSize,
+    showLogs: next.showLogs !== false,
+  };
+  replaceBodyChoice(THEMES, "theme", prefs.theme);
+  replaceBodyChoice(PALETTES, "palette", prefs.palette);
+  replaceBodyChoice(FONT_SIZES, "font", prefs.fontSize);
+  document.body.classList.toggle("logs-hidden", !prefs.showLogs);
+  if (showLogsInput) showLogsInput.checked = prefs.showLogs;
+  syncChoiceButtons(themeButtons, "theme", prefs.theme);
+  syncChoiceButtons(paletteButtons, "palette", prefs.palette);
+  syncChoiceButtons(fontSizeButtons, "fontSize", prefs.fontSize);
+  if (persist) {
+    storageSet(PREF_KEYS.theme, prefs.theme);
+    storageSet(PREF_KEYS.palette, prefs.palette);
+    storageSet(PREF_KEYS.fontSize, prefs.fontSize);
+    storageSet(PREF_KEYS.showLogs, String(prefs.showLogs));
+  }
+}
+
+function replaceBodyChoice(options, prefix, selected) {
+  for (const option of options) document.body.classList.remove(`${prefix}-${option}`);
+  document.body.classList.add(`${prefix}-${selected}`);
+}
+
+function syncChoiceButtons(buttons, key, selected) {
+  for (const btn of buttons) {
+    const active = btn.dataset[key] === selected;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-pressed", String(active));
+  }
+}
+
+function openPreferences() {
+  if (!preferencesDialog) return;
+  if (typeof preferencesDialog.showModal === "function") preferencesDialog.showModal();
+  else preferencesDialog.setAttribute("open", "");
+}
+
+function closePreferences() {
+  if (!preferencesDialog) return;
+  if (typeof preferencesDialog.close === "function" && preferencesDialog.open) preferencesDialog.close();
+  else preferencesDialog.removeAttribute("open");
+}
+
+function storageGet(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function storageSet(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* preferences are best-effort */
+  }
+}
 
 function initWorkspace() {
   const terminal = {
@@ -44,6 +646,30 @@ function initWorkspace() {
   renderTabs();
 }
 
+function initPageRefreshGuard() {
+  window.addEventListener("beforeunload", (e) => {
+    if (!shouldConfirmPageExit()) return;
+    e.preventDefault();
+    e.returnValue = PAGE_EXIT_MESSAGE;
+    return PAGE_EXIT_MESSAGE;
+  });
+
+  window.addEventListener("keydown", (e) => {
+    const key = e.key.toLowerCase();
+    const refreshShortcut =
+      key === "f5" ||
+      ((e.ctrlKey || e.metaKey) && key === "r");
+    if (!refreshShortcut || !shouldConfirmPageExit()) return;
+    if (confirm(PAGE_EXIT_MESSAGE)) return;
+    e.preventDefault();
+    e.stopPropagation();
+  }, { capture: true });
+}
+
+function shouldConfirmPageExit() {
+  return true;
+}
+
 function activeTab() {
   return tabs.find((tab) => tab.id === activeTabId) ?? tabs[0];
 }
@@ -58,6 +684,17 @@ function activeTerminalTab() {
 
 function activeOutput() {
   return activeTerminalTab().pane;
+}
+
+function syncCommandArea() {
+  const editorActive = activeTab()?.type === "editor";
+  form.hidden = editorActive;
+  form.setAttribute("aria-hidden", String(editorActive));
+  input.disabled = editorActive || commandBusy;
+  if (editorActive) {
+    input.value = "";
+    hideCompletions();
+  }
 }
 
 function createTerminalTab(activate = true) {
@@ -88,10 +725,9 @@ function switchTab(id) {
   activeTabId = tab.id;
   if (tab.type === "terminal") lastTerminalTabId = tab.id;
   for (const candidate of tabs) candidate.pane.hidden = candidate.id !== tab.id;
-  const editorActive = tab.type === "editor";
-  form.hidden = editorActive;
+  syncCommandArea();
   completionsEl.hidden = true;
-  if (editorActive) hideCompletions();
+  if (tab.type === "editor") hideCompletions();
   else input.focus();
   renderTabs();
 }
@@ -104,13 +740,18 @@ function closeTab(tab) {
   if (tab.type === "editor" && tab.dirty && !confirm(`Close ${tab.title} without saving?`)) return;
   const index = tabs.findIndex((candidate) => candidate.id === tab.id);
   if (index === -1) return;
+  const closingActiveEditor = activeTabId === tab.id && tab.type === "editor";
   tabs.splice(index, 1);
   tab.pane.remove();
   if (lastTerminalTabId === tab.id) {
     lastTerminalTabId = tabs.find((candidate) => candidate.type === "terminal")?.id ?? "";
   }
   if (activeTabId === tab.id) {
-    const next = tabs[index] ?? tabs[index - 1] ?? tabs.find((candidate) => candidate.type === "terminal");
+    const terminal = closingActiveEditor
+      ? tabs.find((candidate) => candidate.id === lastTerminalTabId && candidate.type === "terminal")
+        ?? tabs.find((candidate) => candidate.type === "terminal")
+      : undefined;
+    const next = terminal ?? tabs[index] ?? tabs[index - 1] ?? tabs.find((candidate) => candidate.type === "terminal");
     if (next) switchTab(next.id);
   } else {
     renderTabs();
@@ -151,13 +792,48 @@ function renderTabs() {
 function lineNode(text, cls = "") {
   const div = document.createElement("div");
   div.className = "line " + cls;
-  div.textContent = text;
+  const body = document.createElement("span");
+  body.className = "line-body";
+  body.textContent = text;
+  div.appendChild(body);
+  attachLineActions(div, body.textContent, cls);
   return div;
 }
 
 // ---------------------------------------------------------------------------
 // Output helpers
 // ---------------------------------------------------------------------------
+
+function attachLineActions(lineEl, text, cls = "") {
+  if (!shouldAddLineActions(cls, text)) return;
+  lineEl.classList.add("has-actions");
+  const actions = document.createElement("span");
+  actions.className = "line-actions";
+  actions.setAttribute("aria-label", "Line actions");
+
+  const copy = document.createElement("button");
+  copy.type = "button";
+  copy.className = "line-action";
+  copy.textContent = "Copy";
+  copy.title = cls.includes("cmd") || cls.includes("ask") ? "Copy command" : "Copy output";
+  copy.addEventListener("click", () => void copyLineText(text, copy));
+
+  const shot = document.createElement("button");
+  shot.type = "button";
+  shot.className = "line-action";
+  shot.textContent = "Shot";
+  shot.title = "Screenshot terminal";
+  shot.addEventListener("click", () => openScreenshotDialog(lineEl.closest(".term-output")));
+
+  actions.append(copy, shot);
+  lineEl.appendChild(actions);
+}
+
+function shouldAddLineActions(cls, text) {
+  if (!String(text ?? "").trim()) return false;
+  const classes = new Set(String(cls).split(/\s+/).filter(Boolean));
+  return ["cmd", "ask", "text", "err", "ok"].some((name) => classes.has(name));
+}
 
 function line(text, cls = "") {
   const output = activeOutput();
@@ -171,6 +847,232 @@ function html(node) {
   const output = activeOutput();
   output.appendChild(node);
   output.scrollTop = output.scrollHeight;
+}
+
+async function copyLineText(text, button) {
+  try {
+    await writeClipboardText(text);
+    flashButton(button, "Copied");
+  } catch {
+    flashButton(button, "Failed");
+  }
+}
+
+async function writeClipboardText(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  ta.style.position = "fixed";
+  ta.style.left = "-9999px";
+  document.body.appendChild(ta);
+  ta.select();
+  const ok = document.execCommand("copy");
+  ta.remove();
+  if (!ok) throw new Error("copy failed");
+}
+
+function flashButton(button, label) {
+  if (!button) return;
+  const previous = button.textContent;
+  button.textContent = label;
+  window.setTimeout(() => {
+    button.textContent = previous;
+  }, 1100);
+}
+
+function openScreenshotDialog(sourceOutput = activeOutput()) {
+  screenshotSource = sourceOutput || activeOutput();
+  setScreenshotScope(screenshotScope);
+  if (!screenshotDialog) return;
+  if (typeof screenshotDialog.showModal === "function") screenshotDialog.showModal();
+  else screenshotDialog.setAttribute("open", "");
+}
+
+function closeScreenshotDialog() {
+  if (!screenshotDialog) return;
+  if (typeof screenshotDialog.close === "function" && screenshotDialog.open) screenshotDialog.close();
+  else screenshotDialog.removeAttribute("open");
+}
+
+async function exportScreenshot(action) {
+  const output = screenshotSource || activeOutput();
+  const text = screenshotText(output, screenshotScope);
+  if (!text.trim()) {
+    flashButton(action === "copy" ? screenshotCopy : screenshotDownload, "Empty");
+    return;
+  }
+  const redacted = screenshotRedact?.checked ? redactScreenshotText(text) : text;
+  const canvas = renderTextScreenshot(output, redacted, screenshotScope);
+  if (action === "copy") {
+    try {
+      await copyCanvasPng(canvas);
+      flashButton(screenshotCopy, "Copied");
+      return;
+    } catch {
+      downloadCanvasPng(canvas);
+      flashButton(screenshotCopy, "Saved");
+      return;
+    }
+  }
+  downloadCanvasPng(canvas);
+  flashButton(screenshotDownload, "Saved");
+}
+
+function screenshotText(output, scope) {
+  const lineEls = terminalLineElements(output, scope);
+  return lineEls.map(textFromTerminalLine).filter(Boolean).join("\n");
+}
+
+function terminalLineElements(output, scope) {
+  const children = Array.from(output?.children ?? []).filter((node) => node.classList?.contains("line"));
+  if (scope !== "visible") return children;
+  const viewport = output.getBoundingClientRect();
+  return children.filter((node) => {
+    const rect = node.getBoundingClientRect();
+    return rect.bottom >= viewport.top && rect.top <= viewport.bottom;
+  });
+}
+
+function textFromTerminalLine(node) {
+  const directBody = node.querySelector(":scope > .line-body");
+  if (directBody) return directBody.textContent.trimEnd();
+  const childLines = Array.from(node.children).filter((child) => child.classList?.contains("line"));
+  if (childLines.length) return childLines.map(textFromTerminalLine).filter(Boolean).join("\n");
+  const clone = node.cloneNode(true);
+  for (const action of clone.querySelectorAll(".line-actions")) action.remove();
+  return clone.textContent.trimEnd();
+}
+
+function redactScreenshotText(text) {
+  let next = text
+    .replace(/-----BEGIN [^-]+ PRIVATE KEY-----[\s\S]*?-----END [^-]+ PRIVATE KEY-----/g, "[hidden private key]")
+    .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]{12,}/g, "$1[hidden]")
+    .replace(/\b(sk-[A-Za-z0-9_-]{16,})\b/g, "[hidden token]")
+    .replace(/\b(gh[pousr]_[A-Za-z0-9_]{16,})\b/g, "[hidden token]")
+    .replace(/\b([A-Z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|PASS)[A-Z0-9_]*)\s*=\s*([^\s"'`]+)/gi, "$1=[hidden]")
+    .replace(/\b([A-Z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|PASS)[A-Z0-9_]*)\s*=\s*["'`]([^"'`]+)["'`]/gi, "$1=\"[hidden]\"");
+  for (const term of customRedactionTerms()) {
+    next = next.replace(new RegExp(escapeRegex(term), "g"), "[hidden]");
+  }
+  return next;
+}
+
+function customRedactionTerms() {
+  return String(screenshotRedactText?.value ?? "")
+    .split(/[\n,]/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function renderTextScreenshot(output, text, scope) {
+  const outputStyle = getComputedStyle(output);
+  const bodyStyle = getComputedStyle(document.body);
+  const fontSize = Number.parseFloat(outputStyle.fontSize) || 14;
+  const lineHeight = Number.parseFloat(outputStyle.lineHeight) || fontSize * 1.55;
+  const padding = 18;
+  const width = Math.max(340, Math.min(output.clientWidth || 900, 1400));
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  const font = `${fontSize}px ${outputStyle.fontFamily || "monospace"}`;
+  ctx.font = font;
+  const wrapped = wrapScreenshotText(ctx, text, width - padding * 2);
+  const maxRows = Math.max(1, Math.floor((24000 - padding * 2) / lineHeight));
+  const rows = wrapped.length > maxRows
+    ? wrapped.slice(0, maxRows - 1).concat(`[${scope} screenshot truncated]`)
+    : wrapped;
+  const height = Math.ceil(padding * 2 + rows.length * lineHeight);
+  const ratio = height > 14000 ? 1 : Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = Math.ceil(width * ratio);
+  canvas.height = Math.ceil(height * ratio);
+  canvas.style.width = `${width}px`;
+  canvas.style.height = `${height}px`;
+  ctx.scale(ratio, ratio);
+  ctx.fillStyle = outputStyle.backgroundColor && outputStyle.backgroundColor !== "rgba(0, 0, 0, 0)"
+    ? outputStyle.backgroundColor
+    : bodyStyle.backgroundColor || "#0b0e14";
+  ctx.fillRect(0, 0, width, height);
+  ctx.font = font;
+  ctx.textBaseline = "top";
+  ctx.fillStyle = outputStyle.color || bodyStyle.color || "#d7dce5";
+  rows.forEach((row, index) => {
+    ctx.fillText(row || " ", padding, padding + index * lineHeight);
+  });
+  return canvas;
+}
+
+function wrapScreenshotText(ctx, text, maxWidth) {
+  const rows = [];
+  for (const rawLine of String(text).split("\n")) {
+    if (!rawLine) {
+      rows.push("");
+      continue;
+    }
+    let line = "";
+    for (const chunk of rawLine.split(/(\s+)/)) {
+      const candidate = line + chunk;
+      if (ctx.measureText(candidate).width <= maxWidth) {
+        line = candidate;
+        continue;
+      }
+      if (line) rows.push(line.trimEnd());
+      line = "";
+      if (ctx.measureText(chunk).width <= maxWidth) {
+        line = chunk.trimStart();
+        continue;
+      }
+      const parts = splitLongScreenshotChunk(ctx, chunk, maxWidth);
+      rows.push(...parts.slice(0, -1));
+      line = parts.at(-1) ?? "";
+    }
+    rows.push(line.trimEnd());
+  }
+  return rows;
+}
+
+function splitLongScreenshotChunk(ctx, chunk, maxWidth) {
+  const parts = [];
+  let line = "";
+  for (const ch of chunk) {
+    if (ctx.measureText(line + ch).width <= maxWidth) {
+      line += ch;
+      continue;
+    }
+    if (line) parts.push(line);
+    line = ch;
+  }
+  if (line) parts.push(line);
+  return parts;
+}
+
+async function copyCanvasPng(canvas) {
+  if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") {
+    throw new Error("image clipboard unavailable");
+  }
+  const blob = await canvasToBlob(canvas);
+  await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+}
+
+function canvasToBlob(canvas) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("png export failed")), "image/png");
+  });
+}
+
+function downloadCanvasPng(canvas) {
+  const a = document.createElement("a");
+  a.href = canvas.toDataURL("image/png");
+  a.download = `idel-${screenshotScope}-${new Date().toISOString().replace(/[:.]/g, "-")}.png`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
 /** The platform command an outcome maps to (the "original command" preview). */
@@ -1022,12 +1924,20 @@ function renderLearnResult(result) {
     }
   }
   if (result.path) {
-    line(`wrote ${accepted} learned command(s) to ${result.path}`, "ok");
+    invalidateDictionary();
+    line(`wrote and loaded ${accepted} learned command(s) from ${result.path}`, "ok");
   } else if (accepted > 0) {
     line(`Preview only. Re-run with --write to save ${accepted} command(s).`, "muted");
   } else {
     line("Nothing valid to learn; no defs written.", "err");
   }
+}
+
+function invalidateDictionary() {
+  dictionaryEntries = [];
+  dictionaryLoaded = false;
+  if (!dictionaryDialog?.open) return;
+  void loadDictionary().then(renderDictionary);
 }
 
 function languageForPath(file) {
@@ -1150,6 +2060,12 @@ const yamlRules = [
 // ---------------------------------------------------------------------------
 
 async function runAsk(intent, displayLine) {
+  if (askClaudeUnavailable()) {
+    line(displayLine ?? "? " + intent, displayLine ? "cmd" : "ask");
+    line("Ask Claude is not set up. Opened setup guide.", "err");
+    openClaudeSetupDialog({ switchToAsk: true });
+    return;
+  }
   line(displayLine ?? "? " + intent, displayLine ? "cmd" : "ask");
   let sawAgent = false;
   // allowReal:true lets the agent request a REAL run — but each one still pauses
@@ -1182,6 +2098,10 @@ async function runAsk(intent, displayLine) {
         line(`↳ tool error (${data.tool}): ${data.message}`, "err");
         break;
       case "error":
+        if (String(data.error ?? "").includes("agent not configured")) {
+          setAgentAvailability(false);
+          openClaudeSetupDialog({ switchToAsk: true, message: data.error });
+        }
         line("Agent error: " + (data.error ?? "unknown"), "err");
         break;
     }
@@ -1239,6 +2159,7 @@ function renderApprovalPrompt(data) {
 // ---------------------------------------------------------------------------
 
 let completeTimer;
+const COMPLETION_LIMIT = 30;
 async function updateCompletions() {
   if (mode !== "idel" || activeTab()?.type !== "terminal") return hideCompletions();
   const value = input.value;
@@ -1262,10 +2183,10 @@ async function updateCompletions() {
 function renderCompletions() {
   if (!completions.length) return hideCompletions();
   completionsEl.innerHTML = "";
-  completions.slice(0, 30).forEach((c, i) => {
+  if (compSel >= visibleCompletionCount()) compSel = visibleCompletionCount() - 1;
+  completions.slice(0, COMPLETION_LIMIT).forEach((c, i) => {
     const li = document.createElement("li");
     li.textContent = c;
-    if (i === compSel) li.classList.add("sel");
     li.addEventListener("mousedown", (e) => {
       e.preventDefault();
       applyCompletion(c);
@@ -1273,6 +2194,41 @@ function renderCompletions() {
     completionsEl.appendChild(li);
   });
   completionsEl.hidden = false;
+  updateCompletionSelection();
+}
+
+function visibleCompletionCount() {
+  return Math.min(completions.length, COMPLETION_LIMIT);
+}
+
+function updateCompletionSelection() {
+  const items = Array.from(completionsEl.children);
+  items.forEach((item, i) => {
+    item.classList.toggle("sel", i === compSel);
+  });
+  scrollSelectedCompletionIntoView();
+}
+
+function scrollSelectedCompletionIntoView() {
+  if (completionsEl.hidden || compSel < 0) return;
+  scrollSelectedCompletionIntoViewNow();
+  window.requestAnimationFrame?.(scrollSelectedCompletionIntoViewNow);
+}
+
+function scrollSelectedCompletionIntoViewNow() {
+  if (completionsEl.hidden || compSel < 0) return;
+  const selected = completionsEl.children[compSel] ?? completionsEl.querySelector("li.sel");
+  if (!selected) return;
+  const containerRect = completionsEl.getBoundingClientRect();
+  const selectedRect = selected.getBoundingClientRect();
+  const topOverflow = selectedRect.top - containerRect.top;
+  const bottomOverflow = selectedRect.bottom - containerRect.bottom;
+
+  if (topOverflow < 0) {
+    completionsEl.scrollTop += topOverflow;
+  } else if (bottomOverflow > 0) {
+    completionsEl.scrollTop += bottomOverflow;
+  }
 }
 
 function hideCompletions() {
@@ -1283,19 +2239,61 @@ function hideCompletions() {
 
 function applyCompletion(c) {
   // The server returns whole-token suggestions; replace the last token.
-  const bounds = lastTokenBounds(input.value);
+  const value = input.value;
+  const bounds = lastTokenBounds(value);
   input.value =
-    input.value.slice(0, bounds.start) +
+    value.slice(0, bounds.start) +
     c +
-    input.value.slice(bounds.end) +
-    completionSuffix(c);
+    value.slice(bounds.end) +
+    completionSuffix(c, value, bounds);
   hideCompletions();
   input.focus();
 }
 
-function completionSuffix(c) {
+function completionSuffix(c, value, bounds) {
+  if (isCommandCompletion(value, bounds)) return "";
   if (c.endsWith("=") || c.endsWith("/") || c.endsWith("\\") || c.endsWith(".")) return "";
   return " ";
+}
+
+function isCommandCompletion(value, bounds) {
+  const segmentStart = currentBatchSegmentStart(value);
+  const prefix = value.slice(segmentStart, bounds.start);
+  const segment = value.slice(segmentStart);
+  if (segment.trimStart().startsWith("!")) return false;
+  return prefix.trim() === "";
+}
+
+function currentBatchSegmentStart(value) {
+  const trimmed = value.trimStart();
+  if (trimmed.startsWith("!")) return 0;
+  let start = 0;
+  let quote;
+  let escaped = false;
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (ch === quote) quote = undefined;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      continue;
+    }
+    if (ch === "&" && value[i + 1] === "&") {
+      start = i + 2;
+      i += 1;
+    }
+  }
+  return start;
 }
 
 function lastTokenBounds(value) {
@@ -1381,30 +2379,50 @@ function escapeHtml(s) {
 // Mode switching + input handling
 // ---------------------------------------------------------------------------
 
-function setMode(next) {
+function setMode(next, options = {}) {
+  if (next === "ask" && askClaudeUnavailable()) {
+    if (!options.suppressSetup) openClaudeSetupDialog({ switchToAsk: true });
+    next = "idel";
+  }
   mode = next;
-  $("mode-idel").classList.toggle("active", mode === "idel");
-  $("mode-ask").classList.toggle("active", mode === "ask");
+  modeIdelBtn.classList.toggle("active", mode === "idel");
+  modeAskBtn.classList.toggle("active", mode === "ask");
   promptEl.textContent = mode === "ask" ? "?" : "idel>";
   promptEl.classList.toggle("ask", mode === "ask");
-  input.placeholder =
-    mode === "ask"
-      ? "describe what you want — e.g. delete the dist folder"
-      : "verb.scope param=value   (Tab to complete, ↑/↓ history)";
+  syncInputPlaceholder();
   hideCompletions();
-  input.focus();
+  syncCommandArea();
+  if (activeTab()?.type !== "editor") input.focus();
 }
 
-$("mode-idel").addEventListener("click", () => {
+function syncInputPlaceholder() {
+  const compact = compactInputMedia?.matches ?? false;
+  input.placeholder =
+    mode === "ask"
+      ? compact ? "ask what to do" : "describe what you want — e.g. delete the dist folder"
+      : compact ? "command (Tab, ↑/↓)" : "verb.scope param=value   (Tab to complete, ↑/↓ history)";
+}
+
+function activateAskMode() {
+  setMode("ask");
+  switchTab(activeTerminalTab().id);
+}
+
+modeIdelBtn.addEventListener("click", () => {
   setMode("idel");
   switchTab(activeTerminalTab().id);
 });
-$("mode-ask").addEventListener("click", () => {
-  setMode("ask");
-  switchTab(activeTerminalTab().id);
+modeAskBtn.addEventListener("click", () => {
+  if (askClaudeUnavailable()) {
+    openClaudeSetupDialog({ switchToAsk: true });
+    return;
+  }
+  activateAskMode();
 });
 $("refresh-logs").addEventListener("click", refreshLogs);
 newTerminalBtn.addEventListener("click", () => createTerminalTab(true));
+if (compactInputMedia?.addEventListener) compactInputMedia.addEventListener("change", syncInputPlaceholder);
+else if (compactInputMedia?.addListener) compactInputMedia.addListener(syncInputPlaceholder);
 
 input.addEventListener("input", updateCompletions);
 
@@ -1421,9 +2439,17 @@ input.addEventListener("keydown", (e) => {
   }
   if (!completionsEl.hidden && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
     e.preventDefault();
-    const n = Math.min(completions.length, 30);
-    compSel = e.key === "ArrowDown" ? (compSel + 1) % n : (compSel - 1 + n) % n;
-    renderCompletions();
+    const n = visibleCompletionCount();
+    if (!n) return hideCompletions();
+    compSel =
+      e.key === "ArrowDown"
+        ? compSel < 0
+          ? 0
+          : (compSel + 1) % n
+        : compSel < 0
+          ? n - 1
+          : (compSel - 1 + n) % n;
+    updateCompletionSelection();
     return;
   }
   if (e.key === "Tab") {
@@ -1453,13 +2479,15 @@ input.addEventListener("keydown", (e) => {
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
   const value = input.value.trim();
+  if (input.disabled) return;
   if (!value) return;
   const terminal = activeTerminalTab();
   terminal.history.push(value);
   terminal.histIdx = -1;
   input.value = "";
   hideCompletions();
-  input.disabled = true;
+  commandBusy = true;
+  syncCommandArea();
   try {
     if (mode === "ask") await runAsk(value);
     else if (isBatchLine(value)) await runIdel(value);
@@ -1472,8 +2500,9 @@ form.addEventListener("submit", async (e) => {
     else if (isEditorCommand(value)) await runEditorCommand(value);
     else await runIdel(value);
   } finally {
-    input.disabled = false;
-    input.focus();
+    commandBusy = false;
+    syncCommandArea();
+    if (activeTab()?.type !== "editor") input.focus();
   }
 });
 
@@ -1482,16 +2511,16 @@ form.addEventListener("submit", async (e) => {
 // ---------------------------------------------------------------------------
 
 async function boot() {
+  let sawHealthAgentStatus = false;
   try {
     const res = await fetch("/api/health");
     const d = res.ok ? await res.json() : null;
     if (d?.ok) {
       statusEl.textContent = "● online · idel " + (d.version ?? "");
       statusEl.classList.add("online");
-      if (d.agentAvailable === false) {
-        $("mode-ask").disabled = true;
-        $("mode-ask").title =
-          "Claude console disabled — install Claude Code + run `claude login`, or set ANTHROPIC_API_KEY on the server";
+      if (Object.prototype.hasOwnProperty.call(d, "agentAvailable")) {
+        sawHealthAgentStatus = true;
+        setAgentAvailability(d.agentAvailable !== false);
       }
     } else throw new Error();
   } catch {
@@ -1500,23 +2529,15 @@ async function boot() {
   }
   // Probe whether the Claude console is wired on older servers that do not
   // expose health.agentAvailable yet.
-  try {
-    const probe = await fetch("/api/agent/stream", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ intent: "" }),
-    });
-    if (probe.status === 501) {
-      $("mode-ask").disabled = true;
-      $("mode-ask").title =
-        "Claude console disabled — install Claude Code + run `claude login`, or set ANTHROPIC_API_KEY on the server";
-    }
-  } catch {
-    /* ignore */
-  }
-  setMode(mode);
+  if (!sawHealthAgentStatus) await probeAgentAvailability();
+  setMode(mode, { suppressSetup: true });
   refreshLogs();
 }
 
+initPreferences();
+initClaudeSetupDialog();
+initDictionary();
+initScreenshotActions();
 initWorkspace();
+initPageRefreshGuard();
 boot();

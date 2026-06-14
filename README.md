@@ -128,11 +128,11 @@ idel editor README.md
 idel ! "tar -xvzf backup.tar.gz"
 
 # Inspect how a command resolves and what its adapters do on each platform
-idel registry.explain command=remove.folder
+idel explain.registry command=remove.folder
 
 # Review the audit trail
 idel list.history
-idel logs.list
+idel list.logs
 ```
 
 A dry-run of a real directory shows the plan and the lower-bound blast-radius estimate:
@@ -151,7 +151,7 @@ Dry run. No files were changed.
 Log: ~/.idel/logs/openlogs.jsonl
 ```
 
-Other useful commands: `idel registry.list` (37 core commands), `idel policy.check`, `idel terminal` (interactive REPL), `idel completion <partial>`.
+Other useful commands: `idel list.registry` (37 core commands), `idel check.policy`, `idel terminal` (interactive REPL), `idel completion <partial>`.
 
 Batch execution uses shell-like `&&` at the IDEL host layer:
 
@@ -177,16 +177,16 @@ Every command rendered in the terminal — typed or AI-proposed — shows what i
 
 The web console can run commands **for real**, behind an explicit approval. Before any real run, the agent pauses and the terminal shows the dry-run plus **Approve / Decline** buttons; the server parks the agent (over `POST /api/agent/approve`) until you choose. A decline leaves the dry-run result standing, and a forgotten approval fails closed after a timeout — the agent never touches disk without a human "Approve." Interactive editor commands such as `open.editor` appear in the web registry and autocomplete, but actual editor launch is CLI/TTY-only; web/API/CI requests return a clear non-interactive failure instead of hanging.
 
-**Teach IDEL an installed CLI.** `idel learn <cli>` introspects a CLI's own `--help`, asks Claude to draft IDEL command definitions, validates each against the registry schema (fail-closed), and **replays each def's declared `tests[]` through a real runtime** to prove its risk/policy classification. Accepted drafts land in the custom layer and are then governed by the same runtime — risk-classified, policy-gated, audited:
+**Teach IDEL an installed CLI.** `idel learn <cli>` introspects a CLI's own `--help`, drafts conservative IDEL command definitions locally, validates each against the registry schema (fail-closed), and **replays each def's declared `tests[]` through a real runtime** to prove its risk/policy classification. Accepted drafts land in the custom layer and are then governed by the same runtime — risk-classified, policy-gated, audited:
 
 ```bash
-idel learn gh             # preview the drafted gh.* commands (uses your Claude subscription or API key)
+idel learn gh             # preview drafted verb-first gh commands from local help text
 idel learn gh --write     # persist them to ~/.idel/registries/custom/learned-gh.json
 learn gh                  # same alias inside `idel terminal` / the web terminal
 learn.cli cli=gh          # IDEL-shaped terminal form with autocomplete
 ```
 
-A learned def must clear **two** gates to be accepted: schema validation, and every declared test matching the runtime's actual classification (a schema-valid-but-misclassifying def is shown with its failures but not written). It is introspection-only (it never runs a real subcommand), draft-layer-only, and a learned destructive command is classified by the same two-phase safety engine as a hand-written one — so learning a tool weakens no guarantee.
+A learned def must clear **two** gates to be accepted: schema validation, and every declared test matching the runtime's actual classification (a schema-valid-but-misclassifying def is shown with its failures but not written). It is introspection-only (it never runs a real subcommand), draft-layer-only, and a learned destructive command is classified by the same two-phase safety engine as a hand-written one — so learning a tool weakens no guarantee. AI can improve draft quality later, including an on-device model, but the baseline learner does not require Claude.
 
 ---
 
@@ -273,7 +273,7 @@ There is an acknowledged TOCTOU window between the resolved assessment and execu
 
 This is the subtlety worth internalizing:
 
-- **Registry content resolves `custom > official > core`.** A team's custom definition shadows the official one, which shadows the bundled core one. Overrides are visible via `registry.explain`.
+- **Registry content resolves `custom > official > core`.** A team's custom definition shadows the official one, which shadows the bundled core one. Overrides are visible via `explain.registry`.
 - **Core safety floors resolve `core > everything`.** They are non-overridable. A custom registry, a lax policy file, and `--yes` are all powerless against them: a CRITICAL classification cannot be cleared.
 
 The policy engine is where this is enforced. If a rule matches a CRITICAL command with `allow`, `warn`, or `require_dry_run`, the engine **rewrites the action to `block`** and records why. The only sanctioned escape is an explicit `approval_required` rule — a deliberate, logged team exception — never a silent downgrade.
@@ -284,9 +284,9 @@ The policy engine is where this is enforced. If a rule matches a CRITICAL comman
 
 | Risk | Examples | Default action |
 | --- | --- | --- |
-| **LOW** | `read.file`, `list.folder`, `path.current` | allow |
-| **MEDIUM** | `move.file`, `archive.extract` into an existing folder | allow |
-| **HIGH** | `remove.folder recursive=true`, recursive `permission.folder.set` | require_dry_run |
+| **LOW** | `read.file`, `list.folder`, `show.path` | allow |
+| **MEDIUM** | `move.file`, `extract.archive` into an existing folder | allow |
+| **HIGH** | `remove.folder recursive=true`, recursive `set.folder.permission` | require_dry_run |
 | **CRITICAL** | root/home delete, raw-device write, recursive `777` on a broad tree | block |
 
 Policy actions: `allow`, `warn`, `require_dry_run`, `approval_required`, `block`.

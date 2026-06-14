@@ -26,6 +26,7 @@ export type {
   EditorSaveRequest,
   EditorOpenResponse,
   RegistryEntry,
+  RegistryAdapterEntry,
 } from "./service.js";
 
 export { startServer } from "./server.js";

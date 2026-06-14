@@ -9,7 +9,7 @@
  *     custom  >  official  >  core
  *
  * A higher layer's definition wins; the lower ones it hides are recorded as
- * `shadowed` so `registry.explain` can show the full picture. (Note: safety
+ * `shadowed` so `explain.registry` can show the full picture. (Note: safety
  * *floors* run the opposite direction — core-first — but that is the safety
  * package's job, not the registry's.)
  *
@@ -201,12 +201,21 @@ export class Registry {
       );
     }
     this.problems.push(...problems);
-    this.addLayer(source, defs);
+    this.replaceLayer(source, defs);
   }
 
   /** Add already-validated defs to a layer (in-memory layers, tests, plugins). */
   addLayer(source: CommandSource, defs: CommandDef[]): void {
     const index = this.layers.get(source)!;
+    for (const def of defs) {
+      index.set(def.id, { ...def, source });
+    }
+  }
+
+  /** Replace a layer with already-validated defs, used when reloading from disk. */
+  replaceLayer(source: CommandSource, defs: CommandDef[]): void {
+    const index = this.layers.get(source)!;
+    index.clear();
     for (const def of defs) {
       index.set(def.id, { ...def, source });
     }
@@ -248,7 +257,7 @@ export class Registry {
 
   /**
    * The effective (winning) definition for every known id, sorted by id. This
-   * is what `registry.list` surfaces to the user.
+   * is what `list.registry` surfaces to the user.
    */
   list(): CommandDef[] {
     const ids = new Set<string>();
@@ -264,7 +273,7 @@ export class Registry {
   }
 
   /**
-   * Full per-layer view of a command for `registry.explain`: the resolved
+   * Full per-layer view of a command for `explain.registry`: the resolved
    * winner plus every layer that defines it (highest priority first).
    */
   explain(commandId: string): {

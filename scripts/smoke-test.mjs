@@ -84,12 +84,12 @@ try {
     console.log("smoke: ok remove.folder name=/ -> CRITICAL -> BLOCKED (exit 4)");
   }
 
-  const ok = await run(["path.current"]);
+  const ok = await run(["show.path"]);
   await writeDebug("ok.out", ok.stdout + ok.stderr);
   if (ok.code !== 0) {
-    fail(`path.current exit code was ${ok.code}, expected 0`);
+    fail(`show.path exit code was ${ok.code}, expected 0`);
   } else {
-    console.log("smoke: ok path.current -> exit 0");
+    console.log("smoke: ok show.path -> exit 0");
   }
 
   const { OpenLogWriter } = await import(

@@ -8,13 +8,10 @@ import type { CommandDef } from "@openexecution/types";
 import { learnCli, captureHelp, type TestVerification } from "./learn.js";
 
 /**
- * `learnCli` is exercised with a FAKE Anthropic client (deterministic, no
- * network) and an INJECTED help-capture (no real subprocess), but the validation
- * path is REAL — every proposed def is run through the registry's actual
- * `checkCommandDef`. The point of these tests is the safety contract: a valid
- * def is accepted and tagged `custom`; an invalid one is dropped with errors;
- * unparseable model output yields nothing (fail-closed); and `captureHelp`
- * rejects hostile CLI names before any spawn.
+ * `learnCli` is exercised with an INJECTED help-capture (no real subprocess),
+ * a local help parser, and a FAKE Anthropic client for the optional AI path. The
+ * validation path is REAL — every proposed def is run through the registry's
+ * actual `checkCommandDef`.
  */
 
 /** A minimal Anthropic-shaped client whose one reply is a fenced JSON block. */
@@ -30,7 +27,7 @@ function fakeClient(reply: string): { messages: { create: () => Promise<unknown>
 }
 
 const VALID_DEF = {
-  id: "demo.status",
+  id: "show.demo.status",
   version: "0.1.0",
   summary: "Show status.",
   category: "demo",
@@ -47,6 +44,29 @@ const INVALID_DEF = {
   summary: "nope",
 };
 
+const GIT_HELP = `
+usage: git [--version] [--help] <command> [<args>]
+
+These are common Git commands used in various situations:
+
+start a working area
+   clone     Clone a repository into a new directory
+   init      Create an empty Git repository or reinitialize an existing one
+
+work on the current change
+   add       Add file contents to the index
+   mv        Move or rename a file, a directory, or a symlink
+   restore   Restore working tree files
+   rm        Remove files from the working tree and from the index
+
+examine the history and state
+   diff      Show changes between commits, commit and working tree, etc
+   grep      Print lines matching a pattern
+   log       Show commit logs
+   show      Show various types of objects
+   status    Show the working tree status
+`;
+
 const savedApiKey = process.env["ANTHROPIC_API_KEY"];
 
 afterEach(() => {
@@ -55,6 +75,19 @@ afterEach(() => {
 });
 
 describe("learnCli", () => {
+  it("generates local draft defs from help without Claude or an API key", async () => {
+    delete process.env["ANTHROPIC_API_KEY"];
+    const result = await learnCli("git", {
+      capture: async () => GIT_HELP,
+      maxCommands: 12,
+    });
+    const ids = result.accepted.map((def) => def.id);
+    expect(ids).toContain("clone.git.repo");
+    expect(ids).toContain("remove.git.file");
+    expect(ids).toContain("show.git.status");
+    expect(result.commands.every((cmd) => cmd.id.split(".")[0] !== "git")).toBe(true);
+  });
+
   it("accepts a valid def and tags it as a custom draft", async () => {
     const result = await learnCli("demo", {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -62,10 +95,10 @@ describe("learnCli", () => {
       capture: async () => "demo — a demo CLI\n  status   show status",
     });
     expect(result.accepted).toHaveLength(1);
-    expect(result.accepted[0]!.id).toBe("demo.status");
+    expect(result.accepted[0]!.id).toBe("show.demo.status");
     // Learned defs must live in the draft (custom) layer, never core.
     expect(result.accepted[0]!.source).toBe("custom");
-    expect(result.commands.find((c) => c.id === "demo.status")?.def).not.toBeNull();
+    expect(result.commands.find((c) => c.id === "show.demo.status")?.def).not.toBeNull();
   });
 
   it("drops a def that fails schema validation (fail-closed) and reports why", async () => {
@@ -99,7 +132,7 @@ describe("learnCli", () => {
     expect(result.accepted).toHaveLength(1);
   });
 
-  it("falls back to the claude CLI generator when no API key is set", async () => {
+  it("uses the injected claude CLI generator when provided", async () => {
     delete process.env["ANTHROPIC_API_KEY"];
     let sawPrompt = false;
     const result = await learnCli("demo", {
@@ -114,7 +147,18 @@ describe("learnCli", () => {
       },
     });
     expect(sawPrompt).toBe(true);
-    expect(result.accepted[0]?.id).toBe("demo.status");
+    expect(result.accepted[0]?.id).toBe("show.demo.status");
+  });
+
+  it("rejects learned ids that put the CLI namespace before the verb", async () => {
+    const badNamespace = { ...VALID_DEF, id: "demo.status" };
+    const result = await learnCli("demo", {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      client: fakeClient("```json\n" + JSON.stringify([badNamespace]) + "\n```") as any,
+      capture: async () => "demo — a demo CLI\n  status   show status",
+    });
+    expect(result.accepted).toHaveLength(0);
+    expect(result.commands[0]!.errors.join("\n")).toMatch(/verb-first/);
   });
 });
 
@@ -125,9 +169,9 @@ describe("learnCli — test verification (round-tripping)", () => {
   // accept/reject wiring inside learnCli, not the runtime classification itself.
   const DEF_WITH_TEST = {
     ...VALID_DEF,
-    id: "demo.remove",
+    id: "remove.demo",
     riskDefault: "HIGH",
-    tests: [{ input: "demo.remove name=x", expectRisk: "HIGH" }],
+    tests: [{ input: "remove.demo name=x", expectRisk: "HIGH" }],
   };
 
   it("accepts a def whose declared tests pass", async () => {
@@ -135,7 +179,7 @@ describe("learnCli — test verification (round-tripping)", () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       client: fakeClient("```json\n" + JSON.stringify([DEF_WITH_TEST]) + "\n```") as any,
       capture: async () => "help",
-      verify: async () => ({ "demo.remove": { ran: 1, passed: 1, failures: [] } }),
+      verify: async () => ({ "remove.demo": { ran: 1, passed: 1, failures: [] } }),
     });
     expect(result.accepted).toHaveLength(1);
     expect(result.commands[0]!.verification).toEqual({ ran: 1, passed: 1, failures: [] });
@@ -147,7 +191,7 @@ describe("learnCli — test verification (round-tripping)", () => {
       client: fakeClient("```json\n" + JSON.stringify([DEF_WITH_TEST]) + "\n```") as any,
       capture: async () => "help",
       verify: async () => ({
-        "demo.remove": {
+        "remove.demo": {
           ran: 1,
           passed: 0,
           failures: ["expected risk HIGH, runtime classified LOW"],
@@ -156,7 +200,7 @@ describe("learnCli — test verification (round-tripping)", () => {
     });
     // Schema-valid, but the test failed → not accepted, yet still reported.
     expect(result.accepted).toHaveLength(0);
-    const cmd = result.commands.find((c) => c.id === "demo.remove");
+    const cmd = result.commands.find((c) => c.id === "remove.demo");
     expect(cmd!.def).not.toBeNull();
     expect(cmd!.verification!.failures).toHaveLength(1);
   });
@@ -166,7 +210,7 @@ describe("learnCli — test verification (round-tripping)", () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       client: fakeClient("```json\n" + JSON.stringify([VALID_DEF]) + "\n```") as any,
       capture: async () => "help",
-      verify: async () => ({ "demo.status": { ran: 0, passed: 0, failures: [] } }),
+      verify: async () => ({ "show.demo.status": { ran: 0, passed: 0, failures: [] } }),
     });
     expect(result.accepted).toHaveLength(1);
   });
@@ -205,14 +249,14 @@ describe("learnCli — test verification (round-tripping)", () => {
     };
 
     const def = {
-      id: "demo.touch",
+      id: "create.demo.file",
       version: "0.1.0",
       summary: "Make a file.",
       category: "demo",
       riskDefault: "LOW",
       params: { name: { type: "path", required: true } },
       adapters: { node: { command: "@node", args: [{ kind: "value", param: "name" }] } },
-      tests: [{ input: "demo.touch name=a.txt", expectRisk: "LOW" }],
+      tests: [{ input: "create.demo.file name=a.txt", expectRisk: "LOW" }],
     };
     const result = await learnCli("demo", {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

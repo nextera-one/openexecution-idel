@@ -1,6 +1,6 @@
 [
   {
-    "id": "permission.file.set",
+    "id": "set.file.permission",
     "version": "1.0.0",
     "summary": "Set the permission mode of a file (POSIX chmod).",
     "category": "permissions",
@@ -24,11 +24,11 @@
         "semanticNotes": "DIVERGES: Windows ACLs are not POSIX modes. icacls cannot consume an octal `mode`; a faithful translation (owner/group/other rwx -> ACL entries) is non-trivial and lossy. This adapter is best-effort and the octal `mode` is intentionally NOT mapped here — translate at the call site or treat as unsupported on PowerShell."
       }
     },
-    "examples": ["permission.file.set path=run.sh mode=755", "permission.file.set path=secret.key mode=600"],
-    "tests": [{ "input": "permission.file.set path=run.sh mode=755", "expectRisk": "HIGH" }]
+    "examples": ["set.file.permission path=run.sh mode=755", "set.file.permission path=secret.key mode=600"],
+    "tests": [{ "input": "set.file.permission path=run.sh mode=755", "expectRisk": "HIGH" }]
   },
   {
-    "id": "permission.folder.set",
+    "id": "set.folder.permission",
     "version": "1.0.0",
     "summary": "Set the permission mode of a directory, optionally recursively (POSIX chmod).",
     "category": "permissions",
@@ -55,17 +55,17 @@
           { "kind": "value", "param": "path" },
           { "kind": "flag", "flag": "/T", "when": "recursive" }
         ],
-        "semanticNotes": "DIVERGES: same caveat as permission.file.set — Windows ACLs are not octal modes. /T applies recursively, but the `mode` is not (and cannot faithfully be) mapped to an icacls grant string here. Best-effort only."
+        "semanticNotes": "DIVERGES: same caveat as set.file.permission — Windows ACLs are not octal modes. /T applies recursively, but the `mode` is not (and cannot faithfully be) mapped to an icacls grant string here. Best-effort only."
       }
     },
-    "examples": ["permission.folder.set path=public mode=755 recursive=true"],
+    "examples": ["set.folder.permission path=public mode=755 recursive=true"],
     "tests": [
-      { "input": "permission.folder.set path=public mode=755 recursive=true", "expectRisk": "HIGH" },
-      { "input": "permission.folder.set path=/ mode=777 recursive=true", "expectPolicy": "block" }
+      { "input": "set.folder.permission path=public mode=755 recursive=true", "expectRisk": "HIGH" },
+      { "input": "set.folder.permission path=/ mode=777 recursive=true", "expectPolicy": "block" }
     ]
   },
   {
-    "id": "owner.file.set",
+    "id": "set.file.owner",
     "version": "1.0.0",
     "summary": "Change the owner (and optionally group) of a file (POSIX chown).",
     "category": "permissions",
@@ -93,11 +93,11 @@
         "semanticNotes": "DIVERGES: icacls /setowner takes only an owner principal (no group), and changing ownership often requires SeRestorePrivilege/admin. The `user:group` POSIX form is not supported — pass only a principal on Windows."
       }
     },
-    "examples": ["owner.file.set path=app.log owner=root", "owner.file.set path=data.db owner=app:app"],
-    "tests": [{ "input": "owner.file.set path=app.log owner=root", "expectRisk": "HIGH" }]
+    "examples": ["set.file.owner path=app.log owner=root", "set.file.owner path=data.db owner=app:app"],
+    "tests": [{ "input": "set.file.owner path=app.log owner=root", "expectRisk": "HIGH" }]
   },
   {
-    "id": "owner.folder.set",
+    "id": "set.folder.owner",
     "version": "1.0.0",
     "summary": "Change the owner of a directory, optionally recursively (POSIX chown).",
     "category": "permissions",
@@ -125,10 +125,10 @@
           { "kind": "value", "param": "owner" },
           { "kind": "flag", "flag": "/T", "when": "recursive" }
         ],
-        "semanticNotes": "DIVERGES: same ownership caveats as owner.file.set; /T applies recursively. user:group form unsupported on Windows."
+        "semanticNotes": "DIVERGES: same ownership caveats as set.file.owner; /T applies recursively. user:group form unsupported on Windows."
       }
     },
-    "examples": ["owner.folder.set path=/srv/app owner=app:app recursive=true"],
-    "tests": [{ "input": "owner.folder.set path=/srv/app owner=app recursive=true", "expectRisk": "HIGH" }]
+    "examples": ["set.folder.owner path=/srv/app owner=app:app recursive=true"],
+    "tests": [{ "input": "set.folder.owner path=/srv/app owner=app recursive=true", "expectRisk": "HIGH" }]
   }
 ]

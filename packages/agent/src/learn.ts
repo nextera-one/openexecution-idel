@@ -2,7 +2,11 @@ import { spawn } from "node:child_process";
 
 import Anthropic from "@anthropic-ai/sdk";
 import { checkCommandDef, ID_RE } from "@openexecution/registry";
-import type { CommandDef } from "@openexecution/types";
+import type {
+  AdapterArgSpec,
+  CommandDef,
+  RiskLevel,
+} from "@openexecution/types";
 
 /**
  * `idel learn <cli>` — turn an *already-installed* CLI into a set of draft IDEL
@@ -19,20 +23,21 @@ import type { CommandDef } from "@openexecution/types";
  *
  *  1. **Introspection only — never execution.** We invoke `<cli> --help` (and a
  *     couple of well-known help variants), capture stdout, and stop. We never
- *     run a real subcommand to "see what it does". The help text is the only
- *     input besides the model.
+ *     run a real subcommand to "see what it does". The help text is the input
+ *     to the local generator or to an explicitly configured AI generator.
  *  2. **Draft layer, never core.** Generated defs are tagged `source: "custom"`
  *     and written to `~/.idel/registries/custom/learned/`. They shadow nothing
  *     in core they shouldn't (resolution is custom > official > core, but a
- *     learned def gets a distinct `<cli>.<sub>` id namespace), and core safety
- *     floors still apply on top.
+ *     learned def gets a distinct verb-first `<action>.<cli>[.<object>]` id),
+ *     and core safety floors still apply on top.
  *  3. **Fail-closed validation.** Every generated def is run through the
  *     registry's own {@link checkCommandDef}. Anything that doesn't validate is
  *     dropped with its errors reported — an invalid def never reaches disk.
  *
- * The model proposes; the schema validator disposes. A learned `remove`-shaped
- * command is classified by the same two-phase safety engine as a hand-written
- * one, so "I taught IDEL a destructive tool" does not weaken any guarantee.
+ * The generator proposes; the schema validator disposes. A learned
+ * `remove`-shaped command is classified by the same two-phase safety engine as
+ * a hand-written one, so "I taught IDEL a destructive tool" does not weaken any
+ * guarantee.
  */
 
 /** A model for one-shot structured generation. Cheaper than the agent loop. */
@@ -68,7 +73,7 @@ export interface LearnOptions {
   bin?: string;
   /** Injectable `claude -p` runner for tests. */
   runClaudeCli?: (args: string[], stdin: string) => Promise<string>;
-  /** Max subcommands to ask the model to define in one pass. Default 12. */
+  /** Max subcommands to define in one pass. Default 12. */
   maxCommands?: number;
   /**
    * Replay a learned def's declared `tests[]` through a real runtime to PROVE
@@ -95,7 +100,7 @@ export interface TestVerification {
 
 /** One learned (or rejected) command, with provenance for review. */
 export interface LearnedCommand {
-  /** The proposed IDEL command id, e.g. `gh.pr.create`. */
+  /** The proposed IDEL command id, e.g. `create.gh.pr`. */
   id: string;
   /** The validated def, or null if it failed schema validation. */
   def: CommandDef | null;
@@ -114,7 +119,7 @@ export interface LearnResult {
   cli: string;
   /** The raw help text that was introspected (truncated to the cap). */
   helpExcerpt: string;
-  /** Every command the model proposed, valid and invalid. */
+  /** Every command the generator proposed, valid and invalid. */
   commands: LearnedCommand[];
   /** The valid defs only — what would be written to the draft layer. */
   accepted: CommandDef[];
@@ -181,7 +186,7 @@ function runCapture(cli: string, args: string[]): Promise<string> {
 }
 
 /**
- * Learn a CLI: introspect, generate draft defs with Claude, validate each one.
+ * Learn a CLI: introspect, generate draft defs, validate each one.
  * Returns both accepted and rejected proposals — the CLI layer decides what to
  * write and what to report.
  */
@@ -206,7 +211,12 @@ export async function learnCli(
     if (ok) {
       // checkCommandDef narrows to CommandDef on ok; re-tag the draft layer.
       const def = { ...(item as CommandDef), source: "custom" as const };
-      commands.push({ id: def.id, def, errors: [] });
+      const idErrors = validateLearnedCommandId(cli, def.id);
+      if (idErrors.length) {
+        commands.push({ id: def.id, def: null, errors: idErrors });
+      } else {
+        commands.push({ id: def.id, def, errors: [] });
+      }
     } else {
       commands.push({ id, def: null, errors });
     }
@@ -241,9 +251,9 @@ async function generateDefs(
   model: string,
   opts: LearnOptions,
 ): Promise<string> {
-  const prompt = learnPrompt(cli, help, maxCommands);
-  if (opts.client || process.env["ANTHROPIC_API_KEY"]) {
-    const client = opts.client ?? new Anthropic();
+  if (opts.client) {
+    const prompt = learnPrompt(cli, help, maxCommands);
+    const client = opts.client;
     const res = await client.messages.create({
       model,
       max_tokens: 8000,
@@ -256,10 +266,33 @@ async function generateDefs(
       .join("");
   }
 
-  return await generateDefsWithClaudeCli(prompt, {
+  if (opts.runClaudeCli) {
+    const prompt = learnPrompt(cli, help, maxCommands);
+    return await generateDefsWithClaudeCli(prompt, {
+      bin: opts.bin ?? "claude",
+      model: opts.model,
+      run: opts.runClaudeCli,
+    });
+  }
+
+  if (opts.bin) {
+    return await generateDefsWithInstalledClaude(cli, help, maxCommands, model, opts);
+  }
+
+  return JSON.stringify(generateLocalDefs(cli, help, maxCommands));
+}
+
+function generateDefsWithInstalledClaude(
+  cli: string,
+  help: string,
+  maxCommands: number,
+  model: string,
+  opts: LearnOptions,
+): Promise<string> {
+  const prompt = learnPrompt(cli, help, maxCommands);
+  return generateDefsWithClaudeCli(prompt, {
     bin: opts.bin ?? "claude",
-    model: opts.model,
-    run: opts.runClaudeCli,
+    model,
   });
 }
 
@@ -373,13 +406,374 @@ function parseDefs(raw: string): unknown[] {
   return parsed && typeof parsed === "object" ? [parsed] : [];
 }
 
+interface HelpCommand {
+  name: string;
+  summary: string;
+}
+
+interface LocalTemplate {
+  action: string;
+  object?: string;
+  summary?: string;
+  risk: RiskLevel;
+  params: CommandDef["params"];
+  args: AdapterArgSpec[];
+  safety?: CommandDef["safety"];
+  testParams?: Record<string, string | number | boolean>;
+}
+
+const HELP_COMMAND_RE = /^\s{2,}([A-Za-z][A-Za-z0-9-]{0,39})\s{2,}(.+?)\s*$/;
+
+function generateLocalDefs(
+  cli: string,
+  help: string,
+  maxCommands: number,
+): CommandDef[] {
+  const tool = cliIdSegment(cli);
+  if (!tool) return [];
+
+  const defs: CommandDef[] = [];
+  const seen = new Set<string>();
+  for (const cmd of parseHelpCommands(help)) {
+    const template = templateForHelpCommand(cmd);
+    if (!template) continue;
+
+    const id = localCommandId(tool, cmd.name, template);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+
+    const adapterArgs: AdapterArgSpec[] = [
+      { kind: "literal", value: cmd.name },
+      ...template.args,
+    ];
+    const def: CommandDef = {
+      id,
+      version: "0.1.0",
+      summary: sentence(template.summary ?? (cmd.summary || `Run ${cli} ${cmd.name}.`)),
+      category: tool,
+      riskDefault: template.risk,
+      params: template.params,
+      ...(template.safety ? { safety: template.safety } : {}),
+      adapters: {
+        posix: {
+          command: cli,
+          args: adapterArgs,
+          semanticNotes:
+            "Generated locally from top-level help. Review command-specific flags before promoting to an official registry.",
+        },
+      },
+      examples: [renderLearnedInput(id, template.testParams ?? {})],
+      tests: [
+        {
+          input: renderLearnedInput(id, template.testParams ?? {}),
+          expectRisk: template.risk,
+        },
+      ],
+    };
+    defs.push(def);
+    if (defs.length >= maxCommands) break;
+  }
+  return defs;
+}
+
+function parseHelpCommands(help: string): HelpCommand[] {
+  const out: HelpCommand[] = [];
+  const seen = new Set<string>();
+  for (const line of help.split(/\r?\n/)) {
+    const match = HELP_COMMAND_RE.exec(line);
+    if (!match) continue;
+    const name = match[1]!.toLowerCase();
+    if (seen.has(name) || name === "usage" || name === "options") continue;
+    const summary = sentence(match[2]!.trim());
+    if (!summary || /^(and|or)\s+/i.test(summary)) continue;
+    seen.add(name);
+    out.push({ name, summary });
+  }
+  return out;
+}
+
+function templateForHelpCommand(cmd: HelpCommand): LocalTemplate | undefined {
+  const summary = cmd.summary.toLowerCase();
+  switch (cmd.name) {
+    case "clone":
+      return {
+        action: "clone",
+        object: "repo",
+        risk: "MEDIUM",
+        params: {
+          url: { type: "string", required: true, description: "Repository URL to clone." },
+          directory: { type: "path", description: "Optional destination directory." },
+        },
+        args: [{ kind: "value", param: "url" }, { kind: "value", param: "directory" }],
+        testParams: { url: "https://example.invalid/repo.git" },
+      };
+    case "init":
+      return {
+        action: "init",
+        object: "repo",
+        risk: "MEDIUM",
+        params: { path: { type: "path", description: "Optional repository directory." } },
+        args: [{ kind: "value", param: "path" }],
+      };
+    case "add":
+      return {
+        action: "add",
+        object: "file",
+        risk: "MEDIUM",
+        params: { path: { type: "path", required: true, description: "Path to stage." } },
+        args: [{ kind: "value", param: "path" }],
+        testParams: { path: "." },
+      };
+    case "mv":
+    case "move":
+      return {
+        action: "move",
+        object: "file",
+        risk: "MEDIUM",
+        params: {
+          from: { type: "path", required: true, description: "Source path." },
+          to: { type: "path", required: true, description: "Destination path." },
+        },
+        args: [{ kind: "value", param: "from" }, { kind: "value", param: "to" }],
+        safety: { targetParam: "to" },
+        testParams: { from: "old.txt", to: "new.txt" },
+      };
+    case "restore":
+      return {
+        action: "restore",
+        object: "file",
+        risk: "HIGH",
+        params: { path: { type: "path", required: true, description: "Path to restore." } },
+        args: [{ kind: "value", param: "path" }],
+        safety: { destructive: true, targetParam: "path" },
+        testParams: { path: "file.txt" },
+      };
+    case "rm":
+    case "remove":
+    case "delete":
+      return {
+        action: "remove",
+        object: "file",
+        risk: "HIGH",
+        params: {
+          path: { type: "path", required: true, description: "Path to remove." },
+          recursive: { type: "boolean", default: false, description: "Pass recursive removal flag." },
+          force: { type: "boolean", default: false, description: "Pass force flag." },
+        },
+        args: [
+          { kind: "flag", flag: "-r", when: "recursive" },
+          { kind: "flag", flag: "-f", when: "force" },
+          { kind: "value", param: "path" },
+        ],
+        safety: {
+          destructive: true,
+          targetParam: "path",
+          requiresAffectedPathEstimate: true,
+        },
+        testParams: { path: "file.txt" },
+      };
+    case "status":
+      return lowNoArg("show", "status", "Show the working tree status.");
+    case "diff":
+      return lowNoArg("diff", undefined, "Show changes.");
+    case "grep":
+      return {
+        action: "find",
+        object: "text",
+        risk: "LOW",
+        params: { pattern: { type: "string", required: true, description: "Pattern to search for." } },
+        args: [{ kind: "value", param: "pattern" }],
+        testParams: { pattern: "TODO" },
+      };
+    case "log":
+      return lowNoArg("list", "log", "Show commit logs.");
+    case "show":
+      return {
+        action: "show",
+        object: "object",
+        risk: "LOW",
+        params: { ref: { type: "string", description: "Optional object, ref, or revision." } },
+        args: [{ kind: "value", param: "ref" }],
+      };
+    case "branch":
+      return lowNoArg("list", "branch", "List branches.");
+    case "commit":
+      return {
+        action: "create",
+        object: "commit",
+        risk: "MEDIUM",
+        params: { message: { type: "string", required: true, description: "Commit message for -m." } },
+        args: [{ kind: "option", flag: "-m", param: "message" }],
+        testParams: { message: "update" },
+      };
+    case "merge":
+      return stringArg("merge", "branch", "HIGH", "branch", "Branch to merge.");
+    case "rebase":
+      return stringArg("rebase", "branch", "HIGH", "branch", "Branch to rebase onto.");
+    case "reset":
+      return {
+        action: "reset",
+        object: "head",
+        risk: "HIGH",
+        params: {
+          hard: { type: "boolean", default: false, description: "Pass --hard." },
+          ref: { type: "string", default: "HEAD", description: "Ref to reset to." },
+        },
+        args: [{ kind: "flag", flag: "--hard", when: "hard" }, { kind: "value", param: "ref" }],
+        safety: { destructive: true },
+        testParams: { ref: "HEAD" },
+      };
+    case "switch":
+    case "checkout":
+      return stringArg("switch", "branch", "MEDIUM", "branch", "Branch to switch to.");
+    case "tag":
+      return lowNoArg("list", "tag", "List tags.");
+    case "fetch":
+      return stringArg("fetch", undefined, "MEDIUM", "remote", "Optional remote to fetch.");
+    case "pull":
+      return {
+        action: "pull",
+        risk: "MEDIUM",
+        params: {
+          remote: { type: "string", description: "Optional remote." },
+          branch: { type: "string", description: "Optional branch." },
+        },
+        args: [{ kind: "value", param: "remote" }, { kind: "value", param: "branch" }],
+      };
+    case "push":
+      return {
+        action: "push",
+        risk: "HIGH",
+        params: {
+          remote: { type: "string", description: "Optional remote." },
+          branch: { type: "string", description: "Optional branch." },
+        },
+        args: [{ kind: "value", param: "remote" }, { kind: "value", param: "branch" }],
+      };
+  }
+
+  if (/^(show|display|print)\b/.test(summary)) return lowNoArg("show", cmd.name);
+  if (/^(list)\b/.test(summary)) return lowNoArg("list", cmd.name);
+  if (/^(create|make|generate)\b/.test(summary)) {
+    return { action: "create", object: idSegment(cmd.name), risk: "MEDIUM", params: {}, args: [] };
+  }
+  return undefined;
+}
+
+function lowNoArg(action: string, object?: string, summary?: string): LocalTemplate {
+  return {
+    action,
+    ...(object ? { object } : {}),
+    ...(summary ? { summary } : {}),
+    risk: "LOW",
+    params: {},
+    args: [],
+  };
+}
+
+function stringArg(
+  action: string,
+  object: string | undefined,
+  risk: RiskLevel,
+  name: string,
+  description: string,
+): LocalTemplate {
+  return {
+    action,
+    ...(object ? { object } : {}),
+    risk,
+    params: { [name]: { type: "string", required: true, description } },
+    args: [{ kind: "value", param: name }],
+    testParams: { [name]: sampleStringParam(name) },
+  };
+}
+
+function localCommandId(
+  tool: string,
+  commandName: string,
+  template: LocalTemplate,
+): string | undefined {
+  const action = idSegment(template.action);
+  const object = template.object ? idSegment(template.object) : undefined;
+  const command = idSegment(commandName);
+  if (!action || !command) return undefined;
+  const parts = [action, tool];
+  if (object && object !== tool) {
+    parts.push(object);
+  } else if (command !== action) {
+    parts.push(command);
+  }
+  const id = parts.slice(0, 4).join(".");
+  return ID_RE.test(id) ? id : undefined;
+}
+
+function idSegment(raw: string): string | undefined {
+  const seg = raw.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (!seg) return undefined;
+  return /^[a-z]/.test(seg) ? seg : `x${seg}`;
+}
+
+function renderLearnedInput(
+  id: string,
+  params: Record<string, string | number | boolean>,
+): string {
+  const rendered = Object.entries(params).map(
+    ([key, value]) => `${key}=${quoteLearnedValue(value)}`,
+  );
+  return rendered.length ? `${id} ${rendered.join(" ")}` : id;
+}
+
+function quoteLearnedValue(value: string | number | boolean): string {
+  if (typeof value === "boolean" || typeof value === "number") return String(value);
+  return /[\s"'\\&=]/.test(value)
+    ? `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`
+    : value;
+}
+
+function sampleStringParam(name: string): string {
+  if (name === "branch") return "main";
+  if (name === "remote") return "origin";
+  return "value";
+}
+
+function sentence(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return trimmed;
+  return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+}
+
+function cliIdSegment(cli: string): string {
+  return idSegment(cli) ?? "";
+}
+
+function validateLearnedCommandId(cli: string, id: string): string[] {
+  const tool = cliIdSegment(cli);
+  if (!tool) return [];
+  const segments = id.split(".");
+  const errors: string[] = [];
+  if (segments[0] === tool) {
+    errors.push(
+      `id: learned command ids must be verb-first; use "show.${tool}.status" instead of "${tool}.status"`,
+    );
+  }
+  if (!segments.slice(1).includes(tool)) {
+    errors.push(
+      `id: learned command ids must include the CLI segment "${tool}" after the verb`,
+    );
+  }
+  return errors;
+}
+
 function learnPrompt(cli: string, help: string, maxCommands: number): string {
+  const tool = cliIdSegment(cli);
   return [
     `The user has the CLI "${cli}" installed. Below is its help text.`,
     `Propose up to ${maxCommands} IDEL command definitions for its most useful, common subcommands.`,
     "",
     "Rules:",
-    `- Every command id MUST start with "${cli}." (namespace the CLI), e.g. "${cli}.status".`,
+    "- Every command id MUST be verb-first: the first segment is the action, not the CLI name.",
+    `  Use "${tool}" as the tool segment after the verb, e.g. "show.${tool}.status",`,
+    `  "list.${tool}.branch", or "create.${tool}.repo". Never emit "${tool}.status".`,
     "  Use dotted lowercase segments matching the regex " + ID_RE.source + ".",
     "- Map each subcommand to ONE adapter spec under \"adapters.posix\" (and powershell if you",
     "  know the Windows equivalent). Build argv declaratively with the arg-spec union —",
@@ -409,7 +803,7 @@ const LEARN_SYSTEM = [
   "",
   "An IDEL CommandDef has this shape (TypeScript):",
   "  {",
-  "    id: string;            // dotted lowercase, e.g. \"gh.pr.create\"",
+  "    id: string;            // dotted lowercase and verb-first, e.g. \"create.gh.pr\"",
   "    version: string;       // semver, use \"0.1.0\" for a learned draft",
   "    summary: string;",
   "    category: string;",

@@ -58,6 +58,17 @@ describe("TerminalService.registry", () => {
     expect(removeFolder).toBeDefined();
     expect(removeFolder!.risk).toBe("HIGH");
     expect(removeFolder!.params.some((p) => p.name === "recursive")).toBe(true);
+    const createFolder = entries.find((e) => e.id === "create.folder");
+    expect(createFolder?.examples).toContain("create.folder name=dist");
+    expect(createFolder?.adapters).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "posix",
+          command: "mkdir",
+          pattern: "mkdir [-p] <name>",
+        }),
+      ]),
+    );
   });
 
   it("explains a command's resolution", async () => {
@@ -79,6 +90,8 @@ describe("TerminalService.complete", () => {
     expect(svc.complete({ input: "ask." })).toContain("ask.ai");
     expect(svc.complete({ input: "learn." })).toContain("learn.cli");
     expect(svc.complete({ input: "list." })).toContain("list.history");
+    expect(svc.complete({ input: "list." })).toContain("list.logs");
+    expect(svc.complete({ input: "list." })).toContain("list.registry");
     expect(svc.complete({ input: "tail." })).toContain("tail.file");
   });
 
@@ -169,7 +182,7 @@ describe("TerminalService.complete", () => {
 describe("TerminalService.run — the safety/policy contract is preserved", () => {
   it("runs a LOW meta command and succeeds", async () => {
     const svc = makeService(await sandbox());
-    const out = await svc.run({ command: "registry.list" });
+    const out = await svc.run({ command: "list.registry" });
     expect(out.risk.level).toBe("LOW");
     expect(out.record.result).toBe("success");
   });
@@ -316,7 +329,7 @@ describe("TerminalService.logs", () => {
       }),
     });
     const svc = new TerminalService({ runtime, cwd: dir });
-    await svc.run({ command: "registry.list", cwd: dir });
+    await svc.run({ command: "list.registry", cwd: dir });
     await svc.run({ command: "create.file name=a.txt", cwd: dir });
     const logs = await svc.logs(10);
     expect(logs.length).toBeGreaterThanOrEqual(2);
@@ -362,6 +375,14 @@ describe("startServer (HTTP)", () => {
     expect(body.some((e) => e.id === "open.editor")).toBe(true);
     expect(body.some((e) => e.id === "ask.ai")).toBe(true);
     expect(body.some((e) => e.id === "learn.cli")).toBe(true);
+    const createFolder = body.find((e) => e.id === "create.folder") as {
+      adapters?: { name: string; command: string; pattern: string }[];
+    } | undefined;
+    expect(createFolder?.adapters).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "posix", command: "mkdir", pattern: "mkdir [-p] <name>" }),
+      ]),
+    );
   });
 
   it("POST /api/complete → suggestions", async () => {
@@ -473,7 +494,7 @@ describe("startServer (HTTP)", () => {
     const res = await fetch(`${base}/api/run/stream`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ command: "registry.list" }),
+      body: JSON.stringify({ command: "list.registry" }),
     });
     expect(res.headers.get("content-type")).toContain("text/event-stream");
     const text = await res.text();
@@ -624,7 +645,7 @@ describe("startServer — injected agent", () => {
       // eslint-disable-next-line require-yield
       async *ask(): AsyncGenerator<unknown> {
         yield { type: "text", text: "thinking" };
-        yield { type: "proposed", command: "registry.list", dryRun: true };
+        yield { type: "proposed", command: "list.registry", dryRun: true };
         yield { type: "done", reason: "end_turn" };
       },
     });

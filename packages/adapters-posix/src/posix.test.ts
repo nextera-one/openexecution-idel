@@ -357,8 +357,8 @@ describe("NodeAdapter", () => {
     await expect(stat(join(dir, "to-del"))).rejects.toThrow();
   });
 
-  it("path.current returns cwd on stdout", async () => {
-    const r = await run("path.current", {}, { dryRun: false });
+  it("show.path returns cwd on stdout", async () => {
+    const r = await run("show.path", {}, { dryRun: false });
     expect(r.exitCode).toBe(0);
     expect(r.stdout.trim()).toBe(dir);
   });

@@ -157,7 +157,7 @@ export interface ResolvedCommand {
   def: CommandDef;
   /** The layer the winning definition came from. */
   source: CommandSource;
-  /** Lower-priority definitions that were shadowed, for `registry.explain`. */
+  /** Lower-priority definitions that were shadowed, for `explain.registry`. */
   shadowed: { source: CommandSource; version: string }[];
 }
 

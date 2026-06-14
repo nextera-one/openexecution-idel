@@ -25,10 +25,10 @@ EXAMPLES
   idel run.script path=./scripts/check.js shell=node args="--fix src"
   idel open.editor file=README.md editor=nano
   idel editor README.md
-  idel policy.check
-  idel registry.explain command=remove.folder
+  idel check.policy
+  idel explain.registry command=remove.folder
   idel list.history
-  idel logs.list
+  idel list.logs
   idel ! "tar -xvzf backup.tar.gz"
   idel ask "delete the dist folder"          (uses your Claude subscription or ANTHROPIC_API_KEY; --yes to allow real runs)
   idel ask.ai prompt="delete the dist folder"

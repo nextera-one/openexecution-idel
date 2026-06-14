@@ -1,6 +1,6 @@
 [
   {
-    "id": "path.current",
+    "id": "show.path",
     "version": "1.0.0",
     "summary": "Print the current working directory.",
     "category": "path",
@@ -17,11 +17,11 @@
         "semanticNotes": "Get-Location returns a PathInfo object; its .Path is the cwd. pwd prints a bare string. The displayed form differs slightly but the directory is the same."
       }
     },
-    "examples": ["path.current"],
-    "tests": [{ "input": "path.current", "expectRisk": "LOW" }]
+    "examples": ["show.path"],
+    "tests": [{ "input": "show.path", "expectRisk": "LOW" }]
   },
   {
-    "id": "path.change",
+    "id": "change.path",
     "version": "1.0.0",
     "summary": "Change the runtime's working directory for subsequent commands.",
     "category": "path",
@@ -37,11 +37,11 @@
         "semanticNotes": "`cd` cannot be a spawned child process — a child's chdir does not affect the parent runtime. The @node adapter updates the runtime's in-process cwd (validating the target exists) so subsequent commands inherit it. There is intentionally no posix/powershell spawn form."
       }
     },
-    "examples": ["path.change to=src", "path.change to=/tmp"],
-    "tests": [{ "input": "path.change to=src", "expectRisk": "LOW" }]
+    "examples": ["change.path to=src", "change.path to=/tmp"],
+    "tests": [{ "input": "change.path to=src", "expectRisk": "LOW" }]
   },
   {
-    "id": "env.get",
+    "id": "get.env",
     "version": "1.0.0",
     "summary": "Read the value of an environment variable.",
     "category": "env",
@@ -56,11 +56,11 @@
         "semanticNotes": "Reading env via a spawned shell (echo $VAR / $env:VAR) requires shell expansion the runtime never invokes. The @node adapter reads process.env[name] directly, identically on every platform."
       }
     },
-    "examples": ["env.get name=PATH", "env.get name=HOME"],
-    "tests": [{ "input": "env.get name=PATH", "expectRisk": "LOW" }]
+    "examples": ["get.env name=PATH", "get.env name=HOME"],
+    "tests": [{ "input": "get.env name=PATH", "expectRisk": "LOW" }]
   },
   {
-    "id": "env.set",
+    "id": "set.env",
     "version": "1.0.0",
     "summary": "Set an environment variable for subsequent runtime commands.",
     "category": "env",
@@ -79,7 +79,7 @@
         "semanticNotes": "A child process cannot mutate the parent's environment, so export/$env: in a spawned shell would be lost immediately. The @node adapter sets process.env[name] in-process so the value persists for the session. riskDefault MEDIUM because env can alter the behavior of later commands (e.g. PATH, NODE_OPTIONS)."
       }
     },
-    "examples": ["env.set name=NODE_ENV value=production"],
-    "tests": [{ "input": "env.set name=NODE_ENV value=production", "expectRisk": "MEDIUM" }]
+    "examples": ["set.env name=NODE_ENV value=production"],
+    "tests": [{ "input": "set.env name=NODE_ENV value=production", "expectRisk": "MEDIUM" }]
   }
 ]

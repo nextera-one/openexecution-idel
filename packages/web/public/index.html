@@ -146,22 +146,22 @@ Log: ~/.idel/logs/openlogs.jsonl</pre>
         <h2>Teach IDEL any installed CLI</h2>
         <p class="section-lede">
           Install a tool, and IDEL can learn it. <code>idel learn</code>
-          introspects a CLI's own <code>--help</code>, asks Claude to draft IDEL
-          command definitions, and validates each against the registry schema —
-          fail-closed. Accepted drafts land in the custom layer and are then
-          governed by the <em>same</em> runtime: risk-classified, policy-gated,
-          audited.
+          introspects a CLI's own <code>--help</code>, drafts conservative IDEL
+          command definitions locally, and validates each against the registry
+          schema — fail-closed. Accepted drafts land in the custom layer and are
+          then governed by the <em>same</em> runtime: risk-classified,
+          policy-gated, audited.
         </p>
         <pre class="demo"><span class="prompt">$ idel learn gh --write</span>
 
 Introspecting "gh" and drafting IDEL commands…
 Learned gh  (7 accepted, 2 rejected)
 
-  ✓ gh.repo.clone    [MEDIUM]  Clone a repository into a new directory.
-  ✓ gh.pr.create     [LOW]     Create a pull request.
-  ✓ gh.pr.merge      [HIGH]    Merge a pull request into its base branch.
-  ✓ gh.repo.delete   [CRITICAL] Permanently delete a repository.
-  ✗ gh.alias.import  — adapters.posix: args[1] unknown arg kind
+  ✓ clone.gh.repo    [MEDIUM]  Clone a repository into a new directory.
+  ✓ create.gh.pr     [LOW]     Create a pull request.
+  ✓ merge.gh.pr      [HIGH]    Merge a pull request into its base branch.
+  ✓ delete.gh.repo   [CRITICAL] Permanently delete a repository.
+  ✗ import.gh.alias  — adapters.posix: args[1] unknown arg kind
 
 ✓ wrote 7 learned command(s) to ~/.idel/registries/custom/learned-gh.json</pre>
         <p class="section-note">

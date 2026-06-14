@@ -51,11 +51,11 @@ echo "smoke: ✓ remove.folder name=/ → CRITICAL → BLOCKED (exit 4)"
 
 # 3) a harmless command succeeds.
 set +e
-run path.current >"$SANDBOX/ok.out" 2>&1
+run show.path >"$SANDBOX/ok.out" 2>&1
 OKCODE=$?
 set -e
-[[ $OKCODE -eq 0 ]] || fail "path.current exit code was $OKCODE, expected 0"
-echo "smoke: ✓ path.current → exit 0"
+[[ $OKCODE -eq 0 ]] || fail "show.path exit code was $OKCODE, expected 0"
+echo "smoke: ✓ show.path → exit 0"
 
 # 4) the OpenLogs chain must contain signed records and verify clean.
 IDEL_ROOT="$ROOT" node -e '

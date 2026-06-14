@@ -42,7 +42,7 @@ describe("parse — basics", () => {
     const ast = asCommand("remove.folder name=dist recursive=true force=false");
     expect(ast.params).toEqual({ name: "dist", recursive: true, force: false });
     // Numbers are NOT coerced by the parser:
-    const m = asCommand("permission.folder.set path=public mode=755 recursive=true");
+    const m = asCommand("set.folder.permission path=public mode=755 recursive=true");
     expect(m.params).toEqual({ path: "public", mode: "755", recursive: true });
     expect(m.rawParams.mode).toBe("755");
     expect(typeof m.params.mode).toBe("string");
@@ -160,7 +160,7 @@ describe("splitBatch", () => {
 describe("parse — validation", () => {
   it("accepts 2, 3, and 4 dotted segments", () => {
     expect(asCommand("create.file").command).toBe("create.file");
-    expect(asCommand("permission.folder.set").command).toBe("permission.folder.set");
+    expect(asCommand("set.folder.permission").command).toBe("set.folder.permission");
     expect(asCommand("a.b.c.d name=x").command).toBe("a.b.c.d");
   });
 

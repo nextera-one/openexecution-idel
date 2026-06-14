@@ -5,7 +5,7 @@
  *
  *     create.file name=readme.md
  *     remove.folder name=dist recursive=true force=false
- *     permission.folder.set path=public mode=755 recursive=true
+ *     set.folder.permission path=public mode=755 recursive=true
  *     find.files path=. name="*.js" modifiedWithin=7d
  *
  * and a leading `! ` (bang space) marks a native passthrough line:

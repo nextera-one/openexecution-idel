@@ -1,6 +1,6 @@
 [
   {
-    "id": "archive.create",
+    "id": "create.archive",
     "version": "1.0.0",
     "summary": "Create a gzip-compressed tar archive from a source path.",
     "category": "archive",
@@ -29,11 +29,11 @@
         "semanticNotes": "DIVERGES: Compress-Archive produces a ZIP, not a gzip tar. The container format differs, so an archive produced on one platform is not byte-compatible with the other. Extraction must use the matching tool."
       }
     },
-    "examples": ["archive.create file=dist.tar.gz from=dist"],
-    "tests": [{ "input": "archive.create file=dist.tar.gz from=dist", "expectRisk": "LOW" }]
+    "examples": ["create.archive file=dist.tar.gz from=dist"],
+    "tests": [{ "input": "create.archive file=dist.tar.gz from=dist", "expectRisk": "LOW" }]
   },
   {
-    "id": "archive.extract",
+    "id": "extract.archive",
     "version": "1.0.0",
     "summary": "Extract a gzip-compressed tar archive into a target directory.",
     "category": "archive",
@@ -63,11 +63,11 @@
         "semanticNotes": "DIVERGES: Expand-Archive only handles ZIP, not gzip tar, and ERRORS on existing files unless -Force is added (it does not overwrite by default like tar). Container format and overwrite behavior both differ."
       }
     },
-    "examples": ["archive.extract file=dist.tar.gz to=out"],
-    "tests": [{ "input": "archive.extract file=dist.tar.gz to=out", "expectRisk": "MEDIUM" }]
+    "examples": ["extract.archive file=dist.tar.gz to=out"],
+    "tests": [{ "input": "extract.archive file=dist.tar.gz to=out", "expectRisk": "MEDIUM" }]
   },
   {
-    "id": "archive.list",
+    "id": "list.archive",
     "version": "1.0.0",
     "summary": "List the contents of a gzip-compressed tar archive without extracting.",
     "category": "archive",
@@ -94,7 +94,7 @@
         "semanticNotes": "Uses the Windows-bundled bsdtar (`tar -tf <file>`) through the PowerShell host. This lists tar/gzip archives and, on modern Windows, ZIP archives too; exact format support depends on the installed tar.exe."
       }
     },
-    "examples": ["archive.list file=dist.tar.gz"],
-    "tests": [{ "input": "archive.list file=dist.tar.gz", "expectRisk": "LOW" }]
+    "examples": ["list.archive file=dist.tar.gz"],
+    "tests": [{ "input": "list.archive file=dist.tar.gz", "expectRisk": "LOW" }]
   }
 ]

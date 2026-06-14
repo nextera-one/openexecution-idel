@@ -37,6 +37,30 @@ import { isNativeAst, ParseError, RegistryError } from "@openexecution/types";
 
 import { runMeta, isMetaCommand } from "./meta.js";
 
+const LEGACY_COMMAND_ALIASES = new Map<string, string>([
+  ["registry.list", "list.registry"],
+  ["registry.explain", "explain.registry"],
+  ["policy.check", "check.policy"],
+  ["logs.list", "list.logs"],
+  ["logs.show", "show.logs"],
+  ["path.current", "show.path"],
+  ["path.change", "change.path"],
+  ["env.get", "get.env"],
+  ["env.set", "set.env"],
+  ["archive.create", "create.archive"],
+  ["archive.extract", "extract.archive"],
+  ["archive.list", "list.archive"],
+  ["permission.file.set", "set.file.permission"],
+  ["permission.folder.set", "set.folder.permission"],
+  ["owner.file.set", "set.file.owner"],
+  ["owner.folder.set", "set.folder.owner"],
+]);
+
+function normalizeLegacyCommand(ast: CommandAst): CommandAst {
+  const command = LEGACY_COMMAND_ALIASES.get(ast.command);
+  return command ? { ...ast, command } : ast;
+}
+
 /** Asks a human to approve an approval_required command. Returns true to proceed. */
 export type ApprovalHandler = (info: {
   command: string;
@@ -114,7 +138,7 @@ export class Runtime {
 
   /**
    * The OpenLogs writer, if one was configured. Exposed read-only so a host
-   * (the server's `logs.*` surface, an agent SDK) can read/verify the audit
+   * (the server's log-reading surface, an agent SDK) can read/verify the audit
    * chain without re-running commands. May be undefined when logging is off.
    */
   get logWriter(): OpenLogWriter | undefined {
@@ -157,7 +181,7 @@ export class Runtime {
     if (isNativeAst(ast)) {
       return this.runNative(ast, ctx);
     }
-    return this.runIdel(ast, ctx);
+    return this.runIdel(normalizeLegacyCommand(ast), ctx);
   }
 
   // -------------------------------------------------------------------------
@@ -168,7 +192,7 @@ export class Runtime {
     ast: CommandAst,
     ctx: RuntimeContext,
   ): Promise<RuntimeOutcome> {
-    // Meta commands (registry.*, policy.*, logs.*) are handled by the runtime
+    // Meta commands (list.registry, check.policy, list.logs) are handled by the runtime
     // itself, not by an execution adapter. They are LOW risk and bypass the
     // adapter chain, but still get logged.
     if (isMetaCommand(ast.command)) {
@@ -181,7 +205,7 @@ export class Runtime {
       return this.failAfterParse(
         ast,
         ctx,
-        `Unknown command "${ast.command}". Try \`registry.list\` or use native passthrough: ! <command>.`,
+        `Unknown command "${ast.command}". Try \`list.registry\` or use native passthrough: ! <command>.`,
       );
     }
 
@@ -464,7 +488,7 @@ export class Runtime {
   }
 
   // -------------------------------------------------------------------------
-  // Meta commands (registry.*, policy.*, logs.*)
+  // Meta commands (list.registry, check.policy, list.logs, etc.)
   // -------------------------------------------------------------------------
 
   private async handleMeta(

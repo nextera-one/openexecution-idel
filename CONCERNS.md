@@ -64,7 +64,7 @@ A log file written by the old plain-JSONL writer has records with no
   verified), and
 - starts a **fresh signed chain** on top of them (so `append` no longer throws).
 
-This is handled and tested, but it means: after upgrade, `idel logs.list` stops
+This is handled and tested, but it means: after upgrade, `idel list.logs` stops
 showing pre-upgrade entries, and `verify()` only covers records written since the
 upgrade. If preserving the old entries matters, write a one-shot migration that
 re-wraps legacy records into signed v2 records (note: their hashes/signatures
@@ -90,7 +90,7 @@ is ever required.)
 - **no rotation** (one key forever),
 - **no trust registry** (the writer signs with its own key; `verify()` checks
   integrity + signature presence, but full *trust* verification — actor binding
-  to a known key — is not wired into `logs.*` yet), and
+  to a known key — is not wired into `list.logs` / `show.logs` yet), and
 - **no protection** beyond file permissions (no OS keychain / HSM).
 
 This is fine for the local V1 story but is the seam where the team/CI story (a

@@ -9,15 +9,15 @@ import type { CommandAst, PolicyConfig, RuntimeContext } from "@openexecution/ty
  * carry an empty `adapters` map and category "meta").
  */
 const META_COMMANDS = new Set<string>([
-  "registry.list",
-  "registry.explain",
-  "policy.check",
+  "list.registry",
+  "explain.registry",
+  "check.policy",
   "ask.ai",
   "learn.cli",
   "wait.time",
   "list.history",
-  "logs.list",
-  "logs.show",
+  "list.logs",
+  "show.logs",
 ]);
 
 export function isMetaCommand(command: string): boolean {
@@ -42,11 +42,11 @@ export async function runMeta(
   deps: MetaDeps,
 ): Promise<MetaOutput> {
   switch (ast.command) {
-    case "registry.list":
+    case "list.registry":
       return registryList(deps);
-    case "registry.explain":
+    case "explain.registry":
       return registryExplain(ast, deps);
-    case "policy.check":
+    case "check.policy":
       return policyCheck(deps);
     case "ask.ai":
       return askAi();
@@ -56,9 +56,9 @@ export async function runMeta(
       return waitTime(ast);
     case "list.history":
       return listHistory(ast, deps);
-    case "logs.list":
+    case "list.logs":
       return logsList(ast, deps);
-    case "logs.show":
+    case "show.logs":
       return logsShow(ast, deps);
     default:
       return { stdout: "", stderr: `Unknown meta command ${ast.command}`, exitCode: 1 };
@@ -80,7 +80,7 @@ function registryList(deps: MetaDeps): MetaOutput {
 function registryExplain(ast: CommandAst, deps: MetaDeps): MetaOutput {
   const name = String(ast.params["command"] ?? ast.params["name"] ?? "");
   if (!name) {
-    return { stdout: "", stderr: "registry.explain requires command=<id>", exitCode: 1 };
+    return { stdout: "", stderr: "explain.registry requires command=<id>", exitCode: 1 };
   }
   const { resolved, allLayers } = deps.registry.explain(name);
   if (!resolved) {

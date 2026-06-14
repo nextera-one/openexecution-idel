@@ -8,6 +8,33 @@ import { checkCommandDef, validateCommandDef } from "./schema.js";
 import { Registry, findCoreDir, loadLayerFromDir } from "./loader.js";
 import { coerceParams } from "./coerce.js";
 
+const CORE_COMMAND_VERBS = new Set([
+  "append",
+  "ask",
+  "change",
+  "check",
+  "copy",
+  "create",
+  "edit",
+  "explain",
+  "extract",
+  "find",
+  "get",
+  "learn",
+  "list",
+  "move",
+  "open",
+  "read",
+  "remove",
+  "rename",
+  "run",
+  "set",
+  "show",
+  "tail",
+  "wait",
+  "write",
+]);
+
 // A minimal, valid command def used as a baseline to mutate in tests.
 function goodDef(over: Partial<CommandDef> = {}): unknown {
   return {
@@ -122,7 +149,7 @@ describe("schema — validateCommandDef", () => {
     expect(checkCommandDef(goodDef({ category: "filesystem", adapters: {} })).ok).toBe(false);
     expect(
       checkCommandDef({
-        id: "registry.list",
+        id: "list.registry",
         version: "1.0.0",
         summary: "List commands.",
         category: "meta",
@@ -164,6 +191,8 @@ describe("loader — core registry", () => {
     expect(reg.size).toBeGreaterThanOrEqual(25);
     expect(reg.has("remove.folder")).toBe(true);
     expect(reg.has("create.file")).toBe(true);
+    expect(reg.has("list.logs")).toBe(true);
+    expect(reg.has("logs.list")).toBe(false);
   });
 
   it("list() returns effective defs sorted by id", async () => {
@@ -182,6 +211,15 @@ describe("loader — core registry", () => {
     for (const def of defs) {
       expect(checkCommandDef(def).ok).toBe(true);
     }
+  });
+
+  it("every core command id is verb-first", async () => {
+    const dir = findCoreDir();
+    const { defs } = await loadLayerFromDir(dir, "core");
+    const offenders = defs
+      .map((def) => def.id)
+      .filter((id) => !CORE_COMMAND_VERBS.has(id.split(".")[0] ?? ""));
+    expect(offenders).toEqual([]);
   });
 
   it("tags loaded core defs with source=core", async () => {
@@ -245,6 +283,19 @@ describe("resolve — custom > official > core", () => {
     expect(resolved?.source).toBe("custom");
     expect(allLayers.map((l) => l.source)).toEqual(["custom", "core"]);
   });
+
+  it("replaceLayer clears stale commands from a reloaded layer", () => {
+    const reg = new Registry();
+    reg.addLayer("core", [def("create.file", "core", "1.0.0")]);
+    reg.addLayer("custom", [def("show.demo.status", "custom", "1.0.0")]);
+    expect(reg.has("show.demo.status")).toBe(true);
+
+    reg.replaceLayer("custom", [def("list.demo.items", "custom", "1.0.0")]);
+
+    expect(reg.has("show.demo.status")).toBe(false);
+    expect(reg.has("list.demo.items")).toBe(true);
+    expect(reg.has("create.file")).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -274,7 +325,7 @@ describe("coerceParams", () => {
 
   it("coerces numbers and errors on NaN", () => {
     const numDef: CommandDef = {
-      id: "logs.list",
+      id: "list.logs",
       version: "1.0.0",
       summary: "x",
       category: "meta",
@@ -289,7 +340,7 @@ describe("coerceParams", () => {
 
   it("validates octal mode and keeps it a string", () => {
     const modeDef: CommandDef = {
-      id: "permission.file.set",
+      id: "set.file.permission",
       version: "1.0.0",
       summary: "x",
       category: "permissions",

@@ -10,10 +10,30 @@
     <header class="term-bar">
       <a href="/" class="brand small">OpenExecution<span class="brand-dot">·</span>IDEL</a>
       <span class="term-status" id="status">connecting…</span>
+      <span class="theme-controls" aria-label="Terminal appearance">
+        <span class="theme-toggle" role="group" aria-label="Theme">
+          <button class="theme-btn active" type="button" data-theme="dark" title="Dark theme">Dark</button>
+          <button class="theme-btn" type="button" data-theme="light" title="Light theme">Light</button>
+        </span>
+        <span class="palette-controls" role="group" aria-label="Accent palette">
+          <button class="palette-btn palette-cyan active" type="button" data-palette="cyan" title="Cyan palette" aria-label="Cyan palette"></button>
+          <button class="palette-btn palette-blue" type="button" data-palette="blue" title="Blue palette" aria-label="Blue palette"></button>
+          <button class="palette-btn palette-teal" type="button" data-palette="teal" title="Teal palette" aria-label="Teal palette"></button>
+          <button class="palette-btn palette-green" type="button" data-palette="green" title="Green palette" aria-label="Green palette"></button>
+          <button class="palette-btn palette-amber" type="button" data-palette="amber" title="Amber palette" aria-label="Amber palette"></button>
+          <button class="palette-btn palette-orange" type="button" data-palette="orange" title="Orange palette" aria-label="Orange palette"></button>
+          <button class="palette-btn palette-rose" type="button" data-palette="rose" title="Rose palette" aria-label="Rose palette"></button>
+          <button class="palette-btn palette-red" type="button" data-palette="red" title="Red palette" aria-label="Red palette"></button>
+          <button class="palette-btn palette-violet" type="button" data-palette="violet" title="Violet palette" aria-label="Violet palette"></button>
+          <button class="palette-btn palette-slate" type="button" data-palette="slate" title="Slate palette" aria-label="Slate palette"></button>
+        </span>
+      </span>
       <span class="term-modes">
         <button class="mode-btn active" id="mode-idel" title="Type IDEL commands">IDEL</button>
         <button class="mode-btn" id="mode-ask" title="Ask Claude in natural language">Ask Claude</button>
       </span>
+      <button class="term-tool-btn" id="dictionary-open" type="button" title="Open command dictionary">Dictionary</button>
+      <button class="icon-btn preferences-trigger" id="preferences-open" type="button" title="Preferences" aria-label="Open preferences">⚙</button>
     </header>
 
     <main class="term-main">
@@ -21,15 +41,8 @@
         <button class="tab-new" id="new-terminal" type="button" title="New terminal">+</button>
       </div>
       <section class="term-output" id="output" aria-live="polite">
-        <div class="line muted">
-          IDEL web terminal. Type a command like
-          <code>list.folder name=.</code> and press Enter. Every command flows
-          through the same safety → policy → signed-log pipeline as the CLI.
-        </div>
-        <div class="line muted">
-          Switch to <strong>Ask Claude</strong> (top right) to describe what you
-          want in natural language — the runtime stays the enforcement boundary.
-        </div>
+        <div class="line muted">IDEL web terminal. Type a command like <code>list.folder name=.</code> and press Enter. Every command flows through the same safety → policy → signed-log pipeline as the CLI.</div>
+        <div class="line muted">Switch to <strong>Ask Claude</strong> (top right) to describe what you want in natural language — the runtime stays the enforcement boundary.</div>
       </section>
 
       <form class="term-input" id="form" autocomplete="off">
@@ -54,6 +67,188 @@
       </div>
       <div class="logs" id="logs"></div>
     </aside>
+
+    <dialog class="preferences-dialog" id="preferences-dialog" aria-labelledby="preferences-title">
+      <div class="preferences-panel">
+        <div class="preferences-head">
+          <div>
+            <h2 id="preferences-title">Preferences</h2>
+            <p>Terminal settings</p>
+          </div>
+          <button class="icon-btn" id="preferences-close" type="button" title="Close" aria-label="Close preferences">x</button>
+        </div>
+
+        <section class="preference-row">
+          <div class="preference-copy">
+            <span>Theme</span>
+            <small>Dark or light chrome</small>
+          </div>
+          <span class="theme-toggle" role="group" aria-label="Theme preference">
+            <button class="theme-btn active" type="button" data-theme="dark" title="Dark theme">Dark</button>
+            <button class="theme-btn" type="button" data-theme="light" title="Light theme">Light</button>
+          </span>
+        </section>
+
+        <section class="preference-row">
+          <div class="preference-copy">
+            <span>Palette</span>
+            <small>Accent color</small>
+          </div>
+          <span class="palette-controls" role="group" aria-label="Accent palette preference">
+            <button class="palette-btn palette-cyan active" type="button" data-palette="cyan" title="Cyan palette" aria-label="Cyan palette"></button>
+            <button class="palette-btn palette-blue" type="button" data-palette="blue" title="Blue palette" aria-label="Blue palette"></button>
+            <button class="palette-btn palette-teal" type="button" data-palette="teal" title="Teal palette" aria-label="Teal palette"></button>
+            <button class="palette-btn palette-green" type="button" data-palette="green" title="Green palette" aria-label="Green palette"></button>
+            <button class="palette-btn palette-amber" type="button" data-palette="amber" title="Amber palette" aria-label="Amber palette"></button>
+            <button class="palette-btn palette-orange" type="button" data-palette="orange" title="Orange palette" aria-label="Orange palette"></button>
+            <button class="palette-btn palette-rose" type="button" data-palette="rose" title="Rose palette" aria-label="Rose palette"></button>
+            <button class="palette-btn palette-red" type="button" data-palette="red" title="Red palette" aria-label="Red palette"></button>
+            <button class="palette-btn palette-violet" type="button" data-palette="violet" title="Violet palette" aria-label="Violet palette"></button>
+            <button class="palette-btn palette-slate" type="button" data-palette="slate" title="Slate palette" aria-label="Slate palette"></button>
+          </span>
+        </section>
+
+        <section class="preference-row">
+          <div class="preference-copy">
+            <span>Font size</span>
+            <small>Terminal and editor text</small>
+          </div>
+          <span class="theme-toggle" role="group" aria-label="Font size preference">
+            <button class="theme-btn" type="button" data-font-size="small" title="Small font">Small</button>
+            <button class="theme-btn active" type="button" data-font-size="normal" title="Normal font">Normal</button>
+            <button class="theme-btn" type="button" data-font-size="large" title="Large font">Large</button>
+            <button class="theme-btn" type="button" data-font-size="xlarge" title="Extra large font" aria-label="Extra large font">XL</button>
+          </span>
+        </section>
+
+        <section class="preference-row">
+          <div class="preference-copy">
+            <span>Audit panel</span>
+            <small>Recent command log</small>
+          </div>
+          <label class="switch" title="Show audit panel">
+            <input id="pref-show-logs" type="checkbox" checked />
+            <span aria-hidden="true"></span>
+          </label>
+        </section>
+      </div>
+    </dialog>
+
+    <dialog class="dictionary-dialog" id="dictionary-dialog" aria-labelledby="dictionary-title">
+      <div class="dictionary-panel">
+        <div class="preferences-head">
+          <div>
+            <h2 id="dictionary-title">Command Dictionary</h2>
+            <p>IDEL commands mapped to OS commands</p>
+          </div>
+          <button class="icon-btn" id="dictionary-close" type="button" title="Close" aria-label="Close command dictionary">x</button>
+        </div>
+
+        <div class="dictionary-search">
+          <input
+            id="dictionary-search"
+            type="search"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="Search IDEL, OS command, or example: mkdir abc"
+            aria-label="Search command dictionary"
+          />
+          <span id="dictionary-count">Loading...</span>
+        </div>
+
+        <div class="dictionary-results" id="dictionary-results"></div>
+        <div class="dictionary-empty" id="dictionary-empty" hidden>No matching commands.</div>
+      </div>
+    </dialog>
+
+    <dialog class="claude-setup-dialog" id="claude-setup-dialog" aria-labelledby="claude-setup-title">
+      <div class="preferences-panel">
+        <div class="preferences-head">
+          <div>
+            <h2 id="claude-setup-title">Set Up Ask Claude</h2>
+            <p id="claude-setup-status">Ask Claude is not configured on this server.</p>
+          </div>
+          <button class="icon-btn" id="claude-setup-close" type="button" title="Close" aria-label="Close setup guide">x</button>
+        </div>
+
+        <section class="setup-body">
+          <p>
+            Ask Claude runs inside the local <code>idel serve</code> process.
+            Enable one provider, then restart the UI server.
+          </p>
+
+          <div class="setup-option">
+            <strong>Use Claude Code</strong>
+            <span>Install Claude Code so <code>claude</code> is on PATH, then authenticate once:</span>
+            <pre><code>claude login</code></pre>
+          </div>
+
+          <div class="setup-option">
+            <strong>Use an Anthropic API key</strong>
+            <span>Start the UI server with the key in its environment:</span>
+            <pre><code>export ANTHROPIC_API_KEY=your_key_here
+scripts/run-ui.sh</code></pre>
+          </div>
+
+          <p class="setup-note">
+            After changing PATH or environment variables, stop and restart <code>scripts/run-ui.sh</code>.
+          </p>
+        </section>
+
+        <div class="setup-actions">
+          <button class="editor-btn" id="claude-setup-check" type="button">Check Again</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog class="screenshot-dialog" id="screenshot-dialog" aria-labelledby="screenshot-title">
+      <div class="preferences-panel">
+        <div class="preferences-head">
+          <div>
+            <h2 id="screenshot-title">Screenshot</h2>
+            <p>Terminal capture</p>
+          </div>
+          <button class="icon-btn" id="screenshot-close" type="button" title="Close" aria-label="Close screenshot options">x</button>
+        </div>
+
+        <section class="preference-row">
+          <div class="preference-copy">
+            <span>Area</span>
+            <small>Visible viewport or full scrollback</small>
+          </div>
+          <span class="theme-toggle" role="group" aria-label="Screenshot area">
+            <button class="theme-btn active" type="button" data-screenshot-scope="visible" title="Visible terminal area">Visible</button>
+            <button class="theme-btn" type="button" data-screenshot-scope="full" title="Full terminal scrollback">Full</button>
+          </span>
+        </section>
+
+        <section class="preference-row">
+          <div class="preference-copy">
+            <span>Redaction</span>
+            <small>Hide secrets before export</small>
+          </div>
+          <label class="switch" title="Hide sensitive text">
+            <input id="screenshot-redact" type="checkbox" checked />
+            <span aria-hidden="true"></span>
+          </label>
+        </section>
+
+        <section class="screenshot-redact-extra">
+          <label for="screenshot-redact-text">Also hide</label>
+          <input
+            id="screenshot-redact-text"
+            type="text"
+            autocomplete="off"
+            placeholder="comma-separated words or tokens"
+          />
+        </section>
+
+        <div class="screenshot-actions">
+          <button class="editor-btn" id="screenshot-copy" type="button">Copy PNG</button>
+          <button class="editor-btn" id="screenshot-download" type="button">Download PNG</button>
+        </div>
+      </div>
+    </dialog>
 
     <script src="/terminal.js" type="module"></script>
   </body>

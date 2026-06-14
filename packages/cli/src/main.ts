@@ -58,11 +58,11 @@ export async function main(argv: string[]): Promise<number> {
     return 2;
   }
   // Auto-discover user registry layers (spec §15). custom > official > core.
-  const idelHome = join(homedir(), ".idel", "registries");
+  const registryDirs = userRegistryDirs();
   const runtime = await Runtime.withCore({
     policy,
-    officialDir: join(idelHome, "official"),
-    customDir: join(idelHome, "custom"),
+    officialDir: registryDirs.official,
+    customDir: registryDirs.custom,
     logWriter: new OpenLogWriter({}),
     // Interactive approval only when not in CI and the user passed --yes is NOT
     // a blanket bypass: --yes still cannot clear CRITICAL (the policy floor
@@ -225,6 +225,7 @@ async function serve(runtime: Runtime, flags: CliFlags): Promise<number> {
   // behind the browser approval round-trip (`allowReal` + POST
   // /api/agent/approve) — it never touches disk without an explicit "Approve."
   const provider = await detectProvider();
+  const registryDirs = userRegistryDirs();
   const agentFactory =
     provider === "cli"
       ? (service: TerminalService) => new IdelCliAgent({ service })
@@ -240,8 +241,11 @@ async function serve(runtime: Runtime, flags: CliFlags): Promise<number> {
     environment: flags.environment,
     noNative: flags.noNative,
     agent: agentFactory,
-    learn: async (req) =>
-      learnForHost(req.cli ?? "", { write: req.write === true }),
+    learn: async (req) => {
+      const result = await learnForHost(req.cli ?? "", { write: req.write === true });
+      if (result.path) await runtime.reg.loadLayer(registryDirs.custom, "custom");
+      return result;
+    },
   });
 
   process.stdout.write(
@@ -276,6 +280,14 @@ async function serve(runtime: Runtime, flags: CliFlags): Promise<number> {
     process.once("SIGINT", shutdown);
     process.once("SIGTERM", shutdown);
   });
+}
+
+function userRegistryDirs(): { official: string; custom: string } {
+  const idelHome = join(homedir(), ".idel", "registries");
+  return {
+    official: join(idelHome, "official"),
+    custom: join(idelHome, "custom"),
+  };
 }
 
 function makeContext(flags: CliFlags): RuntimeContext {

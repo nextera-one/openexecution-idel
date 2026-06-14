@@ -135,10 +135,10 @@ custom  >  official  >  core
 | **official** | installed package / `~/.idel/registries/official` | Maintained dictionaries for known tools, after review. |
 | **core** | bundled with the runtime (`registries/core/`) | The small, safety-first command set that ships with the CLI. |
 
-A higher layer's definition wins; the lower ones it hides are recorded as `shadowed`. Overrides are **visible** via `registry.explain`, which prints the winning layer and every shadowed layer beneath it:
+A higher layer's definition wins; the lower ones it hides are recorded as `shadowed`. Overrides are **visible** via `explain.registry`, which prints the winning layer and every shadowed layer beneath it:
 
 ```text
-$ idel registry.explain command=remove.folder
+$ idel explain.registry command=remove.folder
 
 remove.folder  (v1.0.0)  [core]
   Delete a directory, optionally recursively and forcibly.
@@ -155,7 +155,7 @@ remove.folder  (v1.0.0)  [core]
       note: Remove-Item -Recurse has historically had quirks with reparse points/symlinks…
 ```
 
-When a custom or official def shadows a core one, `registry.explain` additionally prints a `layers (winner first)` block so the override is never silent.
+When a custom or official def shadows a core one, `explain.registry` additionally prints a `layers (winner first)` block so the override is never silent.
 
 > **Important:** registry-content precedence (`custom > official > core`) is the *opposite* direction from the safety floors (`core > everything`, non-overridable). A custom def can change a command's content, but it can never weaken a core CRITICAL classification. See [docs/safety-rules.md](safety-rules.md#precedence-reconciliation).
 
@@ -183,7 +183,7 @@ Where POSIX and PowerShell genuinely differ — different binaries, different ov
 
 Real examples from the core defs:
 
-- **`permission.file.set` / `permission.folder.set`** — POSIX uses `chmod` with an octal `mode`. PowerShell uses `icacls`, and **the octal `mode` is intentionally not mapped**: Windows ACLs are not POSIX modes, and a faithful translation is non-trivial and lossy. The note says so and marks the PowerShell adapter best-effort.
+- **`set.file.permission` / `set.folder.permission`** — POSIX uses `chmod` with an octal `mode`. PowerShell uses `icacls`, and **the octal `mode` is intentionally not mapped**: Windows ACLs are not POSIX modes, and a faithful translation is non-trivial and lossy. The note says so and marks the PowerShell adapter best-effort.
 
   ```jsonc
   "powershell": {
@@ -193,9 +193,9 @@ Real examples from the core defs:
   }
   ```
 
-- **`archive.create`** — POSIX `tar -czf` produces a gzip tar. PowerShell `Compress-Archive` produces a **ZIP**. The note: *"DIVERGES: Compress-Archive produces a ZIP, not a gzip tar. The container format differs, so an archive produced on one platform is not byte-compatible with the other."*
+- **`create.archive`** — POSIX `tar -czf` produces a gzip tar. PowerShell `Compress-Archive` produces a **ZIP**. The note: *"DIVERGES: Compress-Archive produces a ZIP, not a gzip tar. The container format differs, so an archive produced on one platform is not byte-compatible with the other."*
 
-- **`archive.extract`** — `tar -xzf` overwrites existing files silently; `Expand-Archive` **errors** on existing files without `-Force`. Both the container format and the overwrite behavior diverge, and the note records both.
+- **`extract.archive`** — `tar -xzf` overwrites existing files silently; `Expand-Archive` **errors** on existing files without `-Force`. Both the container format and the overwrite behavior diverge, and the note records both.
 
 - **`move.file`** — `mv` overwrites the destination by default; `Move-Item` **refuses** to overwrite without `-Force`. Destructiveness is real on POSIX, blocked-by-default on PowerShell.
 
@@ -305,6 +305,6 @@ Guidance for authoring:
 - **Build argv structurally** — `flag` / `option` / `value` / `literal` only. Never embed a value into a `literal`, and never rely on a shell to expand anything.
 - **Declare safety honestly** — set `safety.destructive` and `safety.targetParam` if the command can destroy or overwrite data. The safety floors still apply on top of whatever you declare; you cannot define your way under a CRITICAL.
 - **Be honest about divergence** — if POSIX and PowerShell differ, say so in `semanticNotes` and only emit faithful argv. Prefer a `@node` adapter when there is no faithful shell form.
-- **Validation is fail-closed** — a malformed def is rejected at load time, so test with `idel registry.explain command=<id>` to confirm it resolves from the `custom` layer and reports the params/adapters you expect.
+- **Validation is fail-closed** — a malformed def is rejected at load time, so test with `idel explain.registry command=<id>` to confirm it resolves from the `custom` layer and reports the params/adapters you expect.
 
 > The registry **API** (`Registry.loadLayer` / `Registry.addLayer`) supports loading the custom and official layers today, and resolution already honors `custom > official > core`. The bundled `idel` CLI currently loads only the core layer at startup; wiring automatic discovery of `~/.idel/registries/custom` into the CLI is a small follow-on. Until then, custom layers are loaded programmatically or in tests via the registry API.

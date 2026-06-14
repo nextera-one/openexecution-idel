@@ -30,7 +30,8 @@ export interface LearnHostResponse {
 /**
  * `idel learn <cli> [--write] [--json]` — teach IDEL an installed CLI.
  *
- * Introspects the CLI's `--help`, asks Claude to draft IDEL command definitions,
+ * Introspects the CLI's `--help`, drafts IDEL command definitions locally
+ * (optionally using an AI-backed generator when one is explicitly wired),
  * validates each against the registry schema (fail-closed), REPLAYS each def's
  * declared `tests[]` through a real runtime to prove its risk/policy
  * classification, and either previews the results (default) or writes the
@@ -91,7 +92,7 @@ export async function learn(
       color.gray(`to ${path}\n`) +
       color.gray(
         `  They are now draft (custom) commands. Inspect one with:\n` +
-          `    idel registry.explain command=${result.accepted[0]!.id}\n`,
+          `    idel explain.registry command=${result.accepted[0]!.id}\n`,
       ),
   );
   return 0;

@@ -50,10 +50,10 @@ const HANDLED_IDS = new Set<string>([
   "copy.file",
   "move.file",
   "rename.file",
-  "path.current",
-  "path.change",
-  "env.get",
-  "env.set",
+  "show.path",
+  "change.path",
+  "get.env",
+  "set.env",
   "run.script",
   "edit.file",
   "open.editor",
@@ -282,33 +282,33 @@ export class NodeAdapter implements Adapter {
         await rename(from, to);
         return "";
       }
-      case "path.current": {
+      case "show.path": {
         return cwd + "\n";
       }
-      case "path.change": {
+      case "change.path": {
         // A child process cannot change the PARENT shell's cwd. We resolve and
         // validate the target (so a bad path is an honest error) and report it;
         // the interactive terminal performs the real process.chdir itself. This
         // limitation is documented in the registry def's semanticNotes.
-        const target = this.requirePath(path("path") ?? path("name"), "path");
+        const target = this.requirePath(path("to") ?? path("path") ?? path("name"), "to");
         const st = await stat(target).catch(() => undefined);
         if (!st || !st.isDirectory()) {
-          throw new Error(`path.change: not a directory: ${target}`);
+          throw new Error(`change.path: not a directory: ${target}`);
         }
         return `${target}\n(note: cwd change applies to the idel terminal session, not the parent shell)\n`;
       }
-      case "env.get": {
+      case "get.env": {
         const name = asString(params["name"]);
-        if (name === undefined) throw new Error("env.get: missing name");
+        if (name === undefined) throw new Error("get.env: missing name");
         const value = process.env[name];
         return value === undefined ? "" : `${value}\n`;
       }
-      case "env.set": {
-        // Like path.change, a child cannot mutate the parent shell's env. We set
+      case "set.env": {
+        // Like change.path, a child cannot mutate the parent shell's env. We set
         // it in THIS process (visible to native passthrough run in the same
         // session) and report it honestly.
         const name = asString(params["name"]);
-        if (name === undefined) throw new Error("env.set: missing name");
+        if (name === undefined) throw new Error("set.env: missing name");
         const value = asString(params["value"]) ?? "";
         process.env[name] = value;
         return `${name} set for this idel session (not exported to the parent shell)\n`;

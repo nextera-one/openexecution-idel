@@ -1,4 +1,6 @@
 import { createInterface, type Interface } from "node:readline";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 import { createAgent, type AgentLike } from "@openexecution/agent";
 import { TerminalService } from "@openexecution/server";
@@ -136,7 +138,7 @@ export async function startTerminal(
             "Enter IDEL commands like `create.file name=x.txt`, `cmd.one && cmd.two`, or `! rm -rf dist`.\n" +
               "Ask AI in natural language with `ask.ai prompt=\"delete the dist folder\"` or a leading `?`.\n" +
               `Learn an installed CLI with \`${LEARN_USAGE}\` or \`learn.cli cli=git\`.\n` +
-              "Meta: registry.list, registry.explain command=remove.folder, policy.check, list.history, logs.list.\n",
+              "Meta: list.registry, explain.registry command=remove.folder, check.policy, list.history, list.logs.\n",
           ),
         );
         return;
@@ -156,7 +158,15 @@ export async function startTerminal(
 
       const learned = parseLearnCommand(line);
       if (learned) {
-        await learn(learned.cli, { write: learned.write, json: false });
+        const code = await learn(learned.cli, { write: learned.write, json: false });
+        if (code === 0 && learned.write) {
+          try {
+            await runtime.reg.loadLayer(userCustomRegistryDir(), "custom");
+            process.stdout.write(color.gray("(custom registry reloaded)\n"));
+          } catch (err) {
+            process.stdout.write(color.red(`Could not reload custom registry: ${(err as Error).message}\n`));
+          }
+        }
         return;
       }
 
@@ -192,7 +202,7 @@ export async function startTerminal(
         return;
       }
 
-      // cwd can change between commands (path.change), so re-read it each line.
+      // cwd can change between commands (change.path), so re-read it each line.
       const ctx: RuntimeContext = { ...baseCtx, cwd: process.cwd() };
       try {
         await runWithPreview(runtime, line, ctx, rl);
@@ -230,6 +240,10 @@ export async function startTerminal(
       if (!draining) finish();
     });
   });
+}
+
+function userCustomRegistryDir(): string {
+  return join(homedir(), ".idel", "registries", "custom");
 }
 
 /**

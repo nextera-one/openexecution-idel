@@ -196,7 +196,7 @@ describe("IdelAgent", () => {
     const logWriter = undefined;
     const runtime = new Runtime({ registry, policy: defaultPolicy(), logWriter });
     const service = new TerminalService({ runtime, cwd });
-    const script = Array.from({ length: 20 }, () => toolUseTurn("path.current"));
+    const script = Array.from({ length: 20 }, () => toolUseTurn("show.path"));
     const agent = new IdelAgent({
       service,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

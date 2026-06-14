@@ -144,7 +144,7 @@ describe("IdelCliAgent (subscription / claude CLI path)", () => {
     const cwd = await sandbox();
     const agent = makeAgent(cwd, [
       { commands: [{ command: "list.folder path=." }], done: false },
-      { commands: [{ command: "path.current" }], done: false },
+      { commands: [{ command: "show.path" }], done: false },
       { commands: [], done: true },
     ]);
     const events = await collect(agent, "look around");

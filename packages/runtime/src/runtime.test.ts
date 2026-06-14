@@ -369,17 +369,24 @@ describe("usage errors are returned, not thrown", () => {
 });
 
 describe("meta commands", () => {
-  it("registry.list returns the command set", async () => {
+  it("list.registry returns the command set", async () => {
     const rt = await makeRuntime();
-    const out = await rt.run("registry.list", ctx());
+    const out = await rt.run("list.registry", ctx());
     expect(out.record.result).toBe("success");
     expect(out.result?.stdout).toMatch(/remove\.folder/);
   });
 
-  it("registry.explain describes a command", async () => {
+  it("explain.registry describes a command", async () => {
     const rt = await makeRuntime();
-    const out = await rt.run("registry.explain command=remove.folder", ctx());
+    const out = await rt.run("explain.registry command=remove.folder", ctx());
     expect(out.result?.stdout).toMatch(/riskDefault: HIGH/);
+  });
+
+  it("accepts legacy noun-first aliases but records the canonical verb-first id", async () => {
+    const rt = await makeRuntime();
+    const out = await rt.run("logs.list", ctx());
+    expect(out.record.command).toBe("list.logs");
+    expect(out.record.ast.command).toBe("list.logs");
   });
 
   it("ask.ai reports that the host must route the agent", async () => {

@@ -249,8 +249,8 @@ export class OpenLogWriter {
 
   /**
    * Return the last `limit` audit records as plain {@link OpenLogRecord}s,
-   * unwrapped from their signed envelopes — the shape callers (logs.list /
-   * logs.show) expect. Records whose payload isn't a recognizable audit record
+   * unwrapped from their signed envelopes — the shape callers (list.logs /
+   * show.logs) expect. Records whose payload isn't a recognizable audit record
    * are skipped.
    */
   async read(limit: number = DEFAULT_READ_LIMIT): Promise<OpenLogRecord[]> {

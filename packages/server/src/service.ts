@@ -3,6 +3,9 @@ import { hostname, userInfo, platform } from "node:os";
 import { splitBatch } from "@openexecution/parser";
 import type { Runtime } from "@openexecution/runtime";
 import type {
+  AdapterArgSpec,
+  AdapterName,
+  AdapterSpec,
   CommandDef,
   CommandOrigin,
   OpenLogRecord,
@@ -28,7 +31,7 @@ export interface ServiceOptions {
   runtime: Runtime;
   /**
    * Base directory the terminal operates in. The web/desktop terminal has no
-   * inherited shell cwd, so the server owns one. `path.change` (a meta command)
+   * inherited shell cwd, so the server owns one. `change.path` (a runtime command)
    * does not mutate this — the front-end passes an explicit cwd per request when
    * it wants to scope completion/execution to a directory.
    */
@@ -108,7 +111,17 @@ export interface RegistryEntry {
   category: string;
   risk: CommandDef["riskDefault"];
   source: CommandDef["source"];
-  params: { name: string; type: string; required: boolean; enum?: string[] }[];
+  params: { name: string; type: string; required: boolean; description?: string; enum?: string[] }[];
+  examples: string[];
+  adapters: RegistryAdapterEntry[];
+}
+
+export interface RegistryAdapterEntry {
+  name: AdapterName;
+  command: string;
+  args: AdapterArgSpec[];
+  pattern: string;
+  semanticNotes?: string;
 }
 
 export class TerminalService {
@@ -278,10 +291,50 @@ export class TerminalService {
         name,
         type: schema.type,
         required: schema.required ?? false,
+        ...(schema.description ? { description: schema.description } : {}),
         ...(schema.enum ? { enum: schema.enum.map(String) } : {}),
       })),
+      examples: def.examples ?? [],
+      adapters: Object.entries(def.adapters).map(([name, spec]) =>
+        toAdapterEntry(name as AdapterName, spec),
+      ),
     };
   }
+}
+
+function toAdapterEntry(name: AdapterName, spec: AdapterSpec): RegistryAdapterEntry {
+  return {
+    name,
+    command: spec.command,
+    args: spec.args,
+    pattern: renderAdapterPattern(spec),
+    ...(spec.semanticNotes ? { semanticNotes: spec.semanticNotes } : {}),
+  };
+}
+
+function renderAdapterPattern(spec: AdapterSpec): string {
+  const parts = [spec.command];
+  for (const arg of spec.args) {
+    switch (arg.kind) {
+      case "flag":
+        parts.push(`[${arg.flag}]`);
+        break;
+      case "option":
+        parts.push(`[${arg.flag} <${arg.param}>]`);
+        break;
+      case "value":
+        parts.push(`<${arg.param}>`);
+        break;
+      case "literal":
+        parts.push(arg.value);
+        break;
+      default: {
+        const _never: never = arg;
+        void _never;
+      }
+    }
+  }
+  return parts.join(" ");
 }
 
 export function batchStepSucceeded(outcome: RuntimeOutcome, explicitDryRun = false): boolean {
