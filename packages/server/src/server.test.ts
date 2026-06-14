@@ -74,6 +74,7 @@ describe("TerminalService.complete", () => {
     const out = svc.complete({ input: "create." });
     expect(out).toContain("create.file");
     expect(out).toContain("create.folder");
+    expect(svc.complete({ input: "edit." })).toContain("edit.file");
   });
 
   it("completes parameter names after a command", async () => {
@@ -87,6 +88,12 @@ describe("TerminalService.complete", () => {
     const svc = makeService(await sandbox());
     const out = svc.complete({ input: "remove.folder recursive=" });
     expect(out).toEqual(expect.arrayContaining(["recursive=true", "recursive=false"]));
+  });
+
+  it("completes edit.file editor enum values", async () => {
+    const svc = makeService(await sandbox());
+    const out = svc.complete({ input: "edit.file editor=" });
+    expect(out).toEqual(expect.arrayContaining(["editor=auto", "editor=nano", "editor=code"]));
   });
 
   it("completes local paths for path params against the request cwd", async () => {
@@ -168,6 +175,15 @@ describe("TerminalService.run — the safety/policy contract is preserved", () =
       svc.run({ command: "rm -rf x", native: true }),
     ).rejects.toThrow(/native passthrough is disabled/);
   });
+
+  it("does not launch edit.file from the web/service context", async () => {
+    const dir = await sandbox();
+    await writeFile(join(dir, "note.txt"), "hi\n");
+    const svc = makeService(dir);
+    const out = await svc.run({ command: "edit.file path=note.txt editor=nano", cwd: dir });
+    expect(out.record.result).toBe("failed");
+    expect(out.result?.stderr).toMatch(/interactive terminal/i);
+  });
 });
 
 describe("TerminalService approval handling", () => {
@@ -245,6 +261,7 @@ describe("startServer (HTTP)", () => {
     const res = await fetch(`${base}/api/registry`);
     const body = (await res.json()) as { id: string }[];
     expect(body.some((e) => e.id === "create.file")).toBe(true);
+    expect(body.some((e) => e.id === "edit.file")).toBe(true);
   });
 
   it("POST /api/complete → suggestions", async () => {
@@ -255,6 +272,17 @@ describe("startServer (HTTP)", () => {
     });
     const body = (await res.json()) as string[];
     expect(body).toContain("create.file");
+  });
+
+  it("POST /api/complete → edit.file suggestions", async () => {
+    const res = await fetch(`${base}/api/complete`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ input: "edit.file editor=" }),
+    });
+    const body = (await res.json()) as string[];
+    expect(body).toContain("editor=nano");
+    expect(body).toContain("editor=code");
   });
 
   it("POST /api/run → blocks CRITICAL", async () => {

@@ -54,16 +54,22 @@ export function findCoreDir(start?: string): string {
   const from =
     start ?? dirname(fileURLToPath(import.meta.url));
   let current = resolve(from);
+  let found: string | undefined;
 
-  // Climb until `current/registries/core` exists or we can't go higher.
+  // Climb until we hit the filesystem root, remembering the highest
+  // `registries/core` candidate. In a source checkout, `packages/registry` may
+  // also contain a generated prepack copy; prefer the repo-root registry so
+  // development/tests do not read stale packed content. In a published package,
+  // the bundled package-local registry is the only candidate and still wins.
   // eslint-disable-next-line no-constant-condition
   while (true) {
     const candidate = join(current, "registries", "core");
-    if (existsSync(candidate)) return candidate;
+    if (existsSync(candidate)) found = candidate;
     const parent = dirname(current);
     if (parent === current) break; // reached FS root
     current = parent;
   }
+  if (found) return found;
   throw new RegistryError(
     `could not locate a "registries/core" directory walking up from ${from}`,
   );

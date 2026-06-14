@@ -199,6 +199,7 @@ function makeContext(flags: CliFlags): RuntimeContext {
     ci: flags.ci,
     dryRun: flags.dryRun,
     noNative: flags.noNative,
+    interactive: !flags.ci && process.stdin.isTTY === true && process.stdout.isTTY === true,
   };
 }
 

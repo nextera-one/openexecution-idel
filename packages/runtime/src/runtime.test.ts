@@ -115,6 +115,32 @@ describe("safe commands execute for real in a sandbox", () => {
     expect(out.record.result).toBe("success");
     expect(out.result?.stdout).toBe("one|two\n");
   });
+
+  it("dry-runs edit.file through the runtime pipeline", async () => {
+    const dir = await sandbox();
+    await writeFile(join(dir, "note.txt"), "hi\n");
+    const rt = await makeRuntime();
+    const out = await rt.run(
+      "edit.file path=note.txt editor=code wait=true",
+      ctx({ cwd: dir, dryRun: true }),
+    );
+    expect(out.risk.level).toBe("MEDIUM");
+    expect(out.record.result).toBe("dry_run");
+    expect(out.result?.stdout).toContain("code --wait");
+  });
+
+  it("refuses edit.file outside an interactive host", async () => {
+    const dir = await sandbox();
+    await writeFile(join(dir, "note.txt"), "hi\n");
+    const rt = await makeRuntime();
+    const out = await rt.run(
+      "edit.file path=note.txt editor=nano",
+      ctx({ cwd: dir, interactive: false }),
+    );
+    expect(out.risk.level).toBe("MEDIUM");
+    expect(out.record.result).toBe("failed");
+    expect(out.result?.stderr).toMatch(/interactive terminal/i);
+  });
 });
 
 describe("dry-run never touches the filesystem", () => {

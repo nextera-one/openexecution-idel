@@ -273,7 +273,10 @@ export interface Adapter extends AdapterCapabilities {
   /** Build a (possibly dry-run) plan from a resolved command + AST. */
   plan(resolved: ResolvedCommand, ast: CommandAst): ExecutionPlan;
   /** Execute a plan. Must honor dryRun by returning a simulated result. */
-  execute(plan: ExecutionPlan, opts: { dryRun: boolean; cwd: string }): Promise<ExecutionResult>;
+  execute(
+    plan: ExecutionPlan,
+    opts: { dryRun: boolean; cwd: string; interactive?: boolean },
+  ): Promise<ExecutionResult>;
 }
 
 // ---------------------------------------------------------------------------
@@ -328,6 +331,12 @@ export interface RuntimeContext {
   dryRun?: boolean;
   /** Disallow native passthrough (e.g. in CI/production). */
   noNative?: boolean;
+  /**
+   * Allow commands that need to attach to the user's terminal, such as
+   * `edit.file`. HTTP, CI, and agent hosts leave this false so interactive
+   * commands fail cleanly instead of hanging on a non-existent TTY.
+   */
+  interactive?: boolean;
   /**
    * Override the logged command origin. When omitted, the runtime infers
    * `"ci"` or `"idel"`. Set to `"agent"` so AI-proposed commands are recorded

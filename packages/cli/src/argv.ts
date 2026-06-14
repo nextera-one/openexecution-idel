@@ -142,6 +142,16 @@ export function parseArgv(argv: string[]): CliInvocation {
     };
   }
 
+  if (first === "editor" || first === "edit") {
+    const args = rest.slice(1);
+    return {
+      mode: "run",
+      command: editorAliasCommand(args),
+      native: false,
+      flags,
+    };
+  }
+
   // Native passthrough: `idel ! "rm -rf dist"` or `idel native.run command="..."`.
   if (first === "!") {
     return {
@@ -159,4 +169,17 @@ export function parseArgv(argv: string[]): CliInvocation {
     native: false,
     flags,
   };
+}
+
+function editorAliasCommand(args: string[]): string {
+  if (args.length === 0) return "edit.file";
+  const [first, ...rest] = args;
+  if (first === undefined) return "edit.file";
+  if (first.includes("=")) return `edit.file ${args.join(" ")}`;
+  return `edit.file path=${quoteParamValue(first)}${rest.length ? ` ${rest.join(" ")}` : ""}`;
+}
+
+function quoteParamValue(value: string): string {
+  if (!/[\s"'\\]/.test(value)) return value;
+  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 }

@@ -423,7 +423,11 @@ export class Runtime {
       if (nativeShell) {
         result = await execNativeShell(plan, { dryRun, cwd: ast.cwd });
       } else if (adapter) {
-        result = await adapter.execute(plan, { dryRun, cwd: ast.cwd });
+        result = await adapter.execute(plan, {
+          dryRun,
+          cwd: ast.cwd,
+          interactive: ctx.interactive === true,
+        });
       } else {
         return this.failAfterParse(
           ast as CommandAst,

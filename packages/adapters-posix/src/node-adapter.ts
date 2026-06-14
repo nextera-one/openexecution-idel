@@ -24,7 +24,7 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
-import { extname, isAbsolute, resolve as resolvePath } from "node:path";
+import { dirname, extname, isAbsolute, resolve as resolvePath } from "node:path";
 import type {
   Adapter,
   AdapterName,
@@ -53,6 +53,7 @@ const HANDLED_IDS = new Set<string>([
   "env.get",
   "env.set",
   "run.script",
+  "edit.file",
 ]);
 
 /** Sentinel marking a def whose execution is the in-process node fs path. */
@@ -140,7 +141,7 @@ export class NodeAdapter implements Adapter {
 
   async execute(
     plan: ExecutionPlan,
-    opts: { dryRun: boolean; cwd: string },
+    opts: { dryRun: boolean; cwd: string; interactive?: boolean },
   ): Promise<ExecutionResult> {
     // argv[0] is the command id (see `plan`).
     const id = plan.argv[0] ?? "";
@@ -153,6 +154,15 @@ export class NodeAdapter implements Adapter {
           exitCode: 0,
           durationMs: 0,
           stdout: `[dry-run] would run script: ${describeScriptRun(params, opts.cwd)} (cwd=${opts.cwd})\n`,
+          stderr: "",
+          simulated: true,
+        };
+      }
+      if (id === "edit.file") {
+        return {
+          exitCode: 0,
+          durationMs: 0,
+          stdout: `[dry-run] would open editor: ${describeEditFile(params, opts.cwd)} (cwd=${opts.cwd})\n`,
           stderr: "",
           simulated: true,
         };
@@ -180,7 +190,7 @@ export class NodeAdapter implements Adapter {
     });
 
     try {
-      const stdout = await this.runOp(id, params, opts.cwd);
+      const stdout = await this.runOp(id, params, opts);
       return done(0, stdout, "");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -192,8 +202,9 @@ export class NodeAdapter implements Adapter {
   private async runOp(
     id: string,
     params: Record<string, string>,
-    cwd: string,
+    opts: { cwd: string; interactive?: boolean },
   ): Promise<string> {
+    const cwd = opts.cwd;
     const path = (name: string): string | undefined =>
       resolveParamPath(cwd, asString(params[name]));
 
@@ -295,6 +306,15 @@ export class NodeAdapter implements Adapter {
           path: this.requirePath(path("path") ?? path("name"), "path"),
           args: asString(params["args"]) ?? "",
           shell: asString(params["shell"]) ?? "auto",
+        });
+      }
+      case "edit.file": {
+        return await editFile({
+          cwd,
+          path: this.requirePath(path("path") ?? path("name"), "path"),
+          editor: asString(params["editor"]) ?? "auto",
+          wait: params["wait"] !== "false",
+          interactive: opts.interactive === true,
         });
       }
       default:
@@ -502,6 +522,113 @@ function renderCommand(command: string, argv: string[]): string {
 
 function renderToken(value: string): string {
   return /\s/.test(value) ? JSON.stringify(value) : value;
+}
+
+interface EditRun {
+  cwd: string;
+  path: string;
+  editor: string;
+  wait: boolean;
+  interactive: boolean;
+}
+
+async function editFile(run: EditRun): Promise<string> {
+  await validateEditableTarget(run.path);
+  const plan = planEditorRun(run.path, run.editor, run.wait);
+  if (!run.interactive || !process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new Error(
+      "edit.file requires an interactive terminal. Use `idel terminal` or a local TTY; web/CI/API contexts cannot launch editors.",
+    );
+  }
+  const result = await spawnInteractive(plan.command, plan.argv, run.cwd);
+  if (result.exitCode !== 0) {
+    throw new Error(`edit.file: ${renderCommand(plan.command, plan.argv)} exited ${result.exitCode}`);
+  }
+  return `Edited ${run.path} with ${renderCommand(plan.command, plan.argv)}\n`;
+}
+
+function describeEditFile(params: Record<string, string>, cwd: string): string {
+  const rawPath = params["path"] ?? params["name"];
+  const target = resolveParamPath(cwd, rawPath);
+  if (!target) return "edit.file <missing path>";
+  const plan = planEditorRun(target, params["editor"] ?? "auto", params["wait"] !== "false");
+  return renderCommand(plan.command, plan.argv);
+}
+
+async function validateEditableTarget(target: string): Promise<void> {
+  const st = await stat(target).catch(() => undefined);
+  if (st?.isDirectory()) throw new Error(`edit.file: target is a directory: ${target}`);
+  if (st) return;
+  const parent = await stat(dirname(target)).catch(() => undefined);
+  if (!parent || !parent.isDirectory()) {
+    throw new Error(`edit.file: parent directory does not exist: ${dirname(target)}`);
+  }
+}
+
+function planEditorRun(
+  target: string,
+  editorName: string,
+  wait: boolean,
+): { command: string; argv: string[] } {
+  const resolved = resolveEditor(editorName, wait);
+  return { command: resolved.command, argv: [...resolved.argv, target] };
+}
+
+function resolveEditor(
+  editorName: string,
+  wait: boolean,
+): { command: string; argv: string[] } {
+  if (editorName === "auto") {
+    const envEditor = process.env["VISUAL"] || process.env["EDITOR"];
+    if (envEditor?.trim()) return parseEditorCommand(envEditor);
+    return process.platform === "win32"
+      ? { command: "notepad.exe", argv: [] }
+      : { command: "nano", argv: [] };
+  }
+  if (editorName === "env") {
+    const envEditor = process.env["VISUAL"] || process.env["EDITOR"];
+    if (!envEditor?.trim()) {
+      throw new Error("edit.file: VISUAL or EDITOR must be set when editor=env");
+    }
+    return parseEditorCommand(envEditor);
+  }
+  if (editorName === "nano" || editorName === "vim" || editorName === "vi") {
+    return { command: editorName, argv: [] };
+  }
+  if (editorName === "code") {
+    return { command: "code", argv: wait ? ["--wait"] : [] };
+  }
+  if (editorName === "notepad") {
+    return { command: process.platform === "win32" ? "notepad.exe" : "notepad", argv: [] };
+  }
+  throw new Error(`edit.file: unsupported editor: ${editorName}`);
+}
+
+function parseEditorCommand(value: string): { command: string; argv: string[] } {
+  const parts = splitArgs(value.trim());
+  const [command, ...argv] = parts;
+  if (!command) throw new Error("edit.file: empty editor command");
+  return { command, argv };
+}
+
+function spawnInteractive(
+  command: string,
+  argv: string[],
+  cwd: string,
+): Promise<{ exitCode: number }> {
+  return new Promise((resolveSpawn) => {
+    const child = spawn(command, argv, {
+      cwd,
+      shell: false,
+      stdio: "inherit",
+    });
+    child.on("error", () => {
+      resolveSpawn({ exitCode: 127 });
+    });
+    child.on("close", (code) => {
+      resolveSpawn({ exitCode: code ?? 0 });
+    });
+  });
 }
 
 /** Convenience singleton. */

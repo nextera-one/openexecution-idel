@@ -118,6 +118,9 @@ idel remove.folder name=dist recursive=true --dry-run
 # Run a non-interactive script through a first-class IDEL command
 idel run.script path=./scripts/check.js shell=node args="--fix src"
 
+# Open a file in your local editor (TTY-only; web/CI refuse cleanly)
+idel editor README.md
+
 # Native passthrough — risk-scanned and logged, never an unlogged escape hatch
 idel ! "tar -xvzf backup.tar.gz"
 
@@ -144,7 +147,7 @@ Dry run. No files were changed.
 Log: ~/.idel/logs/openlogs.jsonl
 ```
 
-Other useful commands: `idel registry.list` (30 core commands), `idel policy.check`, `idel terminal` (interactive REPL), `idel completion <partial>`.
+Other useful commands: `idel registry.list` (31 core commands), `idel policy.check`, `idel terminal` (interactive REPL), `idel completion <partial>`.
 
 **Web / desktop terminal.** `idel serve` starts a local HTTP+SSE server (loopback, port 7878 by default) that exposes the same runtime — registry-driven autocomplete, risk/policy classification, and signed OpenLogs — over a small JSON API. It is the boundary the browser and desktop (Javelle) terminals talk to; pass `--static <dir>` to also serve a built UI. A command typed in the GUI is audited identically to one typed at the CLI.
 
@@ -159,7 +162,7 @@ The page at `/` explains the runtime; `/terminal.html` is a live terminal with a
 
 Every command rendered in the terminal — typed or AI-proposed — shows what it **translates to**: the real adapter invocation (e.g. `remove.file name=x force=true` → `rm -f x`, `list.folder` → `ls`), so the mapping from intent to execution is visible at the call site. In the interactive `idel terminal`, a sensitive (HIGH/CRITICAL) command is previewed with its translation and risk and held for confirmation before any real run (and a `require_dry_run`-policy command is shown as dry-run-only, never silently promoted).
 
-The web console can run commands **for real**, behind an explicit approval. Before any real run, the agent pauses and the terminal shows the dry-run plus **Approve / Decline** buttons; the server parks the agent (over `POST /api/agent/approve`) until you choose. A decline leaves the dry-run result standing, and a forgotten approval fails closed after a timeout — the agent never touches disk without a human "Approve."
+The web console can run commands **for real**, behind an explicit approval. Before any real run, the agent pauses and the terminal shows the dry-run plus **Approve / Decline** buttons; the server parks the agent (over `POST /api/agent/approve`) until you choose. A decline leaves the dry-run result standing, and a forgotten approval fails closed after a timeout — the agent never touches disk without a human "Approve." Interactive editor commands such as `edit.file` appear in the web registry and autocomplete, but actual editor launch is CLI/TTY-only; web/API/CI requests return a clear non-interactive failure instead of hanging.
 
 **Teach IDEL an installed CLI.** `idel learn <cli>` introspects a CLI's own `--help`, asks Claude to draft IDEL command definitions, validates each against the registry schema (fail-closed), and **replays each def's declared `tests[]` through a real runtime** to prove its risk/policy classification. Accepted drafts land in the custom layer and are then governed by the same runtime — risk-classified, policy-gated, audited:
 
@@ -303,10 +306,18 @@ idel run.script path=./scripts/check.js shell=node args="--fix src"
 idel run.script path="scripts\\deploy.bat" shell=cmd
 ```
 
-Interactive TTY programs (`nano`, `vim`, `less`, `top`) are intentionally not
-first-class IDEL commands yet. They need a dedicated interactive/PTY execution
-mode; the normal runtime captures stdout/stderr and is built for commands that
-finish without taking over the terminal.
+For editing, use the first-class interactive editor command from a local TTY:
+
+```bash
+idel edit.file path=README.md editor=nano
+idel edit.file path=src/index.ts editor=code wait=true
+idel editor README.md
+```
+
+Other interactive TTY programs (`less`, `top`, long-running TUIs) are still not
+general-purpose web/runtime commands. They need broader PTY/session management;
+`edit.file` is the scoped editor path that is allowed only from local
+interactive CLI contexts.
 
 Native passthrough is:
 
@@ -369,7 +380,7 @@ These let CI fail closed: a blocked or approval-required command never returns `
 ## Testing
 
 ```bash
-pnpm test           # vitest run — 280 tests across 11 packages
+pnpm test           # vitest run — 300 tests across 15 test files
 pnpm typecheck      # tsc --build --dry
 ```
 
@@ -379,7 +390,7 @@ Coverage spans the parser (quoting/booleans/paths), registry schema validation, 
 
 ## V1 scope vs. V2 deferred
 
-**Built in V1:** IDEL parser; core registry schema + ~30 commands (filesystem, permissions, archive, find/search, path/env, scripts, native, meta); two-phase safety engine; policy engine; native passthrough with a deterministic scanner; OpenLogs with redaction; POSIX, PowerShell, and Node adapters; registry-driven autocomplete; CLI and interactive terminal.
+**Built in V1:** IDEL parser; core registry schema + ~31 commands (filesystem, permissions, archive, find/search, path/env, scripts, editor, native, meta); two-phase safety engine; policy engine; native passthrough with a deterministic scanner; OpenLogs with redaction; POSIX, PowerShell, and Node adapters; registry-driven autocomplete; CLI and interactive terminal.
 
 **Explicitly deferred to V2 (not built):**
 

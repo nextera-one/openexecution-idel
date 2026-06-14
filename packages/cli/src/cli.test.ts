@@ -74,6 +74,18 @@ describe("parseArgv", () => {
     expect(lw.flags.write).toBe(true);
   });
 
+  it("maps editor aliases to edit.file", () => {
+    const simple = parseArgv(["editor", "README.md"]);
+    expect(simple.mode).toBe("run");
+    expect(simple.command).toBe("edit.file path=README.md");
+
+    const withParams = parseArgv(["edit", "path=README.md", "editor=code"]);
+    expect(withParams.command).toBe("edit.file path=README.md editor=code");
+
+    const spaced = parseArgv(["editor", "my file.txt", "editor=nano"]);
+    expect(spaced.command).toBe('edit.file path="my file.txt" editor=nano');
+  });
+
   it("handles --no-native and --yes", () => {
     const inv = parseArgv(["!", "echo hi", "--no-native", "--yes"]);
     expect(inv.flags.noNative).toBe(true);

@@ -235,11 +235,15 @@ describe("NodeAdapter", () => {
   function run(
     id: string,
     params: Record<string, ParamValue>,
-    opts: { dryRun: boolean },
+    opts: { dryRun: boolean; interactive?: boolean },
   ) {
     const d = resolved(def(id, { node: { command: "@node", args: [] } }));
     const plan = adapter.plan(d, ast(id, params, dir));
-    return adapter.execute(plan, { dryRun: opts.dryRun, cwd: dir });
+    return adapter.execute(plan, {
+      dryRun: opts.dryRun,
+      cwd: dir,
+      interactive: opts.interactive,
+    });
   }
 
   it("name is node and available is always true", () => {
@@ -251,6 +255,7 @@ describe("NodeAdapter", () => {
     expect(adapter.supports("create.file")).toBe(true);
     expect(adapter.supports("remove.folder")).toBe(true);
     expect(adapter.supports("run.script")).toBe(true);
+    expect(adapter.supports("edit.file")).toBe(true);
     expect(adapter.supports("native.run")).toBe(false);
     expect(
       adapter.supportsResolved(
@@ -442,6 +447,30 @@ describe("NodeAdapter", () => {
     );
     const expected = process.platform === "win32" ? "powershell.exe" : "pwsh";
     expect(r.stdout).toContain(expected);
+  });
+
+  it("edit.file dry-runs with the selected editor", async () => {
+    await writeFile(join(dir, "note.txt"), "hi\n");
+    const r = await run(
+      "edit.file",
+      { path: "note.txt", editor: "code", wait: true },
+      { dryRun: true },
+    );
+    expect(r.simulated).toBe(true);
+    expect(r.stdout).toContain("[dry-run] would open editor:");
+    expect(r.stdout).toContain("code --wait");
+    expect(r.stdout).toContain("note.txt");
+  });
+
+  it("edit.file fails cleanly outside an interactive TTY", async () => {
+    await writeFile(join(dir, "note.txt"), "hi\n");
+    const r = await run(
+      "edit.file",
+      { path: "note.txt", editor: "nano" },
+      { dryRun: false, interactive: false },
+    );
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toMatch(/interactive terminal/i);
   });
 
   it("returns a failure result (exit 1) when a required path is missing", async () => {

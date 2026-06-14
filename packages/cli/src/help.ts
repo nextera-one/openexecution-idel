@@ -7,6 +7,7 @@ USAGE
   idel ! "<native command>"            native passthrough (risk-scanned + logged)
   idel ask "<natural language>"        ask Claude to do it (proposes IDEL, runs via the runtime)
   idel learn <cli> [--write]           teach IDEL an installed CLI (drafts IDEL commands from its --help)
+  idel editor <file>                   open a file in your local editor (TTY only)
   idel terminal                        interactive IDEL terminal (readline REPL; \`? <ask>\` for Claude)
   idel serve [--port N] [--static D]   start the local web/desktop terminal server
   idel completion <partial>            print autocomplete suggestions
@@ -17,11 +18,12 @@ EXAMPLES
   idel remove.folder name=dist recursive=true --dry-run
   idel run.script path=./scripts/deploy.sh shell=bash
   idel run.script path=./scripts/check.js shell=node args="--fix src"
+  idel edit.file path=README.md editor=nano
+  idel editor README.md
   idel policy.check
   idel registry.explain command=remove.folder
   idel logs.list
   idel ! "tar -xvzf backup.tar.gz"
-  idel ! "nano README.md"                    native escape hatch; interactive TTY support is limited today
   idel ask "delete the dist folder"          (uses your Claude subscription or ANTHROPIC_API_KEY; --yes to allow real runs)
   idel learn gh --write                      (drafts IDEL commands for the gh CLI into the custom layer)
 
