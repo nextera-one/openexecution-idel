@@ -15,13 +15,13 @@ USAGE
 EXAMPLES
   idel create.file name=readme.md
   idel remove.folder name=dist recursive=true --dry-run
+  idel run.script path=./scripts/deploy.sh shell=bash
+  idel run.script path=./scripts/check.js shell=node args="--fix src"
   idel policy.check
   idel registry.explain command=remove.folder
   idel logs.list
   idel ! "tar -xvzf backup.tar.gz"
-  idel ! "bash ./scripts/deploy.sh"          run a shell script on Linux/macOS/Git Bash/WSL
-  idel ! "./scripts/deploy.sh"               run an executable script with a shebang
-  idel ! "cmd /c scripts\\deploy.bat"        run a Windows batch file
+  idel ! "nano README.md"                    native escape hatch; interactive TTY support is limited today
   idel ask "delete the dist folder"          (uses your Claude subscription or ANTHROPIC_API_KEY; --yes to allow real runs)
   idel learn gh --write                      (drafts IDEL commands for the gh CLI into the custom layer)
 

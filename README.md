@@ -115,6 +115,9 @@ idel create.file name=readme.md
 # Plan a recursive delete without touching anything; see the affected-path estimate
 idel remove.folder name=dist recursive=true --dry-run
 
+# Run a non-interactive script through a first-class IDEL command
+idel run.script path=./scripts/check.js shell=node args="--fix src"
+
 # Native passthrough — risk-scanned and logged, never an unlogged escape hatch
 idel ! "tar -xvzf backup.tar.gz"
 
@@ -141,7 +144,7 @@ Dry run. No files were changed.
 Log: ~/.idel/logs/openlogs.jsonl
 ```
 
-Other useful commands: `idel registry.list` (29 core commands), `idel policy.check`, `idel terminal` (interactive REPL), `idel completion <partial>`.
+Other useful commands: `idel registry.list` (30 core commands), `idel policy.check`, `idel terminal` (interactive REPL), `idel completion <partial>`.
 
 **Web / desktop terminal.** `idel serve` starts a local HTTP+SSE server (loopback, port 7878 by default) that exposes the same runtime — registry-driven autocomplete, risk/policy classification, and signed OpenLogs — over a small JSON API. It is the boundary the browser and desktop (Javelle) terminals talk to; pass `--static <dir>` to also serve a built UI. A command typed in the GUI is audited identically to one typed at the CLI.
 
@@ -291,6 +294,20 @@ idel ! "tar -xvzf backup.tar.gz"
 idel native.run command="find . -name '*.js' -mtime -7"
 ```
 
+For normal non-interactive scripts, prefer `run.script` so the script path gets
+IDEL path completion and the interpreter choice is explicit:
+
+```bash
+idel run.script path=./scripts/deploy.sh shell=bash
+idel run.script path=./scripts/check.js shell=node args="--fix src"
+idel run.script path="scripts\\deploy.bat" shell=cmd
+```
+
+Interactive TTY programs (`nano`, `vim`, `less`, `top`) are intentionally not
+first-class IDEL commands yet. They need a dedicated interactive/PTY execution
+mode; the normal runtime captures stdout/stderr and is built for commands that
+finish without taking over the terminal.
+
 Native passthrough is:
 
 - **Risk-scanned** by a deterministic pattern scanner (no AI) for known catastrophe shapes — `rm -rf /`, `dd of=/dev/sd*`, `mkfs`, recursive `chmod 777` on root, fork bombs, `curl | sh`, Windows drive-root deletes.
@@ -362,7 +379,7 @@ Coverage spans the parser (quoting/booleans/paths), registry schema validation, 
 
 ## V1 scope vs. V2 deferred
 
-**Built in V1:** IDEL parser; core registry schema + ~29 commands (filesystem, permissions, archive, find/search, path/env, native, meta); two-phase safety engine; policy engine; native passthrough with a deterministic scanner; OpenLogs with redaction; POSIX, PowerShell, and Node adapters; registry-driven autocomplete; CLI and interactive terminal.
+**Built in V1:** IDEL parser; core registry schema + ~30 commands (filesystem, permissions, archive, find/search, path/env, scripts, native, meta); two-phase safety engine; policy engine; native passthrough with a deterministic scanner; OpenLogs with redaction; POSIX, PowerShell, and Node adapters; registry-driven autocomplete; CLI and interactive terminal.
 
 **Explicitly deferred to V2 (not built):**
 

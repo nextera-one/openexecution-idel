@@ -98,6 +98,23 @@ describe("safe commands execute for real in a sandbox", () => {
     expect(out.result?.stdout).toContain("a.txt");
     expect(out.result?.stdout).toContain("b.txt");
   });
+
+  it("runs a script through the runtime pipeline", async () => {
+    const dir = await sandbox();
+    await writeFile(
+      join(dir, "hello.js"),
+      "console.log(process.argv.slice(2).join('|'));\n",
+    );
+    const rt = await makeRuntime();
+    const out = await rt.run(
+      'run.script path=hello.js shell=node args="one two"',
+      ctx({ cwd: dir }),
+    );
+    expect(out.risk.level).toBe("MEDIUM");
+    expect(out.decision.action).toBe("allow");
+    expect(out.record.result).toBe("success");
+    expect(out.result?.stdout).toBe("one|two\n");
+  });
 });
 
 describe("dry-run never touches the filesystem", () => {

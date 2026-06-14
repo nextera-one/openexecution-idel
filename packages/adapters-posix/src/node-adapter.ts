@@ -10,6 +10,7 @@
  * cross-platform — the posix package is a fine home and avoids a third package.
  */
 
+import { spawn } from "node:child_process";
 import {
   appendFile,
   copyFile,
@@ -23,7 +24,7 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
-import { isAbsolute, resolve as resolvePath } from "node:path";
+import { extname, isAbsolute, resolve as resolvePath } from "node:path";
 import type {
   Adapter,
   AdapterName,
@@ -51,6 +52,7 @@ const HANDLED_IDS = new Set<string>([
   "path.change",
   "env.get",
   "env.set",
+  "run.script",
 ]);
 
 /** Sentinel marking a def whose execution is the in-process node fs path. */
@@ -146,6 +148,15 @@ export class NodeAdapter implements Adapter {
     const params = parseTokenParams(plan.argv.slice(1));
 
     if (opts.dryRun) {
+      if (id === "run.script") {
+        return {
+          exitCode: 0,
+          durationMs: 0,
+          stdout: `[dry-run] would run script: ${describeScriptRun(params, opts.cwd)} (cwd=${opts.cwd})\n`,
+          stderr: "",
+          simulated: true,
+        };
+      }
       return {
         exitCode: 0,
         durationMs: 0,
@@ -278,6 +289,14 @@ export class NodeAdapter implements Adapter {
         process.env[name] = value;
         return `${name} set for this idel session (not exported to the parent shell)\n`;
       }
+      case "run.script": {
+        return await runScript({
+          cwd,
+          path: this.requirePath(path("path") ?? path("name"), "path"),
+          args: asString(params["args"]) ?? "",
+          shell: asString(params["shell"]) ?? "auto",
+        });
+      }
       default:
         throw new Error(`NodeAdapter: unsupported command id "${id}"`);
     }
@@ -311,6 +330,178 @@ async function pathExists(target: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+interface ScriptRun {
+  cwd: string;
+  path: string;
+  args: string;
+  shell: string;
+}
+
+async function runScript(run: ScriptRun): Promise<string> {
+  const script = run.path;
+  const st = await stat(script).catch(() => undefined);
+  if (!st) throw new Error(`run.script: script not found: ${script}`);
+  if (!st.isFile()) throw new Error(`run.script: not a file: ${script}`);
+
+  const plan = planScriptRun(script, run.args, run.shell);
+  const result = await spawnCapture(plan.command, plan.argv, run.cwd);
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `run.script: ${renderCommand(plan.command, plan.argv)} exited ${result.exitCode}` +
+        (result.stderr ? `\n${result.stderr.trimEnd()}` : ""),
+    );
+  }
+  return result.stdout;
+}
+
+function describeScriptRun(params: Record<string, string>, cwd: string): string {
+  const rawPath = params["path"] ?? params["name"];
+  const script = resolveParamPath(cwd, rawPath);
+  if (!script) return "run.script <missing path>";
+  const plan = planScriptRun(script, params["args"] ?? "", params["shell"] ?? "auto");
+  return renderCommand(plan.command, plan.argv);
+}
+
+function planScriptRun(
+  script: string,
+  rawArgs: string,
+  shellName: string,
+): { command: string; argv: string[] } {
+  const args = splitArgs(rawArgs);
+  const shell = normalizeScriptShell(shellName, script);
+  switch (shell) {
+    case "bash":
+      return { command: "bash", argv: [script, ...args] };
+    case "sh":
+      return { command: "sh", argv: [script, ...args] };
+    case "node":
+      return { command: process.execPath, argv: [script, ...args] };
+    case "python":
+      return { command: process.platform === "win32" ? "python" : "python3", argv: [script, ...args] };
+    case "powershell":
+      return {
+        command: process.platform === "win32" ? "powershell.exe" : "pwsh",
+        argv: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, ...args],
+      };
+    case "cmd":
+      return { command: "cmd", argv: ["/c", script, ...args] };
+    case "direct":
+      return { command: script, argv: args };
+  }
+}
+
+type ScriptShell = "bash" | "sh" | "node" | "python" | "powershell" | "cmd" | "direct";
+
+function normalizeScriptShell(shellName: string, script: string): ScriptShell {
+  if (shellName !== "auto") {
+    if (isScriptShell(shellName)) return shellName;
+    throw new Error(`run.script: unsupported shell: ${shellName}`);
+  }
+  const ext = extname(script).toLowerCase();
+  if (ext === ".js" || ext === ".mjs" || ext === ".cjs") return "node";
+  if (ext === ".py") return "python";
+  if (ext === ".ps1") return "powershell";
+  if (ext === ".bat" || ext === ".cmd") return "cmd";
+  if (ext === ".sh" || ext === ".bash") return process.platform === "win32" ? "bash" : "sh";
+  return "direct";
+}
+
+function isScriptShell(value: string): value is ScriptShell {
+  return (
+    value === "bash" ||
+    value === "sh" ||
+    value === "node" ||
+    value === "python" ||
+    value === "powershell" ||
+    value === "cmd" ||
+    value === "direct"
+  );
+}
+
+function splitArgs(input: string): string[] {
+  const args: string[] = [];
+  let current = "";
+  let quote: string | undefined;
+  for (let i = 0; i < input.length; i++) {
+    const c = input[i]!;
+    if (c === "\\") {
+      const next = input[i + 1];
+      if (next === undefined) {
+        current += "\\";
+        continue;
+      }
+      if (quote) {
+        if (next === quote || next === "\\") {
+          current += next;
+          i += 1;
+          continue;
+        }
+        current += "\\";
+        continue;
+      }
+      if (/\s/.test(next) || next === "'" || next === '"' || next === "\\") {
+        current += next;
+        i += 1;
+        continue;
+      }
+      current += "\\";
+      continue;
+    }
+    if (quote) {
+      if (c === quote) quote = undefined;
+      else current += c;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      quote = c;
+      continue;
+    }
+    if (/\s/.test(c)) {
+      if (current) {
+        args.push(current);
+        current = "";
+      }
+      continue;
+    }
+    current += c;
+  }
+  if (quote) throw new Error("run.script: unterminated quote in args");
+  if (current) args.push(current);
+  return args;
+}
+
+function spawnCapture(
+  command: string,
+  argv: string[],
+  cwd: string,
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  return new Promise((resolveSpawn) => {
+    const child = spawn(command, argv, { cwd, shell: false });
+    let stdout = "";
+    let stderr = "";
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString();
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", (err) => {
+      resolveSpawn({ exitCode: 127, stdout, stderr: stderr + `${err.message}\n` });
+    });
+    child.on("close", (code) => {
+      resolveSpawn({ exitCode: code ?? 0, stdout, stderr });
+    });
+  });
+}
+
+function renderCommand(command: string, argv: string[]): string {
+  return [command, ...argv].map(renderToken).join(" ");
+}
+
+function renderToken(value: string): string {
+  return /\s/.test(value) ? JSON.stringify(value) : value;
 }
 
 /** Convenience singleton. */

@@ -32,7 +32,7 @@ import {
   isRoot,
   normalizeTarget,
 } from "./paths.js";
-import { levelOfFindings } from "./risk.js";
+import { levelOfFindings, riskRank } from "./risk.js";
 
 /**
  * Param names that may hold the primary filesystem target, in priority order.
@@ -322,12 +322,15 @@ export function finalize(
   def?: CommandDef,
 ): RiskAssessment {
   let level = levelOfFindings(findings);
-  if (def?.riskDefault) {
-    // riskDefault is a floor, not a ceiling.
-    level = levelOfFindings([
-      ...findings,
-      { code: "risk-default", level: def.riskDefault, message: "command default risk" },
-    ]);
+  if (def?.riskDefault && riskRank(def.riskDefault) > riskRank(level)) {
+    // riskDefault is a floor, not a ceiling. Keep it as a real finding when it
+    // raises the level so downstream merged assessments do not lose the floor.
+    findings.push({
+      code: "risk-default",
+      level: def.riskDefault,
+      message: `Command default risk is ${def.riskDefault}.`,
+    });
+    level = def.riskDefault;
   }
   return { phase, level, findings };
 }

@@ -250,6 +250,7 @@ describe("NodeAdapter", () => {
   it("supports only the handled ids; supportsResolved requires @node", () => {
     expect(adapter.supports("create.file")).toBe(true);
     expect(adapter.supports("remove.folder")).toBe(true);
+    expect(adapter.supports("run.script")).toBe(true);
     expect(adapter.supports("native.run")).toBe(false);
     expect(
       adapter.supportsResolved(
@@ -390,6 +391,57 @@ describe("NodeAdapter", () => {
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toContain("[dry-run]");
     await expect(stat(join(dir, "ghost.md"))).rejects.toThrow();
+  });
+
+  it("run.script dry-runs with the selected interpreter", async () => {
+    await writeFile(join(dir, "hello.js"), "console.log('hi')\n");
+    const r = await run(
+      "run.script",
+      { path: "hello.js", shell: "node", args: "--name test" },
+      { dryRun: true },
+    );
+    expect(r.simulated).toBe(true);
+    expect(r.stdout).toContain("[dry-run] would run script:");
+    expect(r.stdout).toContain("hello.js");
+  });
+
+  it("run.script executes a node script and preserves quoted args", async () => {
+    await writeFile(
+      join(dir, "hello.js"),
+      "console.log(process.argv.slice(2).join('|'));\n",
+    );
+    const r = await run(
+      "run.script",
+      { path: "hello.js", shell: "node", args: 'one "two words"' },
+      { dryRun: false },
+    );
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe("one|two words\n");
+  });
+
+  it("run.script preserves Windows-style backslashes in args", async () => {
+    await writeFile(
+      join(dir, "hello.js"),
+      "console.log(process.argv.slice(2).join('|'));\n",
+    );
+    const r = await run(
+      "run.script",
+      { path: "hello.js", shell: "node", args: String.raw`C:\Temp\file one\ two` },
+      { dryRun: false },
+    );
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe(String.raw`C:\Temp\file|one two` + "\n");
+  });
+
+  it("run.script auto-selects the platform PowerShell command", async () => {
+    await writeFile(join(dir, "hello.ps1"), "Write-Output hi\n");
+    const r = await run(
+      "run.script",
+      { path: "hello.ps1", shell: "auto" },
+      { dryRun: true },
+    );
+    const expected = process.platform === "win32" ? "powershell.exe" : "pwsh";
+    expect(r.stdout).toContain(expected);
   });
 
   it("returns a failure result (exit 1) when a required path is missing", async () => {
