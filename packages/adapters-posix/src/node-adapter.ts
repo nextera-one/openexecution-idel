@@ -16,6 +16,7 @@ import {
   copyFile,
   lstat,
   mkdir,
+  open as openFile,
   readdir,
   readFile,
   rename,
@@ -40,6 +41,7 @@ const HANDLED_IDS = new Set<string>([
   "create.file",
   "create.folder",
   "read.file",
+  "tail.file",
   "write.file",
   "append.file",
   "remove.file",
@@ -54,6 +56,7 @@ const HANDLED_IDS = new Set<string>([
   "env.set",
   "run.script",
   "edit.file",
+  "open.editor",
 ]);
 
 /** Sentinel marking a def whose execution is the in-process node fs path. */
@@ -158,11 +161,11 @@ export class NodeAdapter implements Adapter {
           simulated: true,
         };
       }
-      if (id === "edit.file") {
+      if (isEditorCommand(id)) {
         return {
           exitCode: 0,
           durationMs: 0,
-          stdout: `[dry-run] would open editor: ${describeEditFile(params, opts.cwd)} (cwd=${opts.cwd})\n`,
+          stdout: `[dry-run] would open editor: ${describeEditFile(params, opts.cwd, id)} (cwd=${opts.cwd})\n`,
           stderr: "",
           simulated: true,
         };
@@ -224,6 +227,16 @@ export class NodeAdapter implements Adapter {
       case "read.file": {
         const target = this.requirePath(path("path") ?? path("name"), "path");
         return await readFile(target, "utf8");
+      }
+      case "tail.file": {
+        const target = this.requirePath(
+          path("file") ?? path("path") ?? path("name"),
+          "file",
+        );
+        return await tailFile({
+          path: target,
+          lines: asString(params["lines"]) ?? "10",
+        });
       }
       case "write.file": {
         const target = this.requirePath(path("path") ?? path("name"), "path");
@@ -308,10 +321,15 @@ export class NodeAdapter implements Adapter {
           shell: asString(params["shell"]) ?? "auto",
         });
       }
-      case "edit.file": {
+      case "edit.file":
+      case "open.editor": {
         return await editFile({
+          commandId: id,
           cwd,
-          path: this.requirePath(path("path") ?? path("name"), "path"),
+          path: this.requirePath(
+            path("file") ?? path("path") ?? path("name"),
+            id === "open.editor" ? "file" : "path",
+          ),
           editor: asString(params["editor"]) ?? "auto",
           wait: params["wait"] !== "false",
           interactive: opts.interactive === true,
@@ -350,6 +368,57 @@ async function pathExists(target: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+interface TailRun {
+  path: string;
+  lines: string;
+}
+
+const TAIL_CHUNK_BYTES = 64 * 1024;
+const MAX_TAIL_LINES = 10_000;
+
+async function tailFile(run: TailRun): Promise<string> {
+  const count = parseTailLineCount(run.lines);
+  const st = await stat(run.path).catch(() => undefined);
+  if (!st) throw new Error(`tail.file: file not found: ${run.path}`);
+  if (!st.isFile()) throw new Error(`tail.file: not a file: ${run.path}`);
+  if (st.size === 0) return "";
+
+  const handle = await openFile(run.path, "r");
+  try {
+    const chunks: Buffer[] = [];
+    let position = st.size;
+    let newlines = 0;
+    while (position > 0 && newlines <= count) {
+      const size = Math.min(TAIL_CHUNK_BYTES, position);
+      position -= size;
+      const buffer = Buffer.allocUnsafe(size);
+      const { bytesRead } = await handle.read(buffer, 0, size, position);
+      const chunk = bytesRead === size ? buffer : buffer.subarray(0, bytesRead);
+      chunks.unshift(chunk);
+      for (let i = chunk.length - 1; i >= 0; i--) {
+        if (chunk[i] === 0x0a) newlines++;
+      }
+    }
+
+    const text = Buffer.concat(chunks).toString("utf8");
+    const hadFinalNewline = text.endsWith("\n");
+    const body = hadFinalNewline ? text.slice(0, -1) : text;
+    const selected = body.split("\n").slice(-count).join("\n");
+    if (!selected) return "";
+    return selected + (hadFinalNewline ? "\n" : "");
+  } finally {
+    await handle.close();
+  }
+}
+
+function parseTailLineCount(value: string): number {
+  const count = Number.parseInt(value, 10);
+  if (!Number.isInteger(count) || count < 1) {
+    throw new Error(`tail.file: lines must be a positive integer, got ${JSON.stringify(value)}`);
+  }
+  return Math.min(count, MAX_TAIL_LINES);
 }
 
 interface ScriptRun {
@@ -525,6 +594,7 @@ function renderToken(value: string): string {
 }
 
 interface EditRun {
+  commandId: string;
   cwd: string;
   path: string;
   editor: string;
@@ -533,54 +603,56 @@ interface EditRun {
 }
 
 async function editFile(run: EditRun): Promise<string> {
-  await validateEditableTarget(run.path);
-  const plan = planEditorRun(run.path, run.editor, run.wait);
+  await validateEditableTarget(run.commandId, run.path);
+  const plan = planEditorRun(run.commandId, run.path, run.editor, run.wait);
   if (!run.interactive || !process.stdin.isTTY || !process.stdout.isTTY) {
     throw new Error(
-      "edit.file requires an interactive terminal. Use `idel terminal` or a local TTY; web/CI/API contexts cannot launch editors.",
+      `${run.commandId} requires an interactive terminal. Use \`idel terminal\` or a local TTY; web/CI/API contexts cannot launch editors.`,
     );
   }
   const result = await spawnInteractive(plan.command, plan.argv, run.cwd);
   if (result.exitCode !== 0) {
-    throw new Error(`edit.file: ${renderCommand(plan.command, plan.argv)} exited ${result.exitCode}`);
+    throw new Error(`${run.commandId}: ${renderCommand(plan.command, plan.argv)} exited ${result.exitCode}`);
   }
   return `Edited ${run.path} with ${renderCommand(plan.command, plan.argv)}\n`;
 }
 
-function describeEditFile(params: Record<string, string>, cwd: string): string {
-  const rawPath = params["path"] ?? params["name"];
+function describeEditFile(params: Record<string, string>, cwd: string, commandId = "edit.file"): string {
+  const rawPath = params["file"] ?? params["path"] ?? params["name"];
   const target = resolveParamPath(cwd, rawPath);
-  if (!target) return "edit.file <missing path>";
-  const plan = planEditorRun(target, params["editor"] ?? "auto", params["wait"] !== "false");
+  if (!target) return `${commandId} <missing ${commandId === "open.editor" ? "file" : "path"}>`;
+  const plan = planEditorRun(commandId, target, params["editor"] ?? "auto", params["wait"] !== "false");
   return renderCommand(plan.command, plan.argv);
 }
 
-async function validateEditableTarget(target: string): Promise<void> {
+async function validateEditableTarget(commandId: string, target: string): Promise<void> {
   const st = await stat(target).catch(() => undefined);
-  if (st?.isDirectory()) throw new Error(`edit.file: target is a directory: ${target}`);
+  if (st?.isDirectory()) throw new Error(`${commandId}: target is a directory: ${target}`);
   if (st) return;
   const parent = await stat(dirname(target)).catch(() => undefined);
   if (!parent || !parent.isDirectory()) {
-    throw new Error(`edit.file: parent directory does not exist: ${dirname(target)}`);
+    throw new Error(`${commandId}: parent directory does not exist: ${dirname(target)}`);
   }
 }
 
 function planEditorRun(
+  commandId: string,
   target: string,
   editorName: string,
   wait: boolean,
 ): { command: string; argv: string[] } {
-  const resolved = resolveEditor(editorName, wait);
+  const resolved = resolveEditor(commandId, editorName, wait);
   return { command: resolved.command, argv: [...resolved.argv, target] };
 }
 
 function resolveEditor(
+  commandId: string,
   editorName: string,
   wait: boolean,
 ): { command: string; argv: string[] } {
   if (editorName === "auto") {
     const envEditor = process.env["VISUAL"] || process.env["EDITOR"];
-    if (envEditor?.trim()) return parseEditorCommand(envEditor);
+    if (envEditor?.trim()) return parseEditorCommand(commandId, envEditor);
     return process.platform === "win32"
       ? { command: "notepad.exe", argv: [] }
       : { command: "nano", argv: [] };
@@ -588,9 +660,9 @@ function resolveEditor(
   if (editorName === "env") {
     const envEditor = process.env["VISUAL"] || process.env["EDITOR"];
     if (!envEditor?.trim()) {
-      throw new Error("edit.file: VISUAL or EDITOR must be set when editor=env");
+      throw new Error(`${commandId}: VISUAL or EDITOR must be set when editor=env`);
     }
-    return parseEditorCommand(envEditor);
+    return parseEditorCommand(commandId, envEditor);
   }
   if (editorName === "nano" || editorName === "vim" || editorName === "vi") {
     return { command: editorName, argv: [] };
@@ -601,14 +673,21 @@ function resolveEditor(
   if (editorName === "notepad") {
     return { command: process.platform === "win32" ? "notepad.exe" : "notepad", argv: [] };
   }
-  throw new Error(`edit.file: unsupported editor: ${editorName}`);
+  throw new Error(`${commandId}: unsupported editor: ${editorName}`);
 }
 
-function parseEditorCommand(value: string): { command: string; argv: string[] } {
+function parseEditorCommand(
+  commandId: string,
+  value: string,
+): { command: string; argv: string[] } {
   const parts = splitArgs(value.trim());
   const [command, ...argv] = parts;
-  if (!command) throw new Error("edit.file: empty editor command");
+  if (!command) throw new Error(`${commandId}: empty editor command`);
   return { command, argv };
+}
+
+function isEditorCommand(commandId: string): boolean {
+  return commandId === "edit.file" || commandId === "open.editor";
 }
 
 function spawnInteractive(

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterEach, afterAll } from "vitest";
-import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -75,6 +75,11 @@ describe("TerminalService.complete", () => {
     expect(out).toContain("create.file");
     expect(out).toContain("create.folder");
     expect(svc.complete({ input: "edit." })).toContain("edit.file");
+    expect(svc.complete({ input: "open." })).toContain("open.editor");
+    expect(svc.complete({ input: "ask." })).toContain("ask.ai");
+    expect(svc.complete({ input: "learn." })).toContain("learn.cli");
+    expect(svc.complete({ input: "list." })).toContain("list.history");
+    expect(svc.complete({ input: "tail." })).toContain("tail.file");
   });
 
   it("completes parameter names after a command", async () => {
@@ -94,6 +99,32 @@ describe("TerminalService.complete", () => {
     const svc = makeService(await sandbox());
     const out = svc.complete({ input: "edit.file editor=" });
     expect(out).toEqual(expect.arrayContaining(["editor=auto", "editor=nano", "editor=code"]));
+  });
+
+  it("completes ask.ai prompt parameter", async () => {
+    const svc = makeService(await sandbox());
+    const out = svc.complete({ input: "ask.ai " });
+    expect(out).toContain("prompt=");
+  });
+
+  it("completes open.editor files and directories", async () => {
+    const dir = await sandbox();
+    await mkdir(join(dir, "src"));
+    await writeFile(join(dir, "package.json"), "{}\n");
+    const svc = makeService(dir);
+    const out = svc.complete({ input: "open.editor file=", cwd: dir });
+    expect(out).toContain("file=package.json");
+    expect(out).toContain("file=src/");
+  });
+
+  it("completes tail.file files and directories", async () => {
+    const dir = await sandbox();
+    await mkdir(join(dir, "logs"));
+    await writeFile(join(dir, "app.log"), "ready\n");
+    const svc = makeService(dir);
+    const out = svc.complete({ input: "tail.file file=", cwd: dir });
+    expect(out).toContain("file=app.log");
+    expect(out).toContain("file=logs/");
   });
 
   it("completes local paths for path params against the request cwd", async () => {
@@ -126,6 +157,12 @@ describe("TerminalService.complete", () => {
     const svc = makeService(dir);
     const out = svc.complete({ input: "! ./", cwd: dir });
     expect(out).toContain("./script.sh");
+  });
+
+  it("completes the current command after a batch separator", async () => {
+    const svc = makeService(await sandbox());
+    const out = svc.complete({ input: "create.file name=a && wai" });
+    expect(out).toContain("wait.time");
   });
 });
 
@@ -183,6 +220,66 @@ describe("TerminalService.run — the safety/policy contract is preserved", () =
     const out = await svc.run({ command: "edit.file path=note.txt editor=nano", cwd: dir });
     expect(out.record.result).toBe("failed");
     expect(out.result?.stderr).toMatch(/interactive terminal/i);
+  });
+
+  it("does not launch open.editor from the web/service context", async () => {
+    const dir = await sandbox();
+    await writeFile(join(dir, "note.txt"), "hi\n");
+    const svc = makeService(dir);
+    const out = await svc.run({ command: "open.editor file=note.txt editor=nano", cwd: dir });
+    expect(out.record.result).toBe("failed");
+    expect(out.result?.stderr).toMatch(/open\.editor requires an interactive terminal/i);
+  });
+
+  it("runs && batches sequentially", async () => {
+    const dir = await sandbox();
+    const svc = makeService(dir);
+    const out = await svc.runBatch({
+      command: 'create.file name=a.txt && write.file name=b.txt content="ok"',
+      cwd: dir,
+    });
+    expect(out.ok).toBe(true);
+    expect(out.outcomes).toHaveLength(2);
+    expect(out.outcomes.map((o) => o.record.result)).toEqual(["success", "success"]);
+    expect(await readFile(join(dir, "b.txt"), "utf8")).toBe("ok");
+  });
+
+  it("stops && batches after the first non-successful step", async () => {
+    const dir = await sandbox();
+    const svc = makeService(dir);
+    const out = await svc.runBatch({
+      command: "read.file name=missing.txt && create.file name=never.txt",
+      cwd: dir,
+    });
+    expect(out.ok).toBe(false);
+    expect(out.stoppedAt).toBe(1);
+    expect(out.outcomes).toHaveLength(1);
+    await expect(readFile(join(dir, "never.txt"), "utf8")).rejects.toThrow();
+  });
+});
+
+describe("TerminalService editor API", () => {
+  it("opens a file through the runtime read path", async () => {
+    const dir = await sandbox();
+    await writeFile(join(dir, "package.json"), '{ "ok": true }\n');
+    const svc = makeService(dir);
+    const out = await svc.openEditor({ file: "package.json", cwd: dir });
+    expect(out.file).toBe("package.json");
+    expect(out.language).toBe("json");
+    expect(out.content).toBe('{ "ok": true }\n');
+    expect(out.outcome.record.command).toBe("read.file");
+    expect(out.outcome.record.result).toBe("success");
+  });
+
+  it("saves arbitrary text through the runtime write path", async () => {
+    const dir = await sandbox();
+    await writeFile(join(dir, "note.txt"), "old\n");
+    const svc = makeService(dir);
+    const content = 'line one\nline "two"\npath C:\\Temp\n';
+    const out = await svc.saveEditor({ file: "note.txt", content, cwd: dir });
+    expect(out.record.command).toBe("write.file");
+    expect(out.record.result).toBe("success");
+    expect(await readFile(join(dir, "note.txt"), "utf8")).toBe(content);
   });
 });
 
@@ -262,6 +359,9 @@ describe("startServer (HTTP)", () => {
     const body = (await res.json()) as { id: string }[];
     expect(body.some((e) => e.id === "create.file")).toBe(true);
     expect(body.some((e) => e.id === "edit.file")).toBe(true);
+    expect(body.some((e) => e.id === "open.editor")).toBe(true);
+    expect(body.some((e) => e.id === "ask.ai")).toBe(true);
+    expect(body.some((e) => e.id === "learn.cli")).toBe(true);
   });
 
   it("POST /api/complete → suggestions", async () => {
@@ -285,6 +385,51 @@ describe("startServer (HTTP)", () => {
     expect(body).toContain("editor=code");
   });
 
+  it("POST /api/complete → open.editor suggestions", async () => {
+    const res = await fetch(`${base}/api/complete`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ input: "open.editor file=pack", cwd: process.cwd() }),
+    });
+    const body = (await res.json()) as string[];
+    expect(body).toContain("file=package.json");
+  });
+
+  it("POST /api/complete → learn.cli suggestions", async () => {
+    const res = await fetch(`${base}/api/complete`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ input: "learn.cli " }),
+    });
+    const body = (await res.json()) as string[];
+    expect(body).toContain("cli=");
+    expect(body).toContain("write=");
+  });
+
+  it("POST /api/editor/open and /api/editor/save edit a file", async () => {
+    const dir = await sandbox();
+    await writeFile(join(dir, "note.json"), '{"old":true}\n');
+    const open = await fetch(`${base}/api/editor/open`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ file: "note.json", cwd: dir }),
+    });
+    expect(open.status).toBe(200);
+    const opened = (await open.json()) as { content: string; language: string };
+    expect(opened.content).toBe('{"old":true}\n');
+    expect(opened.language).toBe("json");
+
+    const save = await fetch(`${base}/api/editor/save`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ file: "note.json", content: '{"new":true}\n', cwd: dir }),
+    });
+    expect(save.status).toBe(200);
+    const saved = (await save.json()) as { record: { result: string } };
+    expect(saved.record.result).toBe("success");
+    expect(await readFile(join(dir, "note.json"), "utf8")).toBe('{"new":true}\n');
+  });
+
   it("POST /api/run → blocks CRITICAL", async () => {
     const res = await fetch(`${base}/api/run`, {
       method: "POST",
@@ -294,6 +439,34 @@ describe("startServer (HTTP)", () => {
     const body = (await res.json()) as { record: { result: string }; risk: { level: string } };
     expect(body.risk.level).toBe("CRITICAL");
     expect(body.record.result).toBe("blocked_before_execution");
+  });
+
+  it("POST /api/run → returns batch outcomes for && input", async () => {
+    const dir = await sandbox();
+    const res = await fetch(`${base}/api/run`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        command: "create.file name=batch-a.txt && read.file name=batch-a.txt",
+        cwd: dir,
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { batch: boolean; ok: boolean; outcomes: { record: { result: string } }[] };
+    expect(body.batch).toBe(true);
+    expect(body.ok).toBe(true);
+    expect(body.outcomes.map((o) => o.record.result)).toEqual(["success", "success"]);
+  });
+
+  it("POST /api/run → rejects ask.ai when no agent is wired", async () => {
+    const res = await fetch(`${base}/api/run`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ command: 'ask.ai prompt="how are you"' }),
+    });
+    expect(res.status).toBe(501);
+    const body = await res.json();
+    expect(body.error).toMatch(/claude login|ANTHROPIC_API_KEY/i);
   });
 
   it("POST /api/run/stream → SSE outcome then done", async () => {
@@ -306,6 +479,38 @@ describe("startServer (HTTP)", () => {
     const text = await res.text();
     expect(text).toContain("event: outcome");
     expect(text).toContain("event: done");
+  });
+
+  it("POST /api/run/stream → streams each && batch step", async () => {
+    const dir = await sandbox();
+    const res = await fetch(`${base}/api/run/stream`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        command: "create.file name=batch-stream.txt && read.file name=batch-stream.txt",
+        cwd: dir,
+      }),
+    });
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    const text = await res.text();
+    expect(text).toContain("event: batch_start");
+    expect(text).toContain("event: batch_step");
+    expect(text.match(/event: outcome/g)?.length).toBe(2);
+    expect(text).toContain("event: done");
+  });
+
+  it("POST /api/run/stream → reroutes ask.ai to an SSE error when no agent is wired", async () => {
+    const res = await fetch(`${base}/api/run/stream`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ command: 'ask.ai prompt="how are you"' }),
+    });
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    const text = await res.text();
+    expect(text).toContain("event: error");
+    expect(text).toContain("ANTHROPIC_API_KEY");
+    expect(text).not.toContain("event: outcome");
+    expect(text).not.toContain("handled by the CLI or web terminal");
   });
 
   it("unknown route → 404 JSON", async () => {
@@ -348,6 +553,17 @@ describe("startServer (HTTP)", () => {
     expect(res.status).toBe(501);
     const body = await res.json();
     expect(body.error).toMatch(/claude login|ANTHROPIC_API_KEY/i);
+  });
+
+  it("POST /api/learn → 501 when learning is not wired", async () => {
+    const res = await fetch(`${base}/api/learn`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ cli: "git" }),
+    });
+    expect(res.status).toBe(501);
+    const body = await res.json();
+    expect(body.error).toMatch(/learn is not configured/i);
   });
 });
 
@@ -429,6 +645,34 @@ describe("startServer — injected agent", () => {
     }
   });
 
+  it("reroutes ask.ai submitted to /api/run/stream into the injected agent", async () => {
+    const runtime = new Runtime({ registry, policy: defaultPolicy() });
+    let seenIntent = "";
+    const fakeAgent = () => ({
+      async *ask(intent: string): AsyncGenerator<unknown> {
+        seenIntent = intent;
+        yield { type: "text", text: "hello" };
+        yield { type: "done", reason: "end_turn" };
+      },
+    });
+    const server = await startServer({ runtime, port: 0, cwd: tmpdir(), agent: fakeAgent });
+    try {
+      const res = await fetch(`${server.url}/api/run/stream`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ command: 'ask.ai prompt="how are you"' }),
+      });
+      expect(res.headers.get("content-type")).toContain("text/event-stream");
+      const text = await res.text();
+      expect(seenIntent).toBe("how are you");
+      expect(text).toContain("event: text");
+      expect(text).toContain("hello");
+      expect(text).not.toContain("event: outcome");
+    } finally {
+      await server.close();
+    }
+  });
+
   it("rejects an empty intent with an SSE error", async () => {
     const runtime = new Runtime({ registry, policy: defaultPolicy() });
     const fakeAgent = () => ({
@@ -446,6 +690,61 @@ describe("startServer — injected agent", () => {
       const text = await res.text();
       expect(text).toContain("event: error");
       expect(text).toContain("empty intent");
+    } finally {
+      await server.close();
+    }
+  });
+});
+
+describe("startServer — injected learn runner", () => {
+  it("drives an injected CLI learner over JSON", async () => {
+    const runtime = new Runtime({ registry, policy: defaultPolicy() });
+    const server = await startServer({
+      runtime,
+      port: 0,
+      cwd: tmpdir(),
+      learn: async (req) => ({
+        cli: req.cli,
+        write: req.write === true,
+        accepted: 1,
+        rejected: 0,
+        commands: [{ id: `${req.cli}.status`, accepted: true, risk: "LOW" }],
+      }),
+    });
+    try {
+      const res = await fetch(`${server.url}/api/learn`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ cli: "git", write: true }),
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { cli: string; write: boolean; commands: { id: string }[] };
+      expect(body.cli).toBe("git");
+      expect(body.write).toBe(true);
+      expect(body.commands[0]?.id).toBe("git.status");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("returns a JSON error when the injected learner fails", async () => {
+    const runtime = new Runtime({ registry, policy: defaultPolicy() });
+    const server = await startServer({
+      runtime,
+      port: 0,
+      cwd: tmpdir(),
+      learn: async () => {
+        throw new Error("no model");
+      },
+    });
+    try {
+      const res = await fetch(`${server.url}/api/learn`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ cli: "git" }),
+      });
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toMatch(/no model/);
     } finally {
       await server.close();
     }

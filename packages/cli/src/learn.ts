@@ -10,6 +10,23 @@ import type { CommandDef, RuntimeContext } from "@openexecution/types";
 
 import { color } from "./render.js";
 
+export interface LearnHostResponse {
+  cli: string;
+  write: boolean;
+  path?: string;
+  accepted: number;
+  rejected: number;
+  helpExcerpt: string;
+  commands: {
+    id: string;
+    accepted: boolean;
+    risk?: CommandDef["riskDefault"];
+    summary?: string;
+    errors: string[];
+    verification?: TestVerification;
+  }[];
+}
+
 /**
  * `idel learn <cli> [--write] [--json]` — teach IDEL an installed CLI.
  *
@@ -37,18 +54,11 @@ export async function learn(
     );
     return 2;
   }
-  if (!process.env["ANTHROPIC_API_KEY"]) {
-    process.stderr.write(
-      color.red("ANTHROPIC_API_KEY is not set. ") +
-        color.gray("Export it to use `idel learn`.\n"),
-    );
-    return 2;
-  }
 
   let result: LearnResult;
   try {
     process.stderr.write(color.gray(`Introspecting "${cli}" and drafting IDEL commands…\n`));
-    result = await learnCli(cli, { verify: verifyDefs });
+    result = await runLearn(cli);
   } catch (err) {
     process.stderr.write(color.red(`learn failed: ${(err as Error).message}\n`));
     return 1;
@@ -85,6 +95,50 @@ export async function learn(
       ),
   );
   return 0;
+}
+
+export async function learnForHost(
+  cli: string,
+  opts: { write: boolean },
+): Promise<LearnHostResponse> {
+  if (!cli.trim()) throw new Error(`Usage: ${"idel learn <cli>"} [--write]`);
+  const result = await runLearn(cli.trim());
+  let path: string | undefined;
+  if (opts.write && result.accepted.length) {
+    path = await writeDraft(cli.trim(), result);
+  }
+  return toHostResponse(result, opts.write, path);
+}
+
+async function runLearn(cli: string): Promise<LearnResult> {
+  return await learnCli(cli, { verify: verifyDefs });
+}
+
+function toHostResponse(
+  result: LearnResult,
+  write: boolean,
+  path: string | undefined,
+): LearnHostResponse {
+  return {
+    cli: result.cli,
+    write,
+    ...(path ? { path } : {}),
+    accepted: result.accepted.length,
+    rejected: result.commands.length - result.accepted.length,
+    helpExcerpt: result.helpExcerpt,
+    commands: result.commands.map((cmd) => ({
+      id: cmd.id,
+      accepted: Boolean(cmd.def) && !cmd.verification?.failures.length,
+      ...(cmd.def
+        ? {
+            risk: cmd.def.riskDefault,
+            summary: cmd.def.summary,
+          }
+        : {}),
+      errors: cmd.errors,
+      ...(cmd.verification ? { verification: cmd.verification } : {}),
+    })),
+  };
 }
 
 /** Pretty-print accepted + rejected proposals, including test-replay status. */

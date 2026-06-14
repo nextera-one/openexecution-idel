@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { completionFragment } from "./complete.js";
+import { Registry } from "@openexecution/registry";
+
+import { complete, completionFragment } from "./complete.js";
 
 describe("completionFragment", () => {
   it("returns the command fragment while typing a command", () => {
@@ -14,5 +16,12 @@ describe("completionFragment", () => {
 
   it("returns the native passthrough path token", () => {
     expect(completionFragment("! ./scr")).toBe("./scr");
+  });
+});
+
+describe("complete", () => {
+  it("completes the current command after a batch separator", async () => {
+    const registry = await Registry.loadCore();
+    expect(complete("create.file name=a && wai", registry, process.cwd())).toContain("wait.time");
   });
 });

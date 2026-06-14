@@ -118,6 +118,9 @@ idel remove.folder name=dist recursive=true --dry-run
 # Run a non-interactive script through a first-class IDEL command
 idel run.script path=./scripts/check.js shell=node args="--fix src"
 
+# Run multiple IDEL commands sequentially; stop on the first non-success
+idel 'create.file name=a.txt && wait.time ms=500 && read.file name=a.txt'
+
 # Open a file in your local editor (TTY-only; web/CI refuse cleanly)
 idel editor README.md
 
@@ -128,6 +131,7 @@ idel ! "tar -xvzf backup.tar.gz"
 idel registry.explain command=remove.folder
 
 # Review the audit trail
+idel list.history
 idel logs.list
 ```
 
@@ -147,7 +151,16 @@ Dry run. No files were changed.
 Log: ~/.idel/logs/openlogs.jsonl
 ```
 
-Other useful commands: `idel registry.list` (31 core commands), `idel policy.check`, `idel terminal` (interactive REPL), `idel completion <partial>`.
+Other useful commands: `idel registry.list` (37 core commands), `idel policy.check`, `idel terminal` (interactive REPL), `idel completion <partial>`.
+
+Batch execution uses shell-like `&&` at the IDEL host layer:
+
+```bash
+idel 'create.file name=a.txt && write.file name=a.txt content="ready" && read.file name=a.txt'
+idel 'run.script path=./scripts/start.sh shell=bash && wait.time seconds=2 && tail.file file=app.log lines=20'
+```
+
+Each step is parsed, classified, policy-checked, executed, and logged as its own command. The next step starts only after the previous step completes successfully. During an explicit `--dry-run`, dry-run steps are allowed to continue so you can preview a whole batch. A line beginning with `!` remains native passthrough, so `idel ! "cmd1 && cmd2"` keeps normal shell semantics.
 
 **Web / desktop terminal.** `idel serve` starts a local HTTP+SSE server (loopback, port 7878 by default) that exposes the same runtime — registry-driven autocomplete, risk/policy classification, and signed OpenLogs — over a small JSON API. It is the boundary the browser and desktop (Javelle) terminals talk to; pass `--static <dir>` to also serve a built UI. A command typed in the GUI is audited identically to one typed at the CLI.
 
@@ -162,13 +175,15 @@ The page at `/` explains the runtime; `/terminal.html` is a live terminal with a
 
 Every command rendered in the terminal — typed or AI-proposed — shows what it **translates to**: the real adapter invocation (e.g. `remove.file name=x force=true` → `rm -f x`, `list.folder` → `ls`), so the mapping from intent to execution is visible at the call site. In the interactive `idel terminal`, a sensitive (HIGH/CRITICAL) command is previewed with its translation and risk and held for confirmation before any real run (and a `require_dry_run`-policy command is shown as dry-run-only, never silently promoted).
 
-The web console can run commands **for real**, behind an explicit approval. Before any real run, the agent pauses and the terminal shows the dry-run plus **Approve / Decline** buttons; the server parks the agent (over `POST /api/agent/approve`) until you choose. A decline leaves the dry-run result standing, and a forgotten approval fails closed after a timeout — the agent never touches disk without a human "Approve." Interactive editor commands such as `edit.file` appear in the web registry and autocomplete, but actual editor launch is CLI/TTY-only; web/API/CI requests return a clear non-interactive failure instead of hanging.
+The web console can run commands **for real**, behind an explicit approval. Before any real run, the agent pauses and the terminal shows the dry-run plus **Approve / Decline** buttons; the server parks the agent (over `POST /api/agent/approve`) until you choose. A decline leaves the dry-run result standing, and a forgotten approval fails closed after a timeout — the agent never touches disk without a human "Approve." Interactive editor commands such as `open.editor` appear in the web registry and autocomplete, but actual editor launch is CLI/TTY-only; web/API/CI requests return a clear non-interactive failure instead of hanging.
 
 **Teach IDEL an installed CLI.** `idel learn <cli>` introspects a CLI's own `--help`, asks Claude to draft IDEL command definitions, validates each against the registry schema (fail-closed), and **replays each def's declared `tests[]` through a real runtime** to prove its risk/policy classification. Accepted drafts land in the custom layer and are then governed by the same runtime — risk-classified, policy-gated, audited:
 
 ```bash
 idel learn gh             # preview the drafted gh.* commands (uses your Claude subscription or API key)
 idel learn gh --write     # persist them to ~/.idel/registries/custom/learned-gh.json
+learn gh                  # same alias inside `idel terminal` / the web terminal
+learn.cli cli=gh          # IDEL-shaped terminal form with autocomplete
 ```
 
 A learned def must clear **two** gates to be accepted: schema validation, and every declared test matching the runtime's actual classification (a schema-valid-but-misclassifying def is shown with its failures but not written). It is introspection-only (it never runs a real subcommand), draft-layer-only, and a learned destructive command is classified by the same two-phase safety engine as a hand-written one — so learning a tool weakens no guarantee.
@@ -177,7 +192,7 @@ A learned def must clear **two** gates to be accepted: schema validation, and ev
 
 ## Using your Claude subscription
 
-The Claude console (`idel ask`, the `?` prefix in `idel terminal`, and the web **Ask Claude** mode) reaches Claude through one of two providers, picked automatically:
+The AI console (`ask.ai prompt="..."`, `idel ask`, the `?` prefix in `idel terminal`, and the web **Ask Claude** mode) reaches Claude through one of two providers, picked automatically:
 
 1. **Your Pro/Max subscription via the `claude` CLI** *(preferred — no API key)*. If [Claude Code](https://claude.com/claude-code) is installed and you've run `claude login`, IDEL shells out to `claude -p` using your subscription. IDEL **unsets `ANTHROPIC_API_KEY` in the spawned process**, so a stray key never silently bills per token.
 2. **`ANTHROPIC_API_KEY` via the Anthropic SDK** *(fallback)* — for CI/servers without the CLI.
@@ -189,6 +204,7 @@ The two providers differ only in transport — the runtime is the enforcement bo
 ```bash
 claude login            # once — authenticates the CLI to your subscription
 idel ask "clean the build directory"   # Claude proposes IDEL; the runtime runs it
+idel ask.ai prompt="clean the build directory"
 ```
 
 ---
@@ -297,6 +313,12 @@ idel ! "tar -xvzf backup.tar.gz"
 idel native.run command="find . -name '*.js' -mtime -7"
 ```
 
+For inspecting logs or other text files, use `tail.file`:
+
+```bash
+idel tail.file file=app.log lines=50
+```
+
 For normal non-interactive scripts, prefer `run.script` so the script path gets
 IDEL path completion and the interpreter choice is explicit:
 
@@ -309,14 +331,14 @@ idel run.script path="scripts\\deploy.bat" shell=cmd
 For editing, use the first-class interactive editor command from a local TTY:
 
 ```bash
-idel edit.file path=README.md editor=nano
-idel edit.file path=src/index.ts editor=code wait=true
+idel open.editor file=README.md editor=nano
+idel open.editor file=src/index.ts editor=code wait=true
 idel editor README.md
 ```
 
 Other interactive TTY programs (`less`, `top`, long-running TUIs) are still not
 general-purpose web/runtime commands. They need broader PTY/session management;
-`edit.file` is the scoped editor path that is allowed only from local
+`open.editor` is the scoped editor path that is allowed only from local
 interactive CLI contexts.
 
 Native passthrough is:

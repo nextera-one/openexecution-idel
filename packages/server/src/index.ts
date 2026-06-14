@@ -20,11 +20,22 @@ export { TerminalService, ServiceError } from "./service.js";
 export type {
   ServiceOptions,
   RunRequest,
+  BatchRunResult,
   CompleteRequest,
+  EditorOpenRequest,
+  EditorSaveRequest,
+  EditorOpenResponse,
   RegistryEntry,
 } from "./service.js";
 
 export { startServer } from "./server.js";
-export type { ServerOptions, RunningServer } from "./server.js";
+export type {
+  AgentApprovalGate,
+  AgentRunner,
+  LearnRequest,
+  LearnRunner,
+  ServerOptions,
+  RunningServer,
+} from "./server.js";
 
 export { complete } from "./complete.js";

@@ -62,6 +62,66 @@ export interface Token {
 }
 
 // ---------------------------------------------------------------------------
+// Batch splitting
+// ---------------------------------------------------------------------------
+
+/**
+ * Split a host-level IDEL batch into individual command lines.
+ *
+ * `&&` is recognized only at top level. Quoted strings and backslash escapes are
+ * preserved verbatim, and native passthrough (`! ...`) remains opaque so shell
+ * users do not lose existing behavior like `! echo a && echo b`.
+ *
+ * @throws {ParseError} when a separator leaves an empty command segment.
+ */
+export function splitBatch(input: string): string[] {
+  const trimmed = input.trim();
+  if (!trimmed || trimmed.startsWith("!")) return [trimmed];
+
+  const parts: string[] = [];
+  let start = 0;
+  let quote: string | undefined;
+  let escaped = false;
+
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i]!;
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (ch === quote) quote = undefined;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      continue;
+    }
+    if (ch === "&" && input[i + 1] === "&") {
+      pushBatchPart(input.slice(start, i), parts, i);
+      i += 1;
+      start = i + 1;
+    }
+  }
+
+  pushBatchPart(input.slice(start), parts, input.length);
+  return parts;
+}
+
+function pushBatchPart(raw: string, parts: string[], offset: number): void {
+  const part = raw.trim();
+  if (!part) {
+    throw new ParseError("Empty command in batch near `&&`", offset);
+  }
+  parts.push(part);
+}
+
+// ---------------------------------------------------------------------------
 // Command-name + key validators
 // ---------------------------------------------------------------------------
 

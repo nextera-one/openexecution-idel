@@ -333,8 +333,8 @@ export interface RuntimeContext {
   noNative?: boolean;
   /**
    * Allow commands that need to attach to the user's terminal, such as
-   * `edit.file`. HTTP, CI, and agent hosts leave this false so interactive
-   * commands fail cleanly instead of hanging on a non-existent TTY.
+   * `open.editor` / `edit.file`. HTTP, CI, and agent hosts leave this false so
+   * interactive commands fail cleanly instead of hanging on a non-existent TTY.
    */
   interactive?: boolean;
   /**

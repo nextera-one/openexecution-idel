@@ -3,7 +3,7 @@ import { readFile, stat } from "node:fs/promises";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import type { AddressInfo } from "node:net";
 
-import { TerminalService, ServiceError } from "./service.js";
+import { TerminalService, ServiceError, batchStepSucceeded } from "./service.js";
 import type {
   RunRequest,
   CompleteRequest,
@@ -20,6 +20,9 @@ import type {
  *   GET  /api/registry/:id           → { resolved, shadowed }
  *   POST /api/complete   {input,cwd} → string[]
  *   POST /api/run        RunRequest  → RuntimeOutcome
+ *   POST /api/learn      {cli,write} → host-specific learned-command preview
+ *   POST /api/editor/open {file,cwd} → { file, content, language, outcome }
+ *   POST /api/editor/save {file,content,cwd} → RuntimeOutcome
  *   GET  /api/logs?limit=N           → OpenLogRecord[]   (redacted by the writer)
  *   GET  /api/logs/verify            → VerifyResult
  *   GET  /  (+ static)               → the bundled UI, when `staticDir` is set
@@ -58,6 +61,11 @@ export interface ServerOptions extends ServiceOptions {
    * `POST /api/agent/stream` returns 501 and the rest of the API is unchanged.
    */
   agent?: (service: TerminalService) => AgentRunner;
+  /**
+   * Optional host-provided CLI learning surface. The server does not import the
+   * agent/Claude package directly; `idel serve` injects this when available.
+   */
+  learn?: LearnRunner;
 }
 
 /**
@@ -83,9 +91,19 @@ export type AgentApprovalGate = (info: {
   outcome: unknown;
 }) => Promise<boolean>;
 
+export interface LearnRequest {
+  cli?: string;
+  write?: boolean;
+}
+
+export type LearnRunner = (req: LearnRequest) => Promise<unknown>;
+
 const VERSION = "1.1.0";
 const DEFAULT_PORT = 7878;
 const MAX_BODY_BYTES = 1_000_000; // 1MB — command lines are tiny; cap abuse.
+const ASK_AI_USAGE = 'ask.ai prompt="what you want to do"';
+const AGENT_UNAVAILABLE =
+  "agent not configured on this server (install Claude Code + run `claude login`, or set ANTHROPIC_API_KEY)";
 
 export interface RunningServer {
   url: string;
@@ -101,12 +119,13 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
   // Build the agent once and share it (its system prompt — the registry catalog
   // — is cached by Anthropic across turns). Undefined when the host didn't wire one.
   const agent = opts.agent ? opts.agent(service) : undefined;
+  const learn = opts.learn;
   // Coordinates the async approval round-trip: an agent stream that proposes a
   // real run parks here on an id; POST /api/agent/approve resolves it.
   const approvals = new PendingApprovals();
 
   const httpServer = createServer((req, res) => {
-    handle(req, res, service, { cors, staticDir, agent, approvals }).catch((err) => {
+    handle(req, res, service, { cors, staticDir, agent, learn, approvals }).catch((err) => {
       // A ServiceError carries the intended HTTP status (e.g. 413 for an
       // oversized body thrown while reading the request stream); honor it here
       // so transport-level failures don't all collapse to 500.
@@ -164,10 +183,11 @@ async function handle(
     cors: boolean;
     staticDir: string | undefined;
     agent: AgentRunner | undefined;
+    learn: LearnRunner | undefined;
     approvals: PendingApprovals;
   },
 ): Promise<void> {
-  const { cors, staticDir, agent, approvals } = cfg;
+  const { cors, staticDir, agent, learn, approvals } = cfg;
   const method = req.method ?? "GET";
   const url = new URL(req.url ?? "/", "http://localhost");
   const path = url.pathname;
@@ -207,6 +227,25 @@ async function handle(
 
   if (path === "/api/run" && method === "POST") {
     const body = await readJsonBody<RunRequest>(req);
+    const commands = body.native ? [body.command] : service.batchCommands(body.command ?? "");
+    if (!body.native && commands.length > 1) {
+      return sendJson(res, 200, await service.runBatch(body), cors);
+    }
+    const ask = parseAskAiRunCommand(body.command ?? "");
+    if (ask.isAskAi) {
+      if (!ask.intent) {
+        return sendJson(res, 400, { error: `Usage: ${ASK_AI_USAGE}` }, cors);
+      }
+      if (!agent) {
+        return sendJson(res, 501, { error: AGENT_UNAVAILABLE }, cors);
+      }
+      return sendJson(
+        res,
+        409,
+        { error: "ask.ai streams agent events; use POST /api/agent/stream or /api/run/stream" },
+        cors,
+      );
+    }
     try {
       const outcome = await service.run(body);
       return sendJson(res, 200, outcome, cors);
@@ -220,20 +259,56 @@ async function handle(
 
   if (path === "/api/run/stream" && method === "POST") {
     const body = await readJsonBody<RunRequest>(req);
+    const commands = body.native ? [body.command] : service.batchCommands(body.command ?? "");
+    if (!body.native && commands.length > 1) {
+      return runBatchStream(res, service, body, commands, cors);
+    }
+    const ask = parseAskAiRunCommand(body.command ?? "");
+    if (ask.isAskAi) {
+      return runAskAiStream(res, agent, ask.intent, cors, approvals);
+    }
     return runStream(res, service, body, cors);
+  }
+
+  if (path === "/api/learn" && method === "POST") {
+    if (!learn) {
+      return sendJson(res, 501, { error: "learn is not configured on this server" }, cors);
+    }
+    const body = await readJsonBody<LearnRequest>(req);
+    try {
+      return sendJson(res, 200, await learn(body), cors);
+    } catch (err) {
+      return sendJson(res, 400, { error: String((err as Error)?.message ?? err) }, cors);
+    }
+  }
+
+  if (path === "/api/editor/open" && method === "POST") {
+    const body = await readJsonBody<{ file?: string; cwd?: string }>(req);
+    try {
+      return sendJson(res, 200, await service.openEditor(body), cors);
+    } catch (err) {
+      if (err instanceof ServiceError) {
+        return sendJson(res, err.status, { error: err.message }, cors);
+      }
+      throw err;
+    }
+  }
+
+  if (path === "/api/editor/save" && method === "POST") {
+    const body = await readJsonBody<{ file?: string; content?: string; cwd?: string }>(req);
+    try {
+      return sendJson(res, 200, await service.saveEditor(body), cors);
+    } catch (err) {
+      if (err instanceof ServiceError) {
+        return sendJson(res, err.status, { error: err.message }, cors);
+      }
+      throw err;
+    }
   }
 
   if (path === "/api/agent/stream" && method === "POST") {
     if (!agent) {
-      return sendJson(
-        res,
-        501,
-        {
-          error:
-            "agent not configured on this server (install Claude Code + run `claude login`, or set ANTHROPIC_API_KEY)",
-        },
-        cors,
-      );
+      return sendJson(res, 501, { error: AGENT_UNAVAILABLE }, cors);
     }
     const body = await readJsonBody<{ intent?: string; allowReal?: boolean }>(req);
     return agentStream(res, agent, body.intent ?? "", cors, body.allowReal ?? false, approvals);
@@ -293,6 +368,76 @@ async function runStream(
     writeSse(res, "done", {});
     res.end();
   }
+}
+
+/** Run a top-level `&&` batch and stream each child outcome as it completes. */
+async function runBatchStream(
+  res: ServerResponse,
+  service: TerminalService,
+  body: RunRequest,
+  commands: string[],
+  cors: boolean,
+): Promise<void> {
+  if (cors) setCors(res);
+  res.writeHead(200, {
+    "content-type": "text/event-stream",
+    "cache-control": "no-cache",
+    connection: "keep-alive",
+  });
+
+  writeSse(res, "batch_start", { commands });
+  try {
+    for (let i = 0; i < commands.length; i++) {
+      const command = commands[i]!;
+      writeSse(res, "batch_step", { index: i + 1, total: commands.length, command });
+      const outcome = await service.run({ ...body, command, native: false });
+      writeSse(res, "outcome", outcome);
+      if (!batchStepSucceeded(outcome, body.dryRun === true)) {
+        writeSse(res, "batch_stop", {
+          index: i + 1,
+          total: commands.length,
+          command,
+          result: outcome.record.result,
+        });
+        break;
+      }
+    }
+  } catch (err) {
+    const status = err instanceof ServiceError ? err.status : 500;
+    writeSse(res, "error", { error: String((err as Error).message), status });
+  } finally {
+    writeSse(res, "done", {});
+    res.end();
+  }
+}
+
+/** Reroute `ask.ai ...` lines that arrive through the generic run stream. */
+function runAskAiStream(
+  res: ServerResponse,
+  agent: AgentRunner | undefined,
+  intent: string,
+  cors: boolean,
+  approvals: PendingApprovals,
+): Promise<void> | void {
+  if (!intent.trim()) {
+    return writeSseError(res, cors, `Usage: ${ASK_AI_USAGE}`, 400);
+  }
+  if (!agent) {
+    return writeSseError(res, cors, AGENT_UNAVAILABLE, 501);
+  }
+  return agentStream(res, agent, intent, cors, true, approvals);
+}
+
+function writeSseError(res: ServerResponse, cors: boolean, error: string, status: number): void {
+  if (cors) setCors(res);
+  res.writeHead(200, {
+    "content-type": "text/event-stream",
+    "cache-control": "no-cache",
+    connection: "keep-alive",
+  });
+  writeSse(res, "error", { error, status });
+  writeSse(res, "done", {});
+  res.end();
 }
 
 /**
@@ -369,6 +514,81 @@ async function agentStream(
     writeSse(res, "done", {});
     res.end();
   }
+}
+
+function parseAskAiRunCommand(command: string): { isAskAi: boolean; intent: string } {
+  const tokens = tokenizeIdelCommand(command.trim());
+  if (tokens[0] !== "ask.ai") return { isAskAi: false, intent: "" };
+
+  const rest = tokens.slice(1);
+  const promptKeys = new Set(["prompt", "question", "intent", "message", "text"]);
+  for (let i = 0; i < rest.length; i++) {
+    const token = rest[i]!;
+    const eq = token.indexOf("=");
+    if (eq <= 0) continue;
+    const key = token.slice(0, eq);
+    if (!promptKeys.has(key)) continue;
+    const words = [token.slice(eq + 1)];
+    for (let j = i + 1; j < rest.length; j++) {
+      const next = rest[j]!;
+      if (isParamToken(next)) break;
+      words.push(next);
+    }
+    return { isAskAi: true, intent: words.join(" ").trim() };
+  }
+
+  return {
+    isAskAi: true,
+    intent: rest.filter((token) => !isParamToken(token)).join(" ").trim(),
+  };
+}
+
+function isParamToken(token: string): boolean {
+  return /^[a-z][a-zA-Z0-9]*=/.test(token);
+}
+
+function tokenizeIdelCommand(value: string): string[] {
+  const tokens: string[] = [];
+  let i = 0;
+
+  while (i < value.length) {
+    while (i < value.length && /\s/.test(value[i]!)) i++;
+    if (i >= value.length) break;
+
+    let token = "";
+    while (i < value.length && !/\s/.test(value[i]!)) {
+      const ch = value[i]!;
+      if (ch === "'" || ch === '"') {
+        const quote = ch;
+        i++;
+        while (i < value.length) {
+          const quoted = value[i]!;
+          if (quoted === "\\") {
+            if (i + 1 < value.length) token += value[i + 1]!;
+            i += 2;
+            continue;
+          }
+          if (quoted === quote) {
+            i++;
+            break;
+          }
+          token += quoted;
+          i++;
+        }
+        continue;
+      }
+      if (ch === "\\") {
+        if (i + 1 < value.length) token += value[i + 1]!;
+        i += 2;
+        continue;
+      }
+      token += ch;
+      i++;
+    }
+    tokens.push(token);
+  }
+
+  return tokens;
 }
 
 /**

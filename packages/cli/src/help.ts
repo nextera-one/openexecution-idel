@@ -4,9 +4,12 @@ export const HELP_TEXT = `idel ${VERSION} — OpenExecution Runtime CLI
 
 USAGE
   idel <verb.scope> [key=value ...] [flags]
+  idel "<cmd.one ... && cmd.two ...>"  run an IDEL batch; stop on first non-success
   idel ! "<native command>"            native passthrough (risk-scanned + logged)
   idel ask "<natural language>"        ask Claude to do it (proposes IDEL, runs via the runtime)
+  idel ask.ai prompt="<request>"       IDEL-shaped alias for the AI console
   idel learn <cli> [--write]           teach IDEL an installed CLI (drafts IDEL commands from its --help)
+  learn <cli>                          same command inside \`idel terminal\`
   idel editor <file>                   open a file in your local editor (TTY only)
   idel terminal                        interactive IDEL terminal (readline REPL; \`? <ask>\` for Claude)
   idel serve [--port N] [--static D]   start the local web/desktop terminal server
@@ -15,20 +18,25 @@ USAGE
 
 EXAMPLES
   idel create.file name=readme.md
+  idel tail.file file=app.log lines=50
+  idel 'create.file name=a.txt && wait.time ms=500 && read.file name=a.txt'
   idel remove.folder name=dist recursive=true --dry-run
   idel run.script path=./scripts/deploy.sh shell=bash
   idel run.script path=./scripts/check.js shell=node args="--fix src"
-  idel edit.file path=README.md editor=nano
+  idel open.editor file=README.md editor=nano
   idel editor README.md
   idel policy.check
   idel registry.explain command=remove.folder
+  idel list.history
   idel logs.list
   idel ! "tar -xvzf backup.tar.gz"
   idel ask "delete the dist folder"          (uses your Claude subscription or ANTHROPIC_API_KEY; --yes to allow real runs)
+  idel ask.ai prompt="delete the dist folder"
   idel learn gh --write                      (drafts IDEL commands for the gh CLI into the custom layer)
+  learn.cli cli=git
 
 CLAUDE
-  The Claude console (idel ask, \`?\` in terminal, the web "Ask Claude") reaches
+  The Claude console (ask.ai, idel ask, \`?\` in terminal, the web "Ask Claude") reaches
   Claude via — in order — the installed \`claude\` CLI (your Pro/Max SUBSCRIPTION;
   run \`claude login\` once), else ANTHROPIC_API_KEY (pay-per-token API). Force one
   with IDEL_CLAUDE_PROVIDER=cli|api.

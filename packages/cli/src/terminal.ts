@@ -2,13 +2,17 @@ import { createInterface, type Interface } from "node:readline";
 
 import { createAgent, type AgentLike } from "@openexecution/agent";
 import { TerminalService } from "@openexecution/server";
+import { splitBatch } from "@openexecution/parser";
 import type { Runtime } from "@openexecution/runtime";
-import type { RuntimeContext } from "@openexecution/runtime";
+import type { RuntimeContext, RuntimeOutcome } from "@openexecution/runtime";
 
 import { complete, completionFragment } from "./complete.js";
 import { render, translateLine } from "./render.js";
 import { color } from "./render.js";
 import { renderEvent, noClaudeMessage } from "./ask.js";
+import { ASK_AI_USAGE, askAiIntent, isAskAiCommand } from "./ask-ai.js";
+import { learn } from "./learn.js";
+import { LEARN_USAGE, parseLearnCommand } from "./learn-command.js";
 
 /**
  * Interactive IDEL terminal (spec §24, `idel terminal`). A thin readline REPL
@@ -79,7 +83,7 @@ export async function startTerminal(
 
   process.stdout.write(
     color.bold("IDEL Terminal") +
-      color.gray("  —  type a command, `? <ask Claude>`, `help`, or `exit`. TAB completes.\n"),
+      color.gray("  —  type a command, `ask.ai prompt=\"...\"`, `help`, or `exit`. TAB completes.\n"),
   );
   rl.prompt();
 
@@ -129,11 +133,46 @@ export async function startTerminal(
       if (line === "help") {
         process.stdout.write(
           color.gray(
-            "Enter IDEL commands like `create.file name=x.txt` or `! rm -rf dist`.\n" +
-              "Ask Claude in natural language with a leading `?`: `? delete the dist folder`.\n" +
-              "Meta: registry.list, registry.explain command=remove.folder, policy.check, logs.list.\n",
+            "Enter IDEL commands like `create.file name=x.txt`, `cmd.one && cmd.two`, or `! rm -rf dist`.\n" +
+              "Ask AI in natural language with `ask.ai prompt=\"delete the dist folder\"` or a leading `?`.\n" +
+              `Learn an installed CLI with \`${LEARN_USAGE}\` or \`learn.cli cli=git\`.\n` +
+              "Meta: registry.list, registry.explain command=remove.folder, policy.check, list.history, logs.list.\n",
           ),
         );
+        return;
+      }
+
+      let batch: string[];
+      try {
+        batch = splitBatch(line);
+      } catch (err) {
+        process.stdout.write(color.red(`${(err as Error).message}\n`));
+        return;
+      }
+      if (batch.length > 1) {
+        await runBatchWithPreview(runtime, batch, baseCtx, rl);
+        return;
+      }
+
+      const learned = parseLearnCommand(line);
+      if (learned) {
+        await learn(learned.cli, { write: learned.write, json: false });
+        return;
+      }
+
+      // `ask.ai prompt="..."` is the IDEL-shaped alias for the embedded AI console.
+      if (isAskAiCommand(line)) {
+        const intent = askAiIntent(line);
+        const a = intent ? await getAgent() : undefined;
+        if (a && intent) {
+          try {
+            for await (const ev of a.ask(intent)) renderEvent(ev);
+          } catch (err) {
+            process.stdout.write(color.red(`Agent error: ${(err as Error).message}\n`));
+          }
+        } else if (!intent) {
+          process.stdout.write(color.gray(`Usage: ${ASK_AI_USAGE}\n`));
+        }
         return;
       }
 
@@ -167,6 +206,23 @@ export async function startTerminal(
       void drain();
     });
 
+    rl.on("SIGINT", () => {
+      queue.length = 0;
+      if (draining) {
+        process.stdout.write("^C\n");
+        return;
+      }
+      if (rl.line.length > 0) {
+        rl.write(null, { ctrl: true, name: "a" });
+        rl.write(null, { ctrl: true, name: "k" });
+        process.stdout.write("^C\n");
+        rl.prompt();
+        return;
+      }
+      stop = true;
+      finish();
+    });
+
     // EOF (piped stdin exhausted, or Ctrl-D). Let the queue finish draining,
     // then finish. If nothing is in flight, finish now.
     rl.on("close", () => {
@@ -198,10 +254,11 @@ async function runWithPreview(
   line: string,
   ctx: RuntimeContext,
   rl: Interface,
-): Promise<void> {
+): Promise<RuntimeOutcome | undefined> {
   if (line.startsWith("!") || ctx.dryRun) {
-    process.stdout.write(render(await runtime.run(line, ctx)) + "\n");
-    return;
+    const outcome = await runtime.run(line, ctx);
+    process.stdout.write(render(outcome) + "\n");
+    return outcome;
   }
 
   // Classify first without touching disk to build the preview.
@@ -219,7 +276,7 @@ async function runWithPreview(
       );
     }
     process.stdout.write(render(preview) + "\n");
-    return;
+    return preview;
   }
 
   // allow / approval_required → a real run is possible. For a still-sensitive
@@ -232,11 +289,37 @@ async function runWithPreview(
     const ok = await promptYesNo(rl, `Run for real${translated ? `: ${translated}` : ""}?`);
     if (!ok) {
       process.stdout.write(color.gray("Skipped. Nothing was changed.\n"));
-      return;
+      return undefined;
     }
   }
   // approval_required will additionally fire the runtime's onApproval gate.
-  process.stdout.write(render(await runtime.run(line, ctx)) + "\n");
+  const outcome = await runtime.run(line, ctx);
+  process.stdout.write(render(outcome) + "\n");
+  return outcome;
+}
+
+async function runBatchWithPreview(
+  runtime: Runtime,
+  commands: string[],
+  baseCtx: RuntimeContext,
+  rl: Interface,
+): Promise<void> {
+  for (let i = 0; i < commands.length; i++) {
+    const command = commands[i]!;
+    process.stdout.write(color.gray(`Batch ${i + 1}/${commands.length}: ${command}\n`));
+    const ctx: RuntimeContext = { ...baseCtx, cwd: process.cwd() };
+    const outcome = await runWithPreview(runtime, command, ctx, rl);
+    if (!outcome || !batchStepSucceeded(outcome, ctx.dryRun === true)) {
+      if (i + 1 < commands.length) {
+        process.stdout.write(color.yellow(`Batch stopped at step ${i + 1}; ${commands.length - i - 1} step(s) skipped.\n`));
+      }
+      return;
+    }
+  }
+}
+
+function batchStepSucceeded(outcome: RuntimeOutcome, explicitDryRun = false): boolean {
+  return outcome.record.result === "success" || (explicitDryRun && outcome.record.result === "dry_run");
 }
 
 /**

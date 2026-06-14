@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 
 import { Registry } from "@openexecution/registry";
 import { Runtime } from "@openexecution/runtime";
@@ -47,6 +47,13 @@ const INVALID_DEF = {
   summary: "nope",
 };
 
+const savedApiKey = process.env["ANTHROPIC_API_KEY"];
+
+afterEach(() => {
+  if (savedApiKey === undefined) delete process.env["ANTHROPIC_API_KEY"];
+  else process.env["ANTHROPIC_API_KEY"] = savedApiKey;
+});
+
 describe("learnCli", () => {
   it("accepts a valid def and tags it as a custom draft", async () => {
     const result = await learnCli("demo", {
@@ -90,6 +97,24 @@ describe("learnCli", () => {
       capture: async () => "help",
     });
     expect(result.accepted).toHaveLength(1);
+  });
+
+  it("falls back to the claude CLI generator when no API key is set", async () => {
+    delete process.env["ANTHROPIC_API_KEY"];
+    let sawPrompt = false;
+    const result = await learnCli("demo", {
+      capture: async () => "demo help",
+      runClaudeCli: async (args, stdin) => {
+        expect(args).toContain("-p");
+        expect(args).toContain("--append-system-prompt");
+        expect(args).toContain("--tools");
+        expect(stdin).toContain("--- demo help ---");
+        sawPrompt = true;
+        return "```json\n" + JSON.stringify([VALID_DEF]) + "\n```";
+      },
+    });
+    expect(sawPrompt).toBe(true);
+    expect(result.accepted[0]?.id).toBe("demo.status");
   });
 });
 

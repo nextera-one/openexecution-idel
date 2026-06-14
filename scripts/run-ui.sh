@@ -64,8 +64,10 @@ if [[ ! -f "$STATIC/index.html" ]]; then
   exit 1
 fi
 
-if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
-  echo "run-ui: note — ANTHROPIC_API_KEY not set; the 'Ask Claude' console will be disabled." >&2
+if [[ -z "${ANTHROPIC_API_KEY:-}" ]] && ! command -v claude >/dev/null 2>&1; then
+  echo "run-ui: note — no claude CLI and ANTHROPIC_API_KEY not set; the Ask AI console will be disabled." >&2
+elif [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+  echo "run-ui: note — ANTHROPIC_API_KEY not set; Ask AI will use Claude Code if 'claude login' is active." >&2
 fi
 
 echo "run-ui: serving the IDEL web terminal from $STATIC"

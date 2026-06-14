@@ -2,6 +2,7 @@ import { hostname, userInfo, platform, homedir } from "node:os";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { splitBatch } from "@openexecution/parser";
 import { Runtime } from "@openexecution/runtime";
 import { OpenLogWriter } from "@openexecution/openlogs";
 import { loadPolicy, defaultPolicy } from "@openexecution/policy";
@@ -14,7 +15,9 @@ import { complete } from "./complete.js";
 import { color, render, renderJson } from "./render.js";
 import { startTerminal } from "./terminal.js";
 import { ask } from "./ask.js";
-import { learn } from "./learn.js";
+import { ASK_AI_USAGE, askAiIntent, isAskAiCommand } from "./ask-ai.js";
+import { learn, learnForHost } from "./learn.js";
+import { parseLearnCommand } from "./learn-command.js";
 import { HELP_TEXT, VERSION } from "./help.js";
 
 /** Process entry point. Returns the desired process exit code. */
@@ -108,6 +111,45 @@ export async function main(argv: string[]): Promise<number> {
     return 0;
   }
 
+  if (!inv.native) {
+    let commands: string[];
+    try {
+      commands = splitBatch(inv.command);
+    } catch (err) {
+      process.stderr.write(color.red(`${(err as Error).message}\n`));
+      return 2;
+    }
+    if (commands.length > 1) {
+      return runBatch(runtime, commands, makeContext(inv.flags), inv.flags.json);
+    }
+  }
+
+  if (!inv.native && isAskAiCommand(inv.command)) {
+    const intent = askAiIntent(inv.command);
+    if (!intent) {
+      process.stderr.write(
+        color.gray(`Usage: idel ${ASK_AI_USAGE}  (add --yes to allow real runs)\n`),
+      );
+      return 2;
+    }
+    return ask(runtime, intent, {
+      cwd: process.cwd(),
+      environment: inv.flags.environment,
+      noNative: inv.flags.noNative,
+      allowReal: inv.flags.yes,
+    });
+  }
+
+  if (!inv.native) {
+    const learned = parseLearnCommand(inv.command);
+    if (learned) {
+      return learn(learned.cli, {
+        write: learned.write,
+        json: inv.flags.json,
+      });
+    }
+  }
+
   const ctx = makeContext(inv.flags);
   const line = inv.native ? `! ${inv.command}` : inv.command;
   const outcome = await runtime.run(line, ctx);
@@ -119,6 +161,53 @@ export async function main(argv: string[]): Promise<number> {
   }
 
   return exitCodeFor(outcome);
+}
+
+async function runBatch(
+  runtime: Runtime,
+  commands: string[],
+  ctx: RuntimeContext,
+  json: boolean,
+): Promise<number> {
+  const outcomes: RuntimeOutcome[] = [];
+  let exitCode = 0;
+  let stoppedAt: number | undefined;
+
+  for (let i = 0; i < commands.length; i++) {
+    const command = commands[i]!;
+    if (!json) {
+      process.stdout.write(color.gray(`Batch ${i + 1}/${commands.length}: ${command}\n`));
+    }
+    const outcome = await runtime.run(command, ctx);
+    outcomes.push(outcome);
+    if (!json) process.stdout.write(render(outcome) + "\n");
+    if (!batchStepSucceeded(outcome, ctx.dryRun === true)) {
+      exitCode = exitCodeFor(outcome);
+      stoppedAt = i + 1;
+      if (!json && i + 1 < commands.length) {
+        process.stdout.write(color.yellow(`Batch stopped at step ${i + 1}; ${commands.length - i - 1} step(s) skipped.\n`));
+      }
+      break;
+    }
+  }
+
+  if (json) {
+    process.stdout.write(
+      JSON.stringify(
+        {
+          batch: true,
+          commands,
+          stoppedAt,
+          ok: stoppedAt === undefined,
+          outcomes: outcomes.map((outcome) => JSON.parse(renderJson(outcome))),
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+  }
+
+  return exitCode;
 }
 
 /**
@@ -151,6 +240,8 @@ async function serve(runtime: Runtime, flags: CliFlags): Promise<number> {
     environment: flags.environment,
     noNative: flags.noNative,
     agent: agentFactory,
+    learn: async (req) =>
+      learnForHost(req.cli ?? "", { write: req.write === true }),
   });
 
   process.stdout.write(
@@ -258,4 +349,8 @@ function exitCodeFor(outcome: RuntimeOutcome): number {
     default:
       return 1;
   }
+}
+
+function batchStepSucceeded(outcome: RuntimeOutcome, explicitDryRun = false): boolean {
+  return outcome.record.result === "success" || (explicitDryRun && outcome.record.result === "dry_run");
 }

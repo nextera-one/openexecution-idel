@@ -39,6 +39,70 @@
     "tests": [{ "input": "policy.check command=\"remove.folder name=dist\"", "expectRisk": "LOW" }]
   },
   {
+    "id": "ask.ai",
+    "version": "1.0.0",
+    "summary": "Ask the configured AI agent to propose IDEL commands through the audited runtime.",
+    "category": "meta",
+    "riskDefault": "LOW",
+    "params": {
+      "prompt": { "type": "string", "required": true, "description": "Natural-language request for the AI agent." }
+    },
+    "adapters": {},
+    "examples": [
+      "ask.ai prompt=\"clean the build directory\"",
+      "ask.ai prompt=\"open package.json and explain the scripts\""
+    ]
+  },
+  {
+    "id": "learn.cli",
+    "version": "1.0.0",
+    "summary": "Learn draft IDEL commands from an installed CLI's help output.",
+    "category": "meta",
+    "riskDefault": "LOW",
+    "params": {
+      "cli": { "type": "string", "required": true, "description": "Installed CLI executable to introspect, e.g. git." },
+      "write": { "type": "boolean", "default": false, "description": "Write accepted drafts to the custom registry layer." }
+    },
+    "adapters": {},
+    "examples": [
+      "learn.cli cli=git",
+      "learn.cli cli=git write=true"
+    ]
+  },
+  {
+    "id": "wait.time",
+    "version": "1.0.0",
+    "summary": "Pause execution for a short duration before continuing.",
+    "category": "meta",
+    "riskDefault": "LOW",
+    "params": {
+      "seconds": { "type": "number", "default": 1, "description": "Seconds to wait. Maximum 60." },
+      "ms": { "type": "number", "description": "Milliseconds to wait. Overrides seconds when provided. Maximum 60000." }
+    },
+    "adapters": {},
+    "examples": [
+      "wait.time seconds=2",
+      "create.file name=a.txt && wait.time ms=500 && read.file name=a.txt"
+    ],
+    "tests": [{ "input": "wait.time ms=1", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "list.history",
+    "version": "1.0.0",
+    "summary": "List recent audited command history, up to 1000 commands.",
+    "category": "meta",
+    "riskDefault": "LOW",
+    "params": {
+      "limit": { "type": "number", "default": 1000, "description": "Maximum commands to list. Capped at 1000." }
+    },
+    "adapters": {},
+    "examples": [
+      "list.history",
+      "list.history limit=100"
+    ],
+    "tests": [{ "input": "list.history limit=10", "expectRisk": "LOW" }]
+  },
+  {
     "id": "logs.list",
     "version": "1.0.0",
     "summary": "List recent OpenLog audit records for this session or user.",

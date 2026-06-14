@@ -95,6 +95,30 @@
     "tests": [{ "input": "read.file name=README.md", "expectRisk": "LOW" }]
   },
   {
+    "id": "tail.file",
+    "version": "1.0.0",
+    "summary": "Print the last lines of a text file.",
+    "category": "filesystem",
+    "riskDefault": "LOW",
+    "params": {
+      "file": { "type": "path", "required": true, "description": "File to read from the end." },
+      "lines": { "type": "number", "default": 10, "description": "Number of trailing lines to print." }
+    },
+    "safety": { "targetParam": "file" },
+    "adapters": {
+      "node": {
+        "command": "@node",
+        "args": [
+          { "kind": "value", "param": "file" },
+          { "kind": "value", "param": "lines" }
+        ],
+        "semanticNotes": "Reads from the end of the file and exits. This is tail -n style behavior; it does not keep following the file."
+      }
+    },
+    "examples": ["tail.file file=app.log", "tail.file file=app.log lines=50"],
+    "tests": [{ "input": "tail.file file=app.log lines=20", "expectRisk": "LOW" }]
+  },
+  {
     "id": "write.file",
     "version": "1.0.0",
     "summary": "Write content to a file, replacing any existing content.",

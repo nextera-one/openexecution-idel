@@ -12,6 +12,10 @@ const META_COMMANDS = new Set<string>([
   "registry.list",
   "registry.explain",
   "policy.check",
+  "ask.ai",
+  "learn.cli",
+  "wait.time",
+  "list.history",
   "logs.list",
   "logs.show",
 ]);
@@ -44,6 +48,14 @@ export async function runMeta(
       return registryExplain(ast, deps);
     case "policy.check":
       return policyCheck(deps);
+    case "ask.ai":
+      return askAi();
+    case "learn.cli":
+      return learnCli();
+    case "wait.time":
+      return waitTime(ast);
+    case "list.history":
+      return listHistory(ast, deps);
     case "logs.list":
       return logsList(ast, deps);
     case "logs.show":
@@ -116,6 +128,64 @@ function policyCheck(deps: MetaDeps): MetaOutput {
   };
 }
 
+function askAi(): MetaOutput {
+  return {
+    stdout: "",
+    stderr:
+      "ask.ai is handled by the CLI or web terminal agent host. Use `idel ask.ai prompt=\"...\"`, `idel ask \"...\"`, or the web Ask mode.",
+    exitCode: 1,
+  };
+}
+
+function learnCli(): MetaOutput {
+  return {
+    stdout: "",
+    stderr:
+      "learn.cli is handled by the CLI or web terminal host. Use `idel learn <cli>`, `learn <cli>` inside the terminal, or `learn.cli cli=<cli>` in the web terminal.",
+    exitCode: 1,
+  };
+}
+
+async function waitTime(ast: CommandAst): Promise<MetaOutput> {
+  const secondsRaw = ast.params["seconds"];
+  const msRaw = ast.params["ms"];
+  const seconds = secondsRaw === undefined ? undefined : Number(secondsRaw);
+  const ms = msRaw === undefined ? undefined : Number(msRaw);
+  const durationMs = ms !== undefined ? ms : (seconds ?? 1) * 1000;
+
+  if (!Number.isFinite(durationMs) || durationMs < 0 || durationMs > 60_000) {
+    return {
+      stdout: "",
+      stderr: "wait.time requires seconds/ms between 0 and 60000ms",
+      exitCode: 1,
+    };
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, durationMs));
+  return {
+    stdout: `waited ${durationMs}ms\n`,
+    stderr: "",
+    exitCode: 0,
+  };
+}
+
+async function listHistory(ast: CommandAst, deps: MetaDeps): Promise<MetaOutput> {
+  if (!deps.logWriter) {
+    return { stdout: "", stderr: "No command history configured.", exitCode: 1 };
+  }
+  const limit = clampHistoryLimit(ast.params["limit"]);
+  const records = await deps.logWriter.read(limit);
+  const lines = records.map((r, i) => {
+    const n = String(i + 1).padStart(4, " ");
+    return `${n}  ${r.timestamp}  ${r.result.padEnd(26)} ${r.risk.padEnd(8)} ${formatHistoryCommand(r)}`;
+  });
+  return {
+    stdout: lines.length ? lines.join("\n") : "(no command history)",
+    stderr: "",
+    exitCode: 0,
+  };
+}
+
 async function logsList(ast: CommandAst, deps: MetaDeps): Promise<MetaOutput> {
   if (!deps.logWriter) {
     return { stdout: "", stderr: "No log writer configured.", exitCode: 1 };
@@ -131,6 +201,33 @@ async function logsList(ast: CommandAst, deps: MetaDeps): Promise<MetaOutput> {
     stderr: "",
     exitCode: 0,
   };
+}
+
+function clampHistoryLimit(raw: unknown): number {
+  const n = Number(raw ?? 1000);
+  if (!Number.isFinite(n) || n <= 0) return 1000;
+  return Math.min(Math.trunc(n), 1000);
+}
+
+function formatHistoryCommand(record: {
+  command: string;
+  source: string;
+  ast?: { command?: string; params?: Record<string, unknown> };
+}): string {
+  if (record.source === "native") return record.command;
+  const command = record.ast?.command || record.command;
+  const params = record.ast?.params ?? {};
+  const rendered = Object.entries(params)
+    .filter(([, value]) => value !== undefined)
+    .map(([key, value]) => `${key}=${quoteHistoryValue(value)}`);
+  return rendered.length ? `${command} ${rendered.join(" ")}` : command;
+}
+
+function quoteHistoryValue(value: unknown): string {
+  if (typeof value === "boolean" || typeof value === "number") return String(value);
+  const text = String(value);
+  if (!/[\s"'\\&=]/.test(text)) return text;
+  return `"${text.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 }
 
 async function logsShow(ast: CommandAst, deps: MetaDeps): Promise<MetaOutput> {

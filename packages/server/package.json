@@ -14,6 +14,7 @@
     "build": "tsc --build"
   },
   "dependencies": {
+    "@openexecution/parser": "workspace:*",
     "@openexecution/types": "workspace:*",
     "@openexecution/runtime": "workspace:*",
     "@openexecution/registry": "workspace:*",

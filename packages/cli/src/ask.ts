@@ -120,7 +120,7 @@ export function noClaudeMessage(): string {
   return (
     color.red("Claude is not available. ") +
     color.gray(
-      "To use `idel ask` / `?`, either:\n" +
+      "To use `ask.ai` / `idel ask` / `?`, enable one provider:\n" +
         "  • install Claude Code and run `claude login` (uses your Pro/Max subscription), or\n" +
         "  • set ANTHROPIC_API_KEY (uses the pay-per-token API).\n",
     )

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { isNativeAst, ParseError } from "@openexecution/types";
 import type { CommandAst, NativeCommandAst } from "@openexecution/types";
-import { parse, tokenize } from "./index.js";
+import { parse, splitBatch, tokenize } from "./index.js";
 
 const OPTS = { cwd: "/work" } as const;
 
@@ -126,6 +126,34 @@ describe("parse — native passthrough", () => {
     expect(() => parse("!", OPTS)).toThrow(ParseError);
     expect(() => parse("!rm", OPTS)).toThrow(ParseError);
     expect(() => parse("!   ", OPTS)).toThrow(ParseError);
+  });
+});
+
+describe("splitBatch", () => {
+  it("splits normal IDEL commands on top-level &&", () => {
+    expect(splitBatch("create.file name=a && read.file name=a")).toEqual([
+      "create.file name=a",
+      "read.file name=a",
+    ]);
+  });
+
+  it("does not split && inside quotes or escaped text", () => {
+    expect(splitBatch('write.file name=a content="one && two" && read.file name=a')).toEqual([
+      'write.file name=a content="one && two"',
+      "read.file name=a",
+    ]);
+    expect(splitBatch("write.file name=a content=one\\&&two")).toEqual([
+      "write.file name=a content=one\\&&two",
+    ]);
+  });
+
+  it("keeps native passthrough opaque", () => {
+    expect(splitBatch("! echo a && echo b")).toEqual(["! echo a && echo b"]);
+  });
+
+  it("rejects empty batch segments", () => {
+    expect(() => splitBatch("create.file name=a &&")).toThrow(ParseError);
+    expect(() => splitBatch("create.file name=a && && read.file name=a")).toThrow(ParseError);
   });
 });
 

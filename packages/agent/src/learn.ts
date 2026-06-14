@@ -46,6 +46,13 @@ const MAX_HELP_BYTES = 200_000;
 
 /** Cap on how long a help invocation may run before we give up on it. */
 const HELP_TIMEOUT_MS = 5_000;
+const LEARN_CLI_TIMEOUT_MS = 120_000;
+
+interface ClaudeCliJson {
+  result?: string;
+  is_error?: boolean;
+  subtype?: string;
+}
 
 export interface LearnOptions {
   /** Anthropic client. Defaults to a new one reading ANTHROPIC_API_KEY. */
@@ -57,6 +64,10 @@ export interface LearnOptions {
    * future sandbox can wrap the spawn. Defaults to {@link captureHelp}.
    */
   capture?: (cli: string) => Promise<string>;
+  /** Override the claude binary name/path for the subscription CLI path. */
+  bin?: string;
+  /** Injectable `claude -p` runner for tests. */
+  runClaudeCli?: (args: string[], stdin: string) => Promise<string>;
   /** Max subcommands to ask the model to define in one pass. Default 12. */
   maxCommands?: number;
   /**
@@ -179,23 +190,11 @@ export async function learnCli(
   opts: LearnOptions = {},
 ): Promise<LearnResult> {
   const capture = opts.capture ?? captureHelp;
-  const client = opts.client ?? new Anthropic();
   const model = opts.model ?? LEARN_MODEL;
   const maxCommands = opts.maxCommands ?? 12;
 
   const help = await capture(cli);
-
-  const res = await client.messages.create({
-    model,
-    max_tokens: 8000,
-    system: [{ type: "text", text: LEARN_SYSTEM, cache_control: { type: "ephemeral" } }],
-    messages: [{ role: "user", content: learnPrompt(cli, help, maxCommands) }],
-  });
-
-  const raw = res.content
-    .filter((b): b is Anthropic.TextBlock => b.type === "text")
-    .map((b) => b.text)
-    .join("");
+  const raw = await generateDefs(cli, help, maxCommands, model, opts);
 
   const proposed = parseDefs(raw);
   const commands: LearnedCommand[] = [];
@@ -233,6 +232,126 @@ export async function learnCli(
     .map((c) => c.def!);
 
   return { cli, helpExcerpt: help.slice(0, 2000), commands, accepted };
+}
+
+async function generateDefs(
+  cli: string,
+  help: string,
+  maxCommands: number,
+  model: string,
+  opts: LearnOptions,
+): Promise<string> {
+  const prompt = learnPrompt(cli, help, maxCommands);
+  if (opts.client || process.env["ANTHROPIC_API_KEY"]) {
+    const client = opts.client ?? new Anthropic();
+    const res = await client.messages.create({
+      model,
+      max_tokens: 8000,
+      system: [{ type: "text", text: LEARN_SYSTEM, cache_control: { type: "ephemeral" } }],
+      messages: [{ role: "user", content: prompt }],
+    });
+    return res.content
+      .filter((b): b is Anthropic.TextBlock => b.type === "text")
+      .map((b) => b.text)
+      .join("");
+  }
+
+  return await generateDefsWithClaudeCli(prompt, {
+    bin: opts.bin ?? "claude",
+    model: opts.model,
+    run: opts.runClaudeCli,
+  });
+}
+
+async function generateDefsWithClaudeCli(
+  prompt: string,
+  opts: {
+    bin: string;
+    model: string | undefined;
+    run?: (args: string[], stdin: string) => Promise<string>;
+  },
+): Promise<string> {
+  const args = [
+    "-p",
+    "--output-format",
+    "json",
+    "--tools",
+    "",
+    "--append-system-prompt",
+    LEARN_SYSTEM,
+  ];
+  if (opts.model) args.push("--model", opts.model);
+  const run = opts.run ?? ((a, stdin) => spawnClaudeForLearn(opts.bin, a, stdin));
+  return await run(args, prompt);
+}
+
+function spawnClaudeForLearn(bin: string, args: string[], stdin: string): Promise<string> {
+  return new Promise<string>((resolveSpawn, reject) => {
+    const env = { ...process.env };
+    delete env["ANTHROPIC_API_KEY"];
+
+    let child;
+    try {
+      child = spawn(bin, args, { stdio: ["pipe", "pipe", "pipe"], env });
+    } catch (err) {
+      return reject(claudeSpawnError(bin, err));
+    }
+
+    let out = "";
+    let errOut = "";
+    let settled = false;
+    const timer = setTimeout(() => {
+      settled = true;
+      child.kill("SIGKILL");
+      reject(new Error(`claude CLI timed out after ${LEARN_CLI_TIMEOUT_MS}ms`));
+    }, LEARN_CLI_TIMEOUT_MS);
+
+    child.stdout.on("data", (c: Buffer) => (out += c.toString("utf8")));
+    child.stderr.on("data", (c: Buffer) => (errOut += c.toString("utf8")));
+    child.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(claudeSpawnError(bin, err));
+    });
+    child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (code !== 0) {
+        return reject(
+          new Error(`claude CLI exited ${code}: ${errOut.trim() || out.trim() || "no output"}`),
+        );
+      }
+      try {
+        const json = JSON.parse(out) as ClaudeCliJson;
+        if (json.is_error) {
+          reject(
+            new Error(
+              `claude CLI error${json.subtype ? ` (${json.subtype})` : ""}: ${json.result ?? "unknown"}`,
+            ),
+          );
+          return;
+        }
+        resolveSpawn(json.result ?? "");
+      } catch {
+        reject(new Error(`claude CLI returned non-JSON output: ${out.slice(0, 200)}`));
+      }
+    });
+
+    child.stdin.end(stdin);
+  });
+}
+
+function claudeSpawnError(bin: string, err: unknown): Error {
+  const e = err as NodeJS.ErrnoException;
+  if (e?.code === "ENOENT") {
+    return new Error(
+      `the "${bin}" CLI is not installed or not on PATH. Install Claude Code and run \`claude login\`, ` +
+        `or set ANTHROPIC_API_KEY to use the API instead.`,
+    );
+  }
+  return new Error(`failed to spawn "${bin}": ${e?.message ?? String(err)}`);
 }
 
 /**

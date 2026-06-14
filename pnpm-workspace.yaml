@@ -1,6 +1,12 @@
 packages:
   - "packages/*"
 
+overrides:
+  "@nextera.one/tps-standard": "file:./vendor/nextera.one-tps-standard-0.8.1.tgz"
+
+allowBuilds:
+  esbuild: true
+
 # Required for `pnpm deploy` to produce a self-contained CLI artifact (workspace
 # deps copied in, not symlinked back to source) — see scripts/pack-cli.sh.
 inject-workspace-packages: true

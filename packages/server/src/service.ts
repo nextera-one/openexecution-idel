@@ -1,5 +1,6 @@
 import { hostname, userInfo, platform } from "node:os";
 
+import { splitBatch } from "@openexecution/parser";
 import type { Runtime } from "@openexecution/runtime";
 import type {
   CommandDef,
@@ -62,11 +63,43 @@ export interface RunRequest {
   origin?: CommandOrigin;
 }
 
+export interface BatchRunResult {
+  batch: true;
+  commands: string[];
+  outcomes: RuntimeOutcome[];
+  /** 1-based step number where execution stopped, omitted when every step ran. */
+  stoppedAt?: number;
+  ok: boolean;
+}
+
 export interface CompleteRequest {
   /** The partial command line being typed. */
   input: string;
   /** Directory to resolve `path=` value completions against. */
   cwd?: string;
+}
+
+export interface EditorOpenRequest {
+  /** File path to load into the browser editor. */
+  file?: string;
+  /** Directory to resolve relative file paths against. */
+  cwd?: string;
+}
+
+export interface EditorSaveRequest {
+  /** File path to overwrite with `content`. */
+  file?: string;
+  /** Full text content to save. */
+  content?: string;
+  /** Directory to resolve relative file paths against. */
+  cwd?: string;
+}
+
+export interface EditorOpenResponse {
+  file: string;
+  content: string;
+  language: string;
+  outcome: RuntimeOutcome;
 }
 
 export interface RegistryEntry {
@@ -107,9 +140,76 @@ export class TerminalService {
     return await this.runtime.run(line, ctx);
   }
 
+  /** Split a user line into batch steps using IDEL's top-level `&&` syntax. */
+  batchCommands(command: string): string[] {
+    try {
+      return splitBatch(command);
+    } catch (err) {
+      throw new ServiceError((err as Error)?.message ?? String(err), 400);
+    }
+  }
+
+  /** Run a top-level `&&` batch sequentially, stopping after the first non-success. */
+  async runBatch(req: RunRequest): Promise<BatchRunResult> {
+    if (req.native) {
+      const outcome = await this.run(req);
+      return {
+        batch: true,
+        commands: [req.command],
+        outcomes: [outcome],
+        ok: batchStepSucceeded(outcome, req.dryRun === true),
+        ...(batchStepSucceeded(outcome, req.dryRun === true) ? {} : { stoppedAt: 1 }),
+      };
+    }
+
+    const commands = this.batchCommands(req.command);
+    const outcomes: RuntimeOutcome[] = [];
+    for (let i = 0; i < commands.length; i++) {
+      const outcome = await this.run({ ...req, command: commands[i]!, native: false });
+      outcomes.push(outcome);
+      if (!batchStepSucceeded(outcome, req.dryRun === true)) {
+        return { batch: true, commands, outcomes, stoppedAt: i + 1, ok: false };
+      }
+    }
+    return { batch: true, commands, outcomes, ok: true };
+  }
+
   /** Registry-driven completion for the current input. */
   complete(req: CompleteRequest): string[] {
     return complete(req.input, this.runtime.reg, req.cwd ?? this.baseCwd);
+  }
+
+  /** Load a file for the browser editor via the audited runtime read path. */
+  async openEditor(req: EditorOpenRequest): Promise<EditorOpenResponse> {
+    const file = normalizeEditorFile(req.file);
+    const outcome = await this.run({
+      command: `read.file name=${quoteParamValue(file)}`,
+      cwd: req.cwd,
+      origin: "api",
+    });
+    if (outcome.record.result !== "success") {
+      throw new ServiceError(
+        outcome.result?.stderr?.trim() || `could not open editor file: ${file}`,
+        400,
+      );
+    }
+    return {
+      file,
+      content: outcome.result?.stdout ?? "",
+      language: languageForPath(file),
+      outcome,
+    };
+  }
+
+  /** Save a browser-editor buffer through the audited runtime write path. */
+  async saveEditor(req: EditorSaveRequest): Promise<RuntimeOutcome> {
+    const file = normalizeEditorFile(req.file);
+    const content = req.content ?? "";
+    return await this.run({
+      command: `write.file name=${quoteParamValue(file)} content=${quoteParamValue(content)}`,
+      cwd: req.cwd,
+      origin: "api",
+    });
   }
 
   /** Full command catalog, shaped for a UI command palette. */
@@ -184,6 +284,10 @@ export class TerminalService {
   }
 }
 
+export function batchStepSucceeded(outcome: RuntimeOutcome, explicitDryRun = false): boolean {
+  return outcome.record.result === "success" || (explicitDryRun && outcome.record.result === "dry_run");
+}
+
 /** An error carrying an HTTP status for the transport layer to surface. */
 export class ServiceError extends Error {
   override readonly name = "ServiceError";
@@ -201,4 +305,29 @@ function safeUserInfo(): { username: string } {
   } catch {
     return { username: "unknown" };
   }
+}
+
+function normalizeEditorFile(file: string | undefined): string {
+  if (!file || !file.trim()) {
+    throw new ServiceError("editor file is required", 400);
+  }
+  return file.trim();
+}
+
+function quoteParamValue(value: string): string {
+  if (!/[\s"'\\]/.test(value)) return value;
+  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+}
+
+function languageForPath(file: string): string {
+  const lower = file.toLowerCase();
+  if (lower.endsWith(".json") || lower.endsWith(".jsonl")) return "json";
+  if (lower.endsWith(".html") || lower.endsWith(".htm")) return "html";
+  if (lower.endsWith(".css")) return "css";
+  if (lower.endsWith(".js") || lower.endsWith(".mjs") || lower.endsWith(".cjs")) return "javascript";
+  if (lower.endsWith(".ts") || lower.endsWith(".tsx")) return "typescript";
+  if (lower.endsWith(".md") || lower.endsWith(".markdown")) return "markdown";
+  if (lower.endsWith(".sh") || lower.endsWith(".bash") || lower.endsWith(".zsh")) return "shell";
+  if (lower.endsWith(".yml") || lower.endsWith(".yaml")) return "yaml";
+  return "text";
 }

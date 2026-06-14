@@ -253,9 +253,11 @@ describe("NodeAdapter", () => {
 
   it("supports only the handled ids; supportsResolved requires @node", () => {
     expect(adapter.supports("create.file")).toBe(true);
+    expect(adapter.supports("tail.file")).toBe(true);
     expect(adapter.supports("remove.folder")).toBe(true);
     expect(adapter.supports("run.script")).toBe(true);
     expect(adapter.supports("edit.file")).toBe(true);
+    expect(adapter.supports("open.editor")).toBe(true);
     expect(adapter.supports("native.run")).toBe(false);
     expect(
       adapter.supportsResolved(
@@ -302,6 +304,10 @@ describe("NodeAdapter", () => {
 
     // read.file → stdout
     r = await run("read.file", { path: "readme.md" }, { dryRun: false });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe("hello world");
+
+    r = await run("tail.file", { file: "readme.md", lines: 1 }, { dryRun: false });
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toBe("hello world");
 
@@ -410,6 +416,13 @@ describe("NodeAdapter", () => {
     expect(r.stdout).toContain("hello.js");
   });
 
+  it("tail.file returns the requested trailing lines", async () => {
+    await writeFile(join(dir, "app.log"), "one\ntwo\nthree\nfour\n");
+    const r = await run("tail.file", { file: "app.log", lines: 2 }, { dryRun: false });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe("three\nfour\n");
+  });
+
   it("run.script executes a node script and preserves quoted args", async () => {
     await writeFile(
       join(dir, "hello.js"),
@@ -462,6 +475,19 @@ describe("NodeAdapter", () => {
     expect(r.stdout).toContain("note.txt");
   });
 
+  it("open.editor dry-runs with the file= parameter", async () => {
+    await writeFile(join(dir, "note.txt"), "hi\n");
+    const r = await run(
+      "open.editor",
+      { file: "note.txt", editor: "code", wait: true },
+      { dryRun: true },
+    );
+    expect(r.simulated).toBe(true);
+    expect(r.stdout).toContain("[dry-run] would open editor:");
+    expect(r.stdout).toContain("code --wait");
+    expect(r.stdout).toContain("note.txt");
+  });
+
   it("edit.file fails cleanly outside an interactive TTY", async () => {
     await writeFile(join(dir, "note.txt"), "hi\n");
     const r = await run(
@@ -471,6 +497,17 @@ describe("NodeAdapter", () => {
     );
     expect(r.exitCode).toBe(1);
     expect(r.stderr).toMatch(/interactive terminal/i);
+  });
+
+  it("open.editor fails cleanly outside an interactive TTY", async () => {
+    await writeFile(join(dir, "note.txt"), "hi\n");
+    const r = await run(
+      "open.editor",
+      { file: "note.txt", editor: "nano" },
+      { dryRun: false, interactive: false },
+    );
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toMatch(/open\.editor requires an interactive terminal/i);
   });
 
   it("returns a failure result (exit 1) when a required path is missing", async () => {

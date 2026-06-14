@@ -13,12 +13,14 @@ import type { Registry } from "@openexecution/registry";
  * sync with the command set automatically — no separate completion table.
  */
 export function complete(input: string, registry: Registry, cwd: string): string[] {
-  const trimmed = input.replace(/^\s+/, "");
-  if (trimmed.startsWith("!")) return completeNative(input, cwd);
+  const segment = currentBatchSegment(input);
+  const trimmed = segment.replace(/^\s+/, "");
+  if (trimmed.startsWith("!")) return completeNative(segment, cwd);
+  if (!trimmed) return completeCommand("", registry);
 
   const tokens = looseTokens(trimmed);
   const head = tokens[0] ?? "";
-  const atTokenBoundary = endsWithTokenSeparator(input);
+  const atTokenBoundary = endsWithTokenSeparator(segment);
 
   // Still typing the command name (no space yet).
   if (tokens.length <= 1 && !atTokenBoundary) {
@@ -31,7 +33,7 @@ export function complete(input: string, registry: Registry, cwd: string): string
     return [];
   }
 
-  const last = atTokenBoundary ? "" : currentToken(input);
+  const last = atTokenBoundary ? "" : currentToken(segment);
 
   // Value completion: `key=<partial>`.
   const eq = last.indexOf("=");
@@ -67,6 +69,38 @@ export function complete(input: string, registry: Registry, cwd: string): string
     .filter((p) => !used.has(p))
     .filter((p) => p.startsWith(last))
     .map((p) => `${p}=`);
+}
+
+function currentBatchSegment(input: string): string {
+  const trimmed = input.trimStart();
+  if (trimmed.startsWith("!")) return input;
+  let start = 0;
+  let quote: string | undefined;
+  let escaped = false;
+  for (let i = 0; i < input.length; i++) {
+    const c = input[i]!;
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (c === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (c === quote) quote = undefined;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      quote = c;
+      continue;
+    }
+    if (c === "&" && input[i + 1] === "&") {
+      start = i + 2;
+      i += 1;
+    }
+  }
+  return input.slice(start);
 }
 
 /**

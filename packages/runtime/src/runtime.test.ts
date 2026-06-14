@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { Registry } from "@openexecution/registry";
 import { defaultPolicy, loadPolicy } from "@openexecution/policy";
+import { OpenLogWriter } from "@openexecution/openlogs";
 import type { RuntimeContext } from "@openexecution/types";
 
 import { Runtime } from "./runtime.js";
@@ -99,6 +100,24 @@ describe("safe commands execute for real in a sandbox", () => {
     expect(out.result?.stdout).toContain("b.txt");
   });
 
+  it("tails a file and returns the last requested lines", async () => {
+    const dir = await sandbox();
+    await writeFile(join(dir, "app.log"), "alpha\nbeta\ngamma\n");
+    const rt = await makeRuntime();
+    const out = await rt.run("tail.file file=app.log lines=2", ctx({ cwd: dir }));
+    expect(out.risk.level).toBe("LOW");
+    expect(out.record.result).toBe("success");
+    expect(out.result?.stdout).toBe("beta\ngamma\n");
+  });
+
+  it("waits for a short duration with wait.time", async () => {
+    const rt = await makeRuntime();
+    const out = await rt.run("wait.time ms=1", ctx());
+    expect(out.risk.level).toBe("LOW");
+    expect(out.record.result).toBe("success");
+    expect(out.result?.stdout).toContain("waited 1ms");
+  });
+
   it("runs a script through the runtime pipeline", async () => {
     const dir = await sandbox();
     await writeFile(
@@ -129,6 +148,20 @@ describe("safe commands execute for real in a sandbox", () => {
     expect(out.result?.stdout).toContain("code --wait");
   });
 
+  it("dry-runs open.editor file= through the runtime pipeline", async () => {
+    const dir = await sandbox();
+    await writeFile(join(dir, "note.txt"), "hi\n");
+    const rt = await makeRuntime();
+    const out = await rt.run(
+      "open.editor file=note.txt editor=code wait=true",
+      ctx({ cwd: dir, dryRun: true }),
+    );
+    expect(out.risk.level).toBe("MEDIUM");
+    expect(out.record.result).toBe("dry_run");
+    expect(out.result?.stdout).toContain("code --wait");
+    expect(out.result?.stdout).toContain("note.txt");
+  });
+
   it("refuses edit.file outside an interactive host", async () => {
     const dir = await sandbox();
     await writeFile(join(dir, "note.txt"), "hi\n");
@@ -140,6 +173,19 @@ describe("safe commands execute for real in a sandbox", () => {
     expect(out.risk.level).toBe("MEDIUM");
     expect(out.record.result).toBe("failed");
     expect(out.result?.stderr).toMatch(/interactive terminal/i);
+  });
+
+  it("refuses open.editor outside an interactive host", async () => {
+    const dir = await sandbox();
+    await writeFile(join(dir, "note.txt"), "hi\n");
+    const rt = await makeRuntime();
+    const out = await rt.run(
+      "open.editor file=note.txt editor=nano",
+      ctx({ cwd: dir, interactive: false }),
+    );
+    expect(out.risk.level).toBe("MEDIUM");
+    expect(out.record.result).toBe("failed");
+    expect(out.result?.stderr).toMatch(/open\.editor requires an interactive terminal/i);
   });
 });
 
@@ -334,6 +380,43 @@ describe("meta commands", () => {
     const rt = await makeRuntime();
     const out = await rt.run("registry.explain command=remove.folder", ctx());
     expect(out.result?.stdout).toMatch(/riskDefault: HIGH/);
+  });
+
+  it("ask.ai reports that the host must route the agent", async () => {
+    const rt = await makeRuntime();
+    const out = await rt.run('ask.ai prompt="list files"', ctx());
+    expect(out.risk.level).toBe("LOW");
+    expect(out.record.result).toBe("failed");
+    expect(out.result?.stderr).toMatch(/handled by the CLI or web terminal/i);
+  });
+
+  it("learn.cli reports that the host must route learning", async () => {
+    const rt = await makeRuntime();
+    const out = await rt.run("learn.cli cli=git", ctx());
+    expect(out.risk.level).toBe("LOW");
+    expect(out.record.result).toBe("failed");
+    expect(out.result?.stderr).toMatch(/handled by the CLI or web terminal/i);
+  });
+
+  it("list.history returns recent audited commands capped by limit", async () => {
+    const dir = await sandbox();
+    const rt = new Runtime({
+      registry,
+      policy: defaultPolicy(),
+      logWriter: new OpenLogWriter({
+        path: join(dir, "logs", "openlogs.jsonl"),
+        keyPath: join(dir, "keys", "openlogs.key.json"),
+      }),
+    });
+    await rt.run("create.file name=a.txt", ctx({ cwd: dir }));
+    await rt.run("read.file name=a.txt", ctx({ cwd: dir }));
+
+    const out = await rt.run("list.history limit=1000", ctx({ cwd: dir }));
+
+    expect(out.record.result).toBe("success");
+    expect(out.result?.stdout).toMatch(/create\.file name=a\.txt/);
+    expect(out.result?.stdout).toMatch(/read\.file name=a\.txt/);
+    expect(out.result?.stdout).toMatch(/success\s+LOW/);
   });
 });
 
