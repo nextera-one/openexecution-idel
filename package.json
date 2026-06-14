@@ -28,12 +28,12 @@
     "overridesComment": "TEMPORARY: pins the ESM-fixed tps-standard 0.8.1 (nextera-one/tps PR #2) until it is published to npm. The published 0.7.x/0.8.0 cannot be imported as native ESM, which breaks @nextera.one/openlogs-sdk in this ESM runtime. Remove this override once 0.8.1 is on npm and bump the openlogs dependency. See CONCERNS.md."
   },
   "devDependencies": {
-    "@types/node": "^22.10.0",
-    "rimraf": "^6.0.1",
-    "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
+    "@types/node": "^25.9.3",
+    "rimraf": "^6.1.3",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
   },
-  "packageManager": "pnpm@10.0.0",
+  "packageManager": "pnpm@11.6.0",
   "license": "MIT",
   "author": "Nextera One",
   "repository": {

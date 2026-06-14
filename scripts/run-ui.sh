@@ -22,11 +22,41 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IDEL="$ROOT/packages/cli/bin/idel.js"
+IDEL_DIST="$ROOT/packages/cli/dist/main.js"
 STATIC="$ROOT/packages/web/public"
 
-if [[ ! -f "$IDEL" ]]; then
-  echo "run-ui: CLI not built — running 'pnpm build'…" >&2
-  ( cd "$ROOT" && corepack pnpm@10.0.0 build )
+if ! command -v node >/dev/null 2>&1 && [[ -s "${NVM_DIR:-$HOME/.nvm}/nvm.sh" ]]; then
+  export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+  # shellcheck source=/dev/null
+  . "$NVM_DIR/nvm.sh"
+fi
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "run-ui: node not found; install Node >=22.3 or load it before running this script." >&2
+  exit 127
+fi
+
+build_workspace() {
+  if command -v corepack >/dev/null 2>&1; then
+    corepack pnpm@10.0.0 build
+  elif command -v pnpm >/dev/null 2>&1; then
+    pnpm build
+  else
+    echo "run-ui: neither corepack nor pnpm was found; cannot build the workspace." >&2
+    exit 127
+  fi
+}
+
+needs_build=false
+if [[ ! -f "$IDEL" || ! -f "$IDEL_DIST" ]]; then
+  needs_build=true
+elif find "$ROOT/packages" -path '*/src/*' -type f \( -name '*.ts' -o -name '*.tsx' \) -newer "$IDEL_DIST" -print -quit | grep -q .; then
+  needs_build=true
+fi
+
+if [[ "$needs_build" == true ]]; then
+  echo "run-ui: CLI build missing or stale — running 'pnpm build'…" >&2
+  ( cd "$ROOT" && build_workspace )
 fi
 
 if [[ ! -f "$STATIC/index.html" ]]; then
