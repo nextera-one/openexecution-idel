@@ -13,6 +13,7 @@ const CORE_COMMAND_VERBS = new Set([
   "ask",
   "change",
   "check",
+  "clear",
   "copy",
   "create",
   "edit",

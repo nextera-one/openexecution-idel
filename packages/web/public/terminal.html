@@ -33,6 +33,7 @@
         <button class="mode-btn" id="mode-ask" title="Ask Claude in natural language">Ask Claude</button>
       </span>
       <button class="term-tool-btn" id="dictionary-open" type="button" title="Open command dictionary">Dictionary</button>
+      <button class="term-tool-btn" id="knowledge-open" type="button" title="Open command knowledge base">Knowledge</button>
       <button class="icon-btn preferences-trigger" id="preferences-open" type="button" title="Preferences" aria-label="Open preferences">⚙</button>
     </header>
 
@@ -47,15 +48,22 @@
 
       <form class="term-input" id="form" autocomplete="off">
         <span class="term-prompt" id="prompt">idel&gt;</span>
-        <input
+        <textarea
           id="input"
-          type="text"
+          rows="1"
           spellcheck="false"
           autocapitalize="off"
           autocomplete="off"
           placeholder="verb.scope param=value   (Tab to complete, ↑/↓ history)"
           aria-label="command input"
-        />
+        ></textarea>
+        <button
+          class="input-toggle"
+          id="batch-toggle"
+          type="button"
+          aria-pressed="false"
+          title="Multiline batch input. Use Ctrl+Enter to run."
+        >Batch</button>
       </form>
       <ul class="completions" id="completions" hidden></ul>
     </main>
@@ -134,12 +142,108 @@
       </div>
     </dialog>
 
+    <dialog class="knowledge-dialog" id="knowledge-dialog" aria-labelledby="knowledge-title">
+      <div class="knowledge-panel">
+        <div class="preferences-head">
+          <div>
+            <h2 id="knowledge-title">Knowledge Base</h2>
+            <p><span id="knowledge-platform">Detecting OS</span> guidance for batch, wait, native, elevation, and packages</p>
+          </div>
+          <button class="icon-btn" id="knowledge-close" type="button" title="Close" aria-label="Close knowledge base">x</button>
+        </div>
+
+        <section class="knowledge-body">
+          <article class="knowledge-section">
+            <h3>Batch Commands</h3>
+            <p>
+              Use top-level <code>&amp;&amp;</code> to run IDEL commands one after another. The next step starts only after
+              the previous step succeeds.
+            </p>
+            <pre><code id="knowledge-batch-example">create.folder name=demo &amp;&amp; create.file name=demo/readme.md &amp;&amp; read.file name=demo/readme.md</code></pre>
+            <p class="knowledge-note">
+              Turn on the Batch input toggle for multiple lines, then use Ctrl+Enter to run. A native line that starts
+              with <code>!</code> is kept as one shell command, so <code>&amp;&amp;</code> inside it belongs to the shell.
+            </p>
+          </article>
+
+          <article class="knowledge-section">
+            <h3>Wait Between Steps</h3>
+            <p>
+              Use <code>wait.time</code> when a batch needs a short pause before the next command reads a file, checks a
+              log, or talks to a service.
+            </p>
+            <pre><code id="knowledge-wait-example">run.script path=./scripts/start.sh shell=bash &amp;&amp; wait.time seconds=2 &amp;&amp; tail.file file=app.log lines=40</code></pre>
+            <pre><code id="knowledge-wait-short-example">create.file name=ready.txt &amp;&amp; wait.time ms=500 &amp;&amp; read.file name=ready.txt</code></pre>
+          </article>
+
+          <article class="knowledge-section">
+            <h3>Native Passthrough</h3>
+            <p>
+              Use <code>!</code> when you need a real OS command that IDEL does not model yet. It is still risk-scanned,
+              policy-checked, and logged, but it is less structured than a native IDEL command.
+            </p>
+            <pre><code id="knowledge-native-example">! sudo apt install git</code></pre>
+            <pre><code id="knowledge-native-quoted-example">! "sudo apt install git"</code></pre>
+            <p class="knowledge-note">
+              The quoted form is accepted for convenience. IDEL sends both examples to the shell as
+              <code id="knowledge-native-shell-example">sudo apt install git</code>.
+            </p>
+          </article>
+
+          <article class="knowledge-section">
+            <h3 id="knowledge-package-title">Elevation And Packages</h3>
+            <p>
+              Package-manager commands should be explicit because search, install, remove, upgrade, and source edits have very
+              different risks. Use <code>!</code> for one-off native work until curated commands exist.
+            </p>
+            <pre><code id="knowledge-package-examples">! sudo apt update
+! sudo apt install git
+! apt search git</code></pre>
+            <p class="knowledge-note" id="knowledge-package-note">
+              Interactive sudo password prompts work best in a real terminal. In the web terminal, prefer commands that
+              do not need an interactive password prompt, or run the server from a session where sudo is already ready.
+            </p>
+          </article>
+
+          <article class="knowledge-section">
+            <h3>Clear Scrollback</h3>
+            <p>
+              Clear commands affect only the visible rows in the active terminal tab. They do not delete files, audit
+              logs, or command history.
+            </p>
+            <pre><code>clear.all
+clear.last limit=10
+clear.first limit=5
+clear.range from=2 to=8</code></pre>
+            <p class="knowledge-note">
+              <code>clear.range</code> uses 1-based row numbers and includes both ends of the range.
+            </p>
+          </article>
+
+          <article class="knowledge-section">
+            <h3>Learning CLIs</h3>
+            <p>
+              <code>learn.cli</code> drafts commands from help text. Some tools, like <code>apt</code>, expose broad
+              subcommands without enough safe parameter detail, so learning may produce no accepted definitions.
+            </p>
+            <pre><code>learn.cli cli=git write=true
+learn.cli cli=apt</code></pre>
+            <p class="knowledge-note">
+              Good apt mappings should be curated, for example <code>search.apt.package</code>,
+              <code>show.apt.package</code>, <code>update.apt.index</code>, and <code>install.apt.package</code>, each
+              with its own risk and approval rules.
+            </p>
+          </article>
+        </section>
+      </div>
+    </dialog>
+
     <dialog class="dictionary-dialog" id="dictionary-dialog" aria-labelledby="dictionary-title">
       <div class="dictionary-panel">
         <div class="preferences-head">
           <div>
             <h2 id="dictionary-title">Command Dictionary</h2>
-            <p>IDEL commands mapped to OS commands</p>
+            <p>IDEL commands mapped for <span id="dictionary-platform">detected OS</span></p>
           </div>
           <button class="icon-btn" id="dictionary-close" type="button" title="Close" aria-label="Close command dictionary">x</button>
         </div>

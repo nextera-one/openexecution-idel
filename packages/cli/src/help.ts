@@ -5,7 +5,7 @@ export const HELP_TEXT = `idel ${VERSION} — OpenExecution Runtime CLI
 USAGE
   idel <verb.scope> [key=value ...] [flags]
   idel "<cmd.one ... && cmd.two ...>"  run an IDEL batch; stop on first non-success
-  idel ! "<native command>"            native passthrough (risk-scanned + logged)
+  idel ! <native command>              native passthrough (risk-scanned + logged)
   idel ask "<natural language>"        ask Claude to do it (proposes IDEL, runs via the runtime)
   idel ask.ai prompt="<request>"       IDEL-shaped alias for the AI console
   idel learn <cli> [--write]           teach IDEL an installed CLI (drafts IDEL commands from its --help)
@@ -29,7 +29,7 @@ EXAMPLES
   idel explain.registry command=remove.folder
   idel list.history
   idel list.logs
-  idel ! "tar -xvzf backup.tar.gz"
+  idel ! tar -xvzf backup.tar.gz
   idel ask "delete the dist folder"          (uses your Claude subscription or ANTHROPIC_API_KEY; --yes to allow real runs)
   idel ask.ai prompt="delete the dist folder"
   idel learn gh --write                      (drafts IDEL commands for the gh CLI into the custom layer)

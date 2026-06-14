@@ -197,9 +197,11 @@ a:hover {
 .term-output,
 .editor-input,
 .dictionary-results,
+.knowledge-body,
 .completions,
 .logs,
-.workspace-tabs {
+.workspace-tabs,
+#input {
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: var(--scroll-thumb) var(--scroll-track);
@@ -209,9 +211,11 @@ a:hover {
 .term-output:hover,
 .editor-input:hover,
 .dictionary-results:hover,
+.knowledge-body:hover,
 .completions:hover,
 .logs:hover,
-.workspace-tabs:hover {
+.workspace-tabs:hover,
+#input:hover {
   scrollbar-color: var(--scroll-thumb-hover) var(--scroll-track);
 }
 
@@ -219,9 +223,11 @@ a:hover {
 .term-output::-webkit-scrollbar,
 .editor-input::-webkit-scrollbar,
 .dictionary-results::-webkit-scrollbar,
+.knowledge-body::-webkit-scrollbar,
 .completions::-webkit-scrollbar,
 .logs::-webkit-scrollbar,
-.workspace-tabs::-webkit-scrollbar {
+.workspace-tabs::-webkit-scrollbar,
+#input::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
@@ -230,9 +236,11 @@ a:hover {
 .term-output::-webkit-scrollbar-track,
 .editor-input::-webkit-scrollbar-track,
 .dictionary-results::-webkit-scrollbar-track,
+.knowledge-body::-webkit-scrollbar-track,
 .completions::-webkit-scrollbar-track,
 .logs::-webkit-scrollbar-track,
-.workspace-tabs::-webkit-scrollbar-track {
+.workspace-tabs::-webkit-scrollbar-track,
+#input::-webkit-scrollbar-track {
   background: var(--scroll-track);
 }
 
@@ -240,9 +248,11 @@ a:hover {
 .term-output::-webkit-scrollbar-thumb,
 .editor-input::-webkit-scrollbar-thumb,
 .dictionary-results::-webkit-scrollbar-thumb,
+.knowledge-body::-webkit-scrollbar-thumb,
 .completions::-webkit-scrollbar-thumb,
 .logs::-webkit-scrollbar-thumb,
-.workspace-tabs::-webkit-scrollbar-thumb {
+.workspace-tabs::-webkit-scrollbar-thumb,
+#input::-webkit-scrollbar-thumb {
   background: var(--scroll-thumb);
   border: 2px solid var(--scroll-track);
   border-radius: 999px;
@@ -254,9 +264,11 @@ a:hover {
 .term-output::-webkit-scrollbar-thumb:hover,
 .editor-input::-webkit-scrollbar-thumb:hover,
 .dictionary-results::-webkit-scrollbar-thumb:hover,
+.knowledge-body::-webkit-scrollbar-thumb:hover,
 .completions::-webkit-scrollbar-thumb:hover,
 .logs::-webkit-scrollbar-thumb:hover,
-.workspace-tabs::-webkit-scrollbar-thumb:hover {
+.workspace-tabs::-webkit-scrollbar-thumb:hover,
+#input::-webkit-scrollbar-thumb:hover {
   background: var(--scroll-thumb-hover);
   border-color: rgba(8, 13, 20, 0.82);
 }
@@ -265,9 +277,11 @@ a:hover {
 .term-output::-webkit-scrollbar-thumb:active,
 .editor-input::-webkit-scrollbar-thumb:active,
 .dictionary-results::-webkit-scrollbar-thumb:active,
+.knowledge-body::-webkit-scrollbar-thumb:active,
 .completions::-webkit-scrollbar-thumb:active,
 .logs::-webkit-scrollbar-thumb:active,
-.workspace-tabs::-webkit-scrollbar-thumb:active {
+.workspace-tabs::-webkit-scrollbar-thumb:active,
+#input::-webkit-scrollbar-thumb:active {
   background: var(--scroll-thumb-active);
 }
 
@@ -275,9 +289,11 @@ a:hover {
 .term-output::-webkit-scrollbar-corner,
 .editor-input::-webkit-scrollbar-corner,
 .dictionary-results::-webkit-scrollbar-corner,
+.knowledge-body::-webkit-scrollbar-corner,
 .completions::-webkit-scrollbar-corner,
 .logs::-webkit-scrollbar-corner,
-.workspace-tabs::-webkit-scrollbar-corner {
+.workspace-tabs::-webkit-scrollbar-corner,
+#input::-webkit-scrollbar-corner {
   background: var(--scroll-edge);
 }
 
@@ -1117,6 +1133,9 @@ h1 {
   border-top: 1px solid var(--border);
   background: var(--bar-bg);
 }
+.term-input.multiline {
+  align-items: flex-start;
+}
 .term-input[hidden],
 .completions[hidden] {
   display: none;
@@ -1133,12 +1152,36 @@ h1 {
 #input {
   flex: 1;
   min-width: 0;
+  min-height: 1.45rem;
+  max-height: 9rem;
   background: transparent;
   border: none;
   outline: none;
   color: var(--fg);
   font-family: var(--mono);
   font-size: var(--term-input-size);
+  line-height: 1.45;
+  resize: none;
+  overflow-y: hidden;
+  padding: 0;
+}
+.input-toggle {
+  flex: 0 0 auto;
+  min-height: 1.8rem;
+  border: 1px solid var(--control-border);
+  border-radius: 7px;
+  background: var(--control-bg);
+  color: var(--fg-dim);
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  padding: 0 0.55rem;
+}
+.input-toggle.active,
+.input-toggle[aria-pressed="true"] {
+  border-color: transparent;
+  background: linear-gradient(120deg, var(--accent), var(--accent-2));
+  color: var(--control-active-fg);
 }
 
 .completions {
@@ -1227,6 +1270,7 @@ body.logs-hidden .term-side {
 
 .preferences-dialog,
 .dictionary-dialog,
+.knowledge-dialog,
 .claude-setup-dialog,
 .screenshot-dialog {
   width: min(92vw, 30rem);
@@ -1238,6 +1282,7 @@ body.logs-hidden .term-side {
 }
 .preferences-dialog::backdrop,
 .dictionary-dialog::backdrop,
+.knowledge-dialog::backdrop,
 .claude-setup-dialog::backdrop,
 .screenshot-dialog::backdrop {
   background: var(--overlay-bg);
@@ -1254,7 +1299,20 @@ body.logs-hidden .term-side {
 .dictionary-dialog {
   width: min(94vw, 64rem);
 }
+.knowledge-dialog {
+  width: min(94vw, 58rem);
+}
 .dictionary-panel {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - 1.5rem);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 24px 80px var(--shadow-soft);
+}
+.knowledge-panel {
   display: flex;
   flex-direction: column;
   max-height: calc(100dvh - 1.5rem);
@@ -1459,6 +1517,13 @@ body.logs-hidden .term-side {
   gap: 0.55rem;
   align-items: start;
 }
+.dictionary-mapping-current {
+  border-left: 3px solid var(--accent);
+  padding-left: 0.5rem;
+}
+.dictionary-mapping-other {
+  opacity: 0.72;
+}
 .dictionary-map-label {
   color: var(--fg-dim);
   font-size: 0.74rem;
@@ -1498,6 +1563,48 @@ body.logs-hidden .term-side {
   padding: 1.6rem 0.95rem;
   color: var(--fg-dim);
   text-align: center;
+}
+.knowledge-body {
+  display: grid;
+  gap: 0.75rem;
+  overflow-y: auto;
+  padding: 0.9rem 0.95rem;
+}
+.knowledge-section {
+  display: grid;
+  gap: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-alt);
+  padding: 0.75rem;
+}
+.knowledge-section h3 {
+  margin: 0;
+  color: var(--fg);
+  font-size: 0.92rem;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+.knowledge-section p {
+  margin: 0;
+  color: var(--fg-dim);
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+.knowledge-section pre {
+  margin: 0;
+  padding: 0.65rem;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--field-bg);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+.knowledge-note {
+  color: var(--yellow) !important;
 }
 .setup-body {
   display: grid;
@@ -1757,19 +1864,25 @@ body.logs-hidden .term-side {
   }
   .preferences-dialog,
   .dictionary-dialog,
+  .knowledge-dialog,
   .claude-setup-dialog,
   .screenshot-dialog,
   .dictionary-panel,
+  .knowledge-panel,
   .preferences-panel {
     max-height: calc(100dvh - 1rem);
   }
   .preferences-dialog,
   .dictionary-dialog,
+  .knowledge-dialog,
   .claude-setup-dialog,
   .screenshot-dialog {
     width: calc(100vw - 1rem);
   }
   .dictionary-panel {
+    overflow: hidden;
+  }
+  .knowledge-panel {
     overflow: hidden;
   }
   .preferences-panel {
@@ -1811,6 +1924,11 @@ body.logs-hidden .term-side {
   }
   .term-prompt {
     font-size: 0.82rem;
+  }
+  .input-toggle {
+    min-height: 1.65rem;
+    padding-inline: 0.4rem;
+    font-size: 0.7rem;
   }
   .editor-tools {
     grid-template-columns: repeat(2, minmax(0, 1fr));

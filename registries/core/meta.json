@@ -103,6 +103,57 @@
     "tests": [{ "input": "list.history limit=10", "expectRisk": "LOW" }]
   },
   {
+    "id": "clear.all",
+    "version": "1.0.0",
+    "summary": "Clear all visible scrollback lines in the active terminal tab.",
+    "category": "meta",
+    "riskDefault": "LOW",
+    "params": {},
+    "adapters": {},
+    "examples": ["clear.all"],
+    "tests": [{ "input": "clear.all", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "clear.last",
+    "version": "1.0.0",
+    "summary": "Clear the last visible scrollback lines in the active terminal tab.",
+    "category": "meta",
+    "riskDefault": "LOW",
+    "params": {
+      "limit": { "type": "number", "default": 1, "description": "Number of trailing visible rows to remove." }
+    },
+    "adapters": {},
+    "examples": ["clear.last", "clear.last limit=10"],
+    "tests": [{ "input": "clear.last limit=1", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "clear.first",
+    "version": "1.0.0",
+    "summary": "Clear the first visible scrollback lines in the active terminal tab.",
+    "category": "meta",
+    "riskDefault": "LOW",
+    "params": {
+      "limit": { "type": "number", "default": 1, "description": "Number of leading visible rows to remove." }
+    },
+    "adapters": {},
+    "examples": ["clear.first", "clear.first limit=10"],
+    "tests": [{ "input": "clear.first limit=1", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "clear.range",
+    "version": "1.0.0",
+    "summary": "Clear a 1-based inclusive range of visible scrollback rows in the active terminal tab.",
+    "category": "meta",
+    "riskDefault": "LOW",
+    "params": {
+      "from": { "type": "number", "required": true, "description": "First visible row number to remove, starting at 1." },
+      "to": { "type": "number", "required": true, "description": "Last visible row number to remove, inclusive." }
+    },
+    "adapters": {},
+    "examples": ["clear.range from=2 to=5"],
+    "tests": [{ "input": "clear.range from=1 to=2", "expectRisk": "LOW" }]
+  },
+  {
     "id": "list.logs",
     "version": "1.0.0",
     "summary": "List recent OpenLog audit records for this session or user.",

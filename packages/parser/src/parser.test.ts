@@ -112,6 +112,11 @@ describe("parse — native passthrough", () => {
     expect(ast.native).toBe('echo "a b"  &&  ls');
   });
 
+  it("unwraps a whole quoted native command", () => {
+    const ast = parse('! "sudo apt install git"', OPTS) as NativeCommandAst;
+    expect(ast.native).toBe("sudo apt install git");
+  });
+
   it("treats native.run as an ordinary command (not the bang shorthand)", () => {
     const ast = parse('native.run command="rm -rf dist"', OPTS);
     expect(isNativeAst(ast)).toBe(true); // command === "native.run"

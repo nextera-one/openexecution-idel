@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { readFile, stat } from "node:fs/promises";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import type { AddressInfo } from "node:net";
+import { platform } from "node:os";
 
 import { TerminalService, ServiceError, batchStepSucceeded } from "./service.js";
 import type {
@@ -15,7 +16,7 @@ import type {
  * local boundary the web and desktop (Javelle/Electron) terminals talk to.
  *
  * Endpoints (all JSON unless noted):
- *   GET  /api/health                 → { ok, version, agentAvailable }
+ *   GET  /api/health                 → { ok, version, platform, agentAvailable }
  *   GET  /api/registry               → RegistryEntry[]
  *   GET  /api/registry/:id           → { resolved, shadowed }
  *   POST /api/complete   {input,cwd} → string[]
@@ -202,7 +203,12 @@ async function handle(
 
   // --- API routes ---------------------------------------------------------
   if (path === "/api/health") {
-    return sendJson(res, 200, { ok: true, version: VERSION, agentAvailable: Boolean(agent) }, cors);
+    return sendJson(
+      res,
+      200,
+      { ok: true, version: VERSION, platform: platform(), agentAvailable: Boolean(agent) },
+      cors,
+    );
   }
 
   if (path === "/api/registry" && method === "GET") {

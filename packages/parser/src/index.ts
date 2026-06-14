@@ -292,9 +292,11 @@ export function parse(input: string, opts: ParseOptions): AnyAst {
   }
 
   // --- Native passthrough shorthand: `! <anything>` -------------------------
-  // Everything after the bang-space is opaque and is NOT tokenized.
+  // Everything after the bang-space is opaque and is NOT tokenized. If the
+  // whole native command is wrapped in one matching quote pair, unwrap that
+  // outer pair so web users can type `! "sudo apt install git"` naturally.
   if (trimmed.startsWith("! ")) {
-    const native = trimmed.slice(2).trim();
+    const native = unwrapQuotedNativeBody(trimmed.slice(2).trim());
     if (native.length === 0) {
       throw new ParseError("Native passthrough (`!`) requires a command", 0);
     }
@@ -391,4 +393,26 @@ export function parse(input: string, opts: ParseOptions): AnyAst {
 
   const ast: CommandAst = { command, params, rawParams, source, cwd };
   return ast;
+}
+
+function unwrapQuotedNativeBody(native: string): string {
+  if (native.length < 2) return native;
+  const quote = native[0]!;
+  if ((quote !== '"' && quote !== "'") || native[native.length - 1] !== quote) return native;
+
+  let escaped = false;
+  for (let i = 1; i < native.length - 1; i++) {
+    const ch = native[i]!;
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (ch === quote) return native;
+  }
+
+  return native.slice(1, -1).trim();
 }

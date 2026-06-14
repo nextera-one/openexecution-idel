@@ -138,7 +138,8 @@ export async function startTerminal(
             "Enter IDEL commands like `create.file name=x.txt`, `cmd.one && cmd.two`, or `! rm -rf dist`.\n" +
               "Ask AI in natural language with `ask.ai prompt=\"delete the dist folder\"` or a leading `?`.\n" +
               `Learn an installed CLI with \`${LEARN_USAGE}\` or \`learn.cli cli=git\`.\n` +
-              "Meta: list.registry, explain.registry command=remove.folder, check.policy, list.history, list.logs.\n",
+              "Meta: list.registry, explain.registry command=remove.folder, check.policy, list.history, list.logs.\n" +
+              "Web scrollback: clear.all, clear.last limit=10, clear.first limit=10, clear.range from=2 to=5.\n",
           ),
         );
         return;

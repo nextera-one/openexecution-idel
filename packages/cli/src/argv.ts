@@ -152,7 +152,7 @@ export function parseArgv(argv: string[]): CliInvocation {
     };
   }
 
-  // Native passthrough: `idel ! "rm -rf dist"` or `idel native.run command="..."`.
+  // Native passthrough: `idel ! rm -rf dist` or `idel native.run command="..."`.
   if (first === "!") {
     return {
       mode: "run",

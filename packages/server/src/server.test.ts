@@ -364,6 +364,7 @@ describe("startServer (HTTP)", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(true);
+    expect(typeof body.platform).toBe("string");
     expect(body.agentAvailable).toBe(false);
   });
 

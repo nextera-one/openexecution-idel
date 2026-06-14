@@ -52,7 +52,7 @@ The `--yes` flag does **not** clear this. The CRITICAL floor is enforced by the 
 The same thing happens for native passthrough:
 
 ```text
-$ idel ! "rm -rf /"
+$ idel ! rm -rf /
 
 Command: rm -rf /
 Risk: CRITICAL
@@ -125,7 +125,7 @@ idel 'create.file name=a.txt && wait.time ms=500 && read.file name=a.txt'
 idel editor README.md
 
 # Native passthrough — risk-scanned and logged, never an unlogged escape hatch
-idel ! "tar -xvzf backup.tar.gz"
+idel ! tar -xvzf backup.tar.gz
 
 # Inspect how a command resolves and what its adapters do on each platform
 idel explain.registry command=remove.folder
@@ -151,7 +151,12 @@ Dry run. No files were changed.
 Log: ~/.idel/logs/openlogs.jsonl
 ```
 
-Other useful commands: `idel list.registry` (37 core commands), `idel check.policy`, `idel terminal` (interactive REPL), `idel completion <partial>`.
+Other useful commands: `idel list.registry` (41 core commands), `idel check.policy`, `idel terminal` (interactive REPL), `idel completion <partial>`.
+
+Web terminal scrollback commands are local to the active terminal tab:
+`clear.all`, `clear.last limit=10`, `clear.first limit=5`, and
+`clear.range from=2 to=8`. They remove visible rows only; they do not delete
+OpenLogs records or command history.
 
 Batch execution uses shell-like `&&` at the IDEL host layer:
 
@@ -160,7 +165,7 @@ idel 'create.file name=a.txt && write.file name=a.txt content="ready" && read.fi
 idel 'run.script path=./scripts/start.sh shell=bash && wait.time seconds=2 && tail.file file=app.log lines=20'
 ```
 
-Each step is parsed, classified, policy-checked, executed, and logged as its own command. The next step starts only after the previous step completes successfully. During an explicit `--dry-run`, dry-run steps are allowed to continue so you can preview a whole batch. A line beginning with `!` remains native passthrough, so `idel ! "cmd1 && cmd2"` keeps normal shell semantics.
+Each step is parsed, classified, policy-checked, executed, and logged as its own command. The next step starts only after the previous step completes successfully. During an explicit `--dry-run`, dry-run steps are allowed to continue so you can preview a whole batch. A line beginning with `!` remains native passthrough, so `! cmd1 && cmd2` keeps normal shell semantics inside the IDEL terminal. From Bash, quote the whole IDEL line: `idel '! cmd1 && cmd2'`.
 
 **Web / desktop terminal.** `idel serve` starts a local HTTP+SSE server (loopback, port 7878 by default) that exposes the same runtime — registry-driven autocomplete, risk/policy classification, and signed OpenLogs — over a small JSON API. It is the boundary the browser and desktop (Javelle) terminals talk to; pass `--static <dir>` to also serve a built UI. A command typed in the GUI is audited identically to one typed at the CLI.
 
@@ -309,7 +314,7 @@ Rules are **first-match-wins** — ordering in the file is how you express prior
 Native commands keep developers productive without becoming an unlogged hole. Use `! cmd` or `native.run`:
 
 ```bash
-idel ! "tar -xvzf backup.tar.gz"
+idel ! tar -xvzf backup.tar.gz
 idel native.run command="find . -name '*.js' -mtime -7"
 ```
 

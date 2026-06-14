@@ -16,6 +16,10 @@ const META_COMMANDS = new Set<string>([
   "learn.cli",
   "wait.time",
   "list.history",
+  "clear.all",
+  "clear.last",
+  "clear.first",
+  "clear.range",
   "list.logs",
   "show.logs",
 ]);
@@ -56,6 +60,11 @@ export async function runMeta(
       return waitTime(ast);
     case "list.history":
       return listHistory(ast, deps);
+    case "clear.all":
+    case "clear.last":
+    case "clear.first":
+    case "clear.range":
+      return clearScrollback(ast);
     case "list.logs":
       return logsList(ast, deps);
     case "show.logs":
@@ -63,6 +72,16 @@ export async function runMeta(
     default:
       return { stdout: "", stderr: `Unknown meta command ${ast.command}`, exitCode: 1 };
   }
+}
+
+function clearScrollback(ast: CommandAst): MetaOutput {
+  return {
+    stdout:
+      `${ast.command} is handled by the terminal UI. ` +
+      "Use it in the web terminal to clear visible scrollback rows.",
+    stderr: "",
+    exitCode: 0,
+  };
 }
 
 function registryList(deps: MetaDeps): MetaOutput {

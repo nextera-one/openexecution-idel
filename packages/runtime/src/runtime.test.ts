@@ -405,6 +405,14 @@ describe("meta commands", () => {
     expect(out.result?.stderr).toMatch(/handled by the CLI or web terminal/i);
   });
 
+  it("clear commands report that the terminal UI handles scrollback", async () => {
+    const rt = await makeRuntime();
+    const out = await rt.run("clear.last limit=1", ctx());
+    expect(out.risk.level).toBe("LOW");
+    expect(out.record.result).toBe("success");
+    expect(out.result?.stdout).toMatch(/terminal UI/i);
+  });
+
   it("list.history returns recent audited commands capped by limit", async () => {
     const dir = await sandbox();
     const rt = new Runtime({

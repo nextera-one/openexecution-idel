@@ -13,6 +13,7 @@ const initialOutput = $("output");
 const input = $("input");
 const form = $("form");
 const promptEl = $("prompt");
+const batchToggle = $("batch-toggle");
 const completionsEl = $("completions");
 const statusEl = $("status");
 const logsEl = $("logs");
@@ -27,6 +28,11 @@ const dictionarySearch = $("dictionary-search");
 const dictionaryResults = $("dictionary-results");
 const dictionaryEmpty = $("dictionary-empty");
 const dictionaryCount = $("dictionary-count");
+const dictionaryPlatform = $("dictionary-platform");
+const knowledgeDialog = $("knowledge-dialog");
+const knowledgeOpen = $("knowledge-open");
+const knowledgeClose = $("knowledge-close");
+const knowledgePlatform = $("knowledge-platform");
 const preferencesDialog = $("preferences-dialog");
 const preferencesOpen = $("preferences-open");
 const preferencesClose = $("preferences-close");
@@ -64,6 +70,9 @@ let switchToAskAfterSetup = false;
 let dictionaryEntries = [];
 let dictionaryLoaded = false;
 let dictionaryLoading = false;
+let serverPlatform = "";
+let serverAdapter = "posix";
+let multilineBatch = false;
 
 const THEMES = new Set(["dark", "light"]);
 const PALETTES = new Set(["cyan", "blue", "teal", "green", "amber", "orange", "rose", "red", "violet", "slate"]);
@@ -82,6 +91,38 @@ const DEFAULT_PREFERENCES = {
   fontSize: "normal",
   showLogs: true,
 };
+
+function setServerPlatform(platformName) {
+  const next = String(platformName ?? "").toLowerCase();
+  serverPlatform = next;
+  serverAdapter = next === "win32" ? "powershell" : "posix";
+  const label = serverPlatformLabel();
+  if (dictionaryPlatform) dictionaryPlatform.textContent = label;
+  if (knowledgePlatform) knowledgePlatform.textContent = label;
+  renderKnowledgeBase();
+  if (dictionaryDialog?.open) renderDictionary();
+}
+
+function serverPlatformLabel() {
+  switch (serverPlatform) {
+    case "win32":
+      return "Windows / PowerShell";
+    case "darwin":
+      return "macOS / POSIX shell";
+    case "linux":
+      return "Linux / POSIX shell";
+    case "":
+      return "detected OS";
+    default:
+      return `${serverPlatform} / POSIX shell`;
+  }
+}
+
+function serverPlatformKind() {
+  if (serverPlatform === "win32") return "windows";
+  if (serverPlatform === "darwin") return "macos";
+  return "linux";
+}
 
 function initPreferences() {
   applyPreferences(readPreferences(), false);
@@ -128,6 +169,83 @@ function initDictionary() {
   dictionarySearch?.addEventListener("keydown", (e) => {
     if (e.key === "Escape") closeDictionary();
   });
+}
+
+function initKnowledgeBase() {
+  renderKnowledgeBase();
+  knowledgeOpen?.addEventListener("click", openKnowledgeBase);
+  knowledgeClose?.addEventListener("click", closeKnowledgeBase);
+  knowledgeDialog?.addEventListener("click", (e) => {
+    if (e.target === knowledgeDialog) closeKnowledgeBase();
+  });
+}
+
+function openKnowledgeBase() {
+  if (!knowledgeDialog) return;
+  renderKnowledgeBase();
+  if (typeof knowledgeDialog.showModal === "function") knowledgeDialog.showModal();
+  else knowledgeDialog.setAttribute("open", "");
+}
+
+function closeKnowledgeBase() {
+  if (!knowledgeDialog) return;
+  if (typeof knowledgeDialog.close === "function" && knowledgeDialog.open) knowledgeDialog.close();
+  else knowledgeDialog.removeAttribute("open");
+  if (activeTab()?.type !== "editor") input.focus();
+}
+
+function renderKnowledgeBase() {
+  const kind = serverPlatformKind();
+  const data =
+    kind === "windows"
+      ? {
+          native: "! winget install --id Git.Git -e",
+          nativeShell: "winget install --id Git.Git -e",
+          packages: "! winget search Git\n! winget install --id Git.Git -e\n! winget list Git",
+          packageTitle: "Elevation And Windows Packages",
+          packageNote:
+            "Some installers open UAC or interactive prompts. In the web terminal, prefer commands that can complete without an interactive prompt, or run them from a real terminal when elevation is required.",
+          wait:
+            "run.script path=./scripts/start.ps1 shell=powershell && wait.time seconds=2 && tail.file file=app.log lines=40",
+        }
+      : kind === "macos"
+        ? {
+            native: "! brew install git",
+            nativeShell: "brew install git",
+            packages: "! brew search git\n! brew install git\n! brew info git",
+            packageTitle: "Elevation And macOS Packages",
+            packageNote:
+              "Homebrew usually does not need sudo. If a command asks for elevation or opens an interactive prompt, run it from a real terminal session.",
+            wait:
+              "run.script path=./scripts/start.sh shell=bash && wait.time seconds=2 && tail.file file=app.log lines=40",
+          }
+        : {
+            native: "! sudo apt install git",
+            nativeShell: "sudo apt install git",
+            packages: "! sudo apt update\n! sudo apt install git\n! apt search git",
+            packageTitle: "Sudo And Apt",
+            packageNote:
+              "Interactive sudo password prompts work best in a real terminal. In the web terminal, prefer commands that do not need an interactive password prompt, or run the server from a session where sudo is already ready.",
+            wait:
+              "run.script path=./scripts/start.sh shell=bash && wait.time seconds=2 && tail.file file=app.log lines=40",
+          };
+
+  setElementText("knowledge-batch-example", multilineBatch
+    ? "create.folder name=demo\ncreate.file name=demo/readme.md\nread.file name=demo/readme.md"
+    : "create.folder name=demo && create.file name=demo/readme.md && read.file name=demo/readme.md");
+  setElementText("knowledge-wait-example", data.wait);
+  setElementText("knowledge-wait-short-example", "create.file name=ready.txt && wait.time ms=500 && read.file name=ready.txt");
+  setElementText("knowledge-native-example", data.native);
+  setElementText("knowledge-native-quoted-example", `! "${data.nativeShell}"`);
+  setElementText("knowledge-native-shell-example", data.nativeShell);
+  setElementText("knowledge-package-title", data.packageTitle);
+  setElementText("knowledge-package-examples", data.packages);
+  setElementText("knowledge-package-note", data.packageNote);
+}
+
+function setElementText(id, text) {
+  const el = $(id);
+  if (el) el.textContent = text;
 }
 
 async function openDictionary() {
@@ -286,7 +404,8 @@ function dictionaryEntryNode(entry, query) {
   const mappings = document.createElement("div");
   mappings.className = "dictionary-mappings";
   if (entry.adapters?.length) {
-    for (const adapter of entry.adapters) mappings.appendChild(dictionaryMappingNode(adapter));
+    const adapters = dictionaryAdaptersForDisplay(entry.adapters);
+    for (const adapter of adapters) mappings.appendChild(dictionaryMappingNode(adapter, adapters));
   } else {
     const internal = document.createElement("div");
     internal.className = "dictionary-mapping muted";
@@ -309,12 +428,27 @@ function dictionaryEntryNode(entry, query) {
   return card;
 }
 
-function dictionaryMappingNode(adapter) {
+function dictionaryAdaptersForDisplay(adapters = []) {
+  return [...adapters].sort((a, b) => adapterDisplayPriority(a, adapters) - adapterDisplayPriority(b, adapters));
+}
+
+function adapterDisplayPriority(adapter, adapters) {
+  if (adapter.name === serverAdapter) return 0;
+  if (adapter.name === "node" && !adapters.some((item) => item.name === serverAdapter)) return 0;
+  if (adapter.name === "node") return 1;
+  return 2;
+}
+
+function dictionaryMappingNode(adapter, adapters = []) {
   const row = document.createElement("div");
   row.className = "dictionary-mapping";
+  if (adapterIsCurrent(adapter, adapters)) row.classList.add("dictionary-mapping-current");
+  else row.classList.add("dictionary-mapping-other");
   const label = document.createElement("span");
   label.className = "dictionary-map-label";
-  label.textContent = adapterLabel(adapter.name);
+  label.textContent = adapterIsCurrent(adapter, adapters)
+    ? `${adapterLabel(adapter.name)} · this OS`
+    : adapterLabel(adapter.name);
   const code = document.createElement("code");
   code.textContent = adapter.pattern || adapter.command;
   row.append(label, code);
@@ -324,6 +458,11 @@ function dictionaryMappingNode(adapter) {
     row.appendChild(note);
   }
   return row;
+}
+
+function adapterIsCurrent(adapter, adapters = []) {
+  if (adapter.name === serverAdapter) return true;
+  return adapter.name === "node" && !adapters.some((item) => item.name === serverAdapter);
 }
 
 function dictionaryParamsNode(params) {
@@ -353,7 +492,7 @@ function dictionaryExamplesNode(examples) {
 function adapterLabel(name) {
   switch (name) {
     case "posix":
-      return "POSIX";
+      return "POSIX shell";
     case "powershell":
       return "PowerShell";
     case "node":
@@ -371,7 +510,7 @@ function nativeQueryToIdel(entry, query) {
   const tokens = tokenizeIdel(String(query ?? "").trim());
   if (!tokens.length) return "";
   const nativeCommand = tokens[0].toLowerCase();
-  for (const adapter of entry.adapters ?? []) {
+  for (const adapter of dictionaryAdaptersForDisplay(entry.adapters ?? [])) {
     if (String(adapter.command ?? "").toLowerCase() !== nativeCommand) continue;
     const params = paramsFromNativeArgs(adapter, tokens.slice(1));
     const rendered = Object.entries(params).map(([key, value]) => `${key}=${quoteDictionaryValue(value)}`);
@@ -484,6 +623,7 @@ async function refreshAgentAvailability() {
     const res = await fetch("/api/health");
     const d = res.ok ? await res.json() : null;
     if (d?.ok && Object.prototype.hasOwnProperty.call(d, "agentAvailable")) {
+      if (Object.prototype.hasOwnProperty.call(d, "platform")) setServerPlatform(d.platform);
       setAgentAvailability(d.agentAvailable !== false);
       return agentAvailable;
     }
@@ -695,6 +835,7 @@ function syncCommandArea() {
     input.value = "";
     hideCompletions();
   }
+  resizeCommandInput();
 }
 
 function createTerminalTab(activate = true) {
@@ -847,6 +988,70 @@ function html(node) {
   const output = activeOutput();
   output.appendChild(node);
   output.scrollTop = output.scrollHeight;
+}
+
+function terminalLines(output = activeOutput()) {
+  return Array.from(output?.children ?? []).filter((node) => node.classList?.contains("line"));
+}
+
+function clearTerminalLines(command) {
+  const parsed = parseIdelLine(command);
+  const name = parsed.command === "clear" || parsed.command === "cleare.all" ? "clear.all" : parsed.command;
+  const output = activeOutput();
+  const lines = terminalLines(output);
+  const positional = parsed.args[0];
+
+  if (name === "clear.all") {
+    output.replaceChildren();
+    return true;
+  }
+
+  if (name === "clear.last" || name === "clear.first") {
+    const limit = positiveInteger(parsed.params.limit ?? positional ?? 1);
+    if (!limit) return clearUsage(command, "limit must be a positive number.");
+    const selected = name === "clear.last" ? lines.slice(-limit) : lines.slice(0, limit);
+    for (const node of selected) node.remove();
+    output.scrollTop = output.scrollHeight;
+    return true;
+  }
+
+  if (name === "clear.range") {
+    const from = positiveInteger(parsed.params.from);
+    const to = positiveInteger(parsed.params.to);
+    if (!from || !to) return clearUsage(command, "from and to must be positive row numbers.");
+    if (from > to) return clearUsage(command, "from must be less than or equal to to.");
+    const selected = lines.slice(from - 1, to);
+    for (const node of selected) node.remove();
+    output.scrollTop = Math.min(output.scrollTop, output.scrollHeight);
+    return true;
+  }
+
+  return false;
+}
+
+function isLocalClearCommand(command) {
+  const parsed = parseIdelLine(command);
+  return new Set(["clear", "clear.all", "clear.last", "clear.first", "clear.range", "cleare.all"]).has(parsed.command);
+}
+
+function isSingleLocalClearCommand(command) {
+  if (!isLocalClearCommand(command)) return false;
+  try {
+    return splitBatchLine(command).length === 1;
+  } catch {
+    return false;
+  }
+}
+
+function clearUsage(command, reason) {
+  line("idel> " + command, "cmd");
+  line(`${reason} Usage: clear.all | clear.last limit=10 | clear.first limit=10 | clear.range from=2 to=5`, "err");
+  return true;
+}
+
+function positiveInteger(value) {
+  const number = Number(value);
+  return Number.isInteger(number) && number > 0 ? number : 0;
 }
 
 async function copyLineText(text, button) {
@@ -1215,6 +1420,51 @@ async function runIdel(command) {
     else if (event === "error") line("Error: " + (data.error ?? "unknown"), "err");
   });
   refreshLogs();
+}
+
+async function runMultilineBatch(raw) {
+  const commands = multilineCommands(raw);
+  line("idel> " + raw, "cmd");
+  line(`batch: ${commands.length} step(s)`, "muted");
+  for (let i = 0; i < commands.length; i++) {
+    const command = commands[i];
+    line(`batch ${i + 1}/${commands.length}> ${command}`, "muted");
+    const ok = await runBatchStep(command);
+    if (!ok) {
+      const skipped = Math.max(0, commands.length - i - 1);
+      if (skipped) line(`batch stopped at step ${i + 1}; ${skipped} step(s) skipped`, "err");
+      break;
+    }
+  }
+  refreshLogs();
+}
+
+async function runBatchStep(command) {
+  if (isLocalClearCommand(command)) return clearTerminalLines(command);
+  let lastOutcome;
+  let stopped = false;
+  let errored = false;
+  await postSse("/api/run/stream", { command, dryRun: false }, (event, data) => {
+    if (event === "outcome") {
+      lastOutcome = data;
+      renderOutcome(data);
+    } else if (event === "batch_start") line(`nested batch: ${data.commands?.length ?? 0} step(s)`, "muted");
+    else if (event === "batch_step") line(`nested batch ${data.index}/${data.total}> ${data.command}`, "muted");
+    else if (event === "batch_stop") {
+      stopped = true;
+      line(`nested batch stopped at step ${data.index}`, "err");
+    }
+    else if (event === "error") {
+      errored = true;
+      line("Error: " + (data.error ?? "unknown"), "err");
+    }
+  });
+  return !errored && !stopped && outcomeSucceeded(lastOutcome);
+}
+
+function outcomeSucceeded(outcome) {
+  const result = outcome?.record?.result;
+  return result === "success" || result === "dry_run";
 }
 
 async function runEditorCommand(command) {
@@ -1730,12 +1980,16 @@ function parseIdelLine(value) {
   const tokens = tokenizeIdel(value.trim());
   const [command = "", ...rest] = tokens;
   const params = {};
+  const args = [];
   for (const token of rest) {
     const eq = token.indexOf("=");
-    if (eq <= 0) continue;
+    if (eq <= 0) {
+      args.push(token);
+      continue;
+    }
     params[token.slice(0, eq)] = token.slice(eq + 1);
   }
-  return { command, params };
+  return { command, params, args };
 }
 
 function tokenizeIdel(value) {
@@ -2162,7 +2416,7 @@ let completeTimer;
 const COMPLETION_LIMIT = 30;
 async function updateCompletions() {
   if (mode !== "idel" || activeTab()?.type !== "terminal") return hideCompletions();
-  const value = input.value;
+  const value = currentInputSegment().value;
   if (!value.trim()) return hideCompletions();
   clearTimeout(completeTimer);
   completeTimer = setTimeout(async () => {
@@ -2239,14 +2493,22 @@ function hideCompletions() {
 
 function applyCompletion(c) {
   // The server returns whole-token suggestions; replace the last token.
-  const value = input.value;
+  const segment = currentInputSegment();
+  const value = segment.value;
   const bounds = lastTokenBounds(value);
-  input.value =
+  const replacement =
     value.slice(0, bounds.start) +
     c +
     value.slice(bounds.end) +
     completionSuffix(c, value, bounds);
+  input.value =
+    input.value.slice(0, segment.start) +
+    replacement +
+    input.value.slice(segment.end);
+  const cursor = segment.start + replacement.length;
+  input.setSelectionRange?.(cursor, cursor);
   hideCompletions();
+  resizeCommandInput();
   input.focus();
 }
 
@@ -2392,6 +2654,7 @@ function setMode(next, options = {}) {
   syncInputPlaceholder();
   hideCompletions();
   syncCommandArea();
+  resizeCommandInput();
   if (activeTab()?.type !== "editor") input.focus();
 }
 
@@ -2400,7 +2663,51 @@ function syncInputPlaceholder() {
   input.placeholder =
     mode === "ask"
       ? compact ? "ask what to do" : "describe what you want — e.g. delete the dist folder"
-      : compact ? "command (Tab, ↑/↓)" : "verb.scope param=value   (Tab to complete, ↑/↓ history)";
+      : multilineBatch
+        ? compact ? "batch lines (Ctrl+Enter)" : "one command per line   (Ctrl+Enter to run, Tab completes current line)"
+        : compact ? "command (Tab, ↑/↓)" : "verb.scope param=value   (Tab to complete, ↑/↓ history)";
+}
+
+function setMultilineBatch(next) {
+  multilineBatch = Boolean(next);
+  form.classList.toggle("multiline", multilineBatch);
+  batchToggle?.classList.toggle("active", multilineBatch);
+  batchToggle?.setAttribute("aria-pressed", String(multilineBatch));
+  batchToggle?.setAttribute(
+    "title",
+    multilineBatch
+      ? "Multiline batch input is on. Use Ctrl+Enter to run."
+      : "Multiline batch input. Use Ctrl+Enter to run.",
+  );
+  renderKnowledgeBase();
+  syncInputPlaceholder();
+  resizeCommandInput();
+  input.focus();
+}
+
+function resizeCommandInput() {
+  if (!input || input.tagName !== "TEXTAREA") return;
+  input.style.height = "auto";
+  const max = multilineBatch ? 144 : 32;
+  const nextHeight = Math.min(input.scrollHeight, max);
+  input.style.height = `${Math.max(nextHeight, 22)}px`;
+  input.style.overflowY = input.scrollHeight > max ? "auto" : "hidden";
+}
+
+function currentInputSegment() {
+  if (!multilineBatch) return { start: 0, end: input.value.length, value: input.value };
+  const cursor = input.selectionStart ?? input.value.length;
+  const start = input.value.slice(0, cursor).lastIndexOf("\n") + 1;
+  const nextNewline = input.value.indexOf("\n", cursor);
+  const end = nextNewline === -1 ? input.value.length : nextNewline;
+  return { start, end, value: input.value.slice(start, end) };
+}
+
+function multilineCommands(value) {
+  return String(value)
+    .split(/\r?\n/)
+    .map((lineText) => lineText.trim())
+    .filter(Boolean);
 }
 
 function activateAskMode() {
@@ -2424,7 +2731,12 @@ newTerminalBtn.addEventListener("click", () => createTerminalTab(true));
 if (compactInputMedia?.addEventListener) compactInputMedia.addEventListener("change", syncInputPlaceholder);
 else if (compactInputMedia?.addListener) compactInputMedia.addListener(syncInputPlaceholder);
 
-input.addEventListener("input", updateCompletions);
+batchToggle?.addEventListener("click", () => setMultilineBatch(!multilineBatch));
+
+input.addEventListener("input", () => {
+  resizeCommandInput();
+  void updateCompletions();
+});
 
 input.addEventListener("keydown", (e) => {
   if (e.ctrlKey && !e.metaKey && e.key.toLowerCase() === "c") {
@@ -2435,6 +2747,18 @@ input.addEventListener("keydown", (e) => {
       hideCompletions();
       line("^C", "muted");
     }
+    return;
+  }
+  if (e.key === "Enter") {
+    if (multilineBatch) {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        submitCommandInput();
+      }
+      return;
+    }
+    e.preventDefault();
+    submitCommandInput();
     return;
   }
   if (!completionsEl.hidden && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
@@ -2464,6 +2788,7 @@ input.addEventListener("keydown", (e) => {
     if (terminal.history.length) {
       terminal.histIdx = terminal.histIdx < 0 ? terminal.history.length - 1 : Math.max(0, terminal.histIdx - 1);
       input.value = terminal.history[terminal.histIdx] ?? "";
+      resizeCommandInput();
     }
   }
   if (e.key === "ArrowDown" && completionsEl.hidden) {
@@ -2472,12 +2797,21 @@ input.addEventListener("keydown", (e) => {
     if (terminal.histIdx >= 0) {
       terminal.histIdx = terminal.histIdx + 1;
       input.value = terminal.histIdx >= terminal.history.length ? ((terminal.histIdx = -1), "") : terminal.history[terminal.histIdx];
+      resizeCommandInput();
     }
   }
 });
 
-form.addEventListener("submit", async (e) => {
+form.addEventListener("submit", (e) => {
   e.preventDefault();
+  submitCommandInput();
+});
+
+function submitCommandInput() {
+  void submitCommandInputAsync();
+}
+
+async function submitCommandInputAsync() {
   const value = input.value.trim();
   if (input.disabled) return;
   if (!value) return;
@@ -2485,11 +2819,14 @@ form.addEventListener("submit", async (e) => {
   terminal.history.push(value);
   terminal.histIdx = -1;
   input.value = "";
+  resizeCommandInput();
   hideCompletions();
   commandBusy = true;
   syncCommandArea();
   try {
     if (mode === "ask") await runAsk(value);
+    else if (multilineBatch && multilineCommands(value).length > 1) await runMultilineBatch(value);
+    else if (isSingleLocalClearCommand(value)) clearTerminalLines(value);
     else if (isBatchLine(value)) await runIdel(value);
     else if (parseLearnCommand(value)) await runLearnCommand(value);
     else if (isAskAiCommand(value)) {
@@ -2504,7 +2841,7 @@ form.addEventListener("submit", async (e) => {
     syncCommandArea();
     if (activeTab()?.type !== "editor") input.focus();
   }
-});
+}
 
 // ---------------------------------------------------------------------------
 // Boot
@@ -2518,6 +2855,7 @@ async function boot() {
     if (d?.ok) {
       statusEl.textContent = "● online · idel " + (d.version ?? "");
       statusEl.classList.add("online");
+      if (Object.prototype.hasOwnProperty.call(d, "platform")) setServerPlatform(d.platform);
       if (Object.prototype.hasOwnProperty.call(d, "agentAvailable")) {
         sawHealthAgentStatus = true;
         setAgentAvailability(d.agentAvailable !== false);
@@ -2537,7 +2875,10 @@ async function boot() {
 initPreferences();
 initClaudeSetupDialog();
 initDictionary();
+initKnowledgeBase();
 initScreenshotActions();
 initWorkspace();
 initPageRefreshGuard();
+setServerPlatform("");
+setMultilineBatch(false);
 boot();
