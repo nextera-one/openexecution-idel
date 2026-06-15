@@ -73,10 +73,14 @@ const claudeSetupClose = $("claude-setup-close");
 const claudeSetupCheck = $("claude-setup-check");
 const claudeSetupStatus = $("claude-setup-status");
 const showLogsInput = $("pref-show-logs");
+const blockPasteInput = $("pref-block-paste");
+const blockCopyInput = $("pref-block-copy");
 const themeButtons = Array.from(document.querySelectorAll("[data-theme]"));
 const paletteButtons = Array.from(document.querySelectorAll("[data-palette]"));
 const fontSizeButtons = Array.from(document.querySelectorAll("[data-font-size]"));
 const effectButtons = Array.from(document.querySelectorAll("[data-effect]"));
+const paletteSelected = $("palette-selected");
+const paletteSelectedSwatch = $("palette-selected-swatch");
 const screenshotDialog = $("screenshot-dialog");
 const screenshotClose = $("screenshot-close");
 const screenshotRedact = $("screenshot-redact");
@@ -84,6 +88,15 @@ const screenshotRedactText = $("screenshot-redact-text");
 const screenshotCopy = $("screenshot-copy");
 const screenshotDownload = $("screenshot-download");
 const screenshotScopeButtons = Array.from(document.querySelectorAll("[data-screenshot-scope]"));
+const pageReloadDialog = $("page-reload-dialog");
+const pageReloadStay = $("page-reload-stay");
+const pageReloadStayX = $("page-reload-stay-x");
+const pageReloadConfirm = $("page-reload-confirm");
+const pasteConfirmDialog = $("paste-confirm-dialog");
+const pasteConfirmPreview = $("paste-confirm-preview");
+const pasteConfirmCancel = $("paste-confirm-cancel");
+const pasteConfirmCancelX = $("paste-confirm-cancel-x");
+const pasteConfirmRun = $("paste-confirm-run");
 
 let mode = location.hash === "#ask" ? "ask" : "idel";
 let completions = [];
@@ -122,17 +135,21 @@ let effectCanvas = null;
 let matrixAnimationId = 0;
 let matrixColumns = [];
 let matrixLastFrame = 0;
+let pageReloadConfirmed = false;
+let pendingNativePaste = null;
 
 const THEMES = new Set(["dark", "light"]);
-const PALETTES = new Set(["cyan", "blue", "teal", "green", "amber", "orange", "rose", "red", "violet", "slate"]);
+const PALETTES = new Set(["cyan", "blue", "sky", "teal", "mint", "green", "lime", "amber", "orange", "rose", "red", "fuchsia", "violet", "indigo", "slate", "stone"]);
 const FONT_SIZES = new Set(["small", "normal", "large", "xlarge"]);
-const EFFECTS = new Set(["none", "matrix", "scanlines", "glow"]);
+const EFFECTS = new Set(["none", "matrix", "scanlines", "glow", "grid", "pulse", "static"]);
 const PREF_KEYS = {
   theme: "idel.theme",
   palette: "idel.palette",
   fontSize: "idel.fontSize",
   effect: "idel.effect",
   showLogs: "idel.showLogs",
+  blockPaste: "idel.blockPaste",
+  blockCopy: "idel.blockCopy",
 };
 const WORKFLOW_KEY = "idel.workflows";
 const SETUP_DISMISSED_KEY = "idel.setup.dismissed";
@@ -144,6 +161,8 @@ const DEFAULT_PREFERENCES = {
   fontSize: "normal",
   effect: "none",
   showLogs: true,
+  blockPaste: false,
+  blockCopy: false,
 };
 
 function setServerPlatform(platformName) {
@@ -180,6 +199,7 @@ function serverPlatformKind() {
 
 function initPreferences() {
   applyPreferences(readPreferences(), false);
+  initHeaderMenus();
   for (const btn of themeButtons) {
     btn.addEventListener("click", () => {
       applyPreferences({ ...currentPreferences(), theme: btn.dataset.theme });
@@ -203,6 +223,27 @@ function initPreferences() {
   showLogsInput?.addEventListener("change", () => {
     applyPreferences({ ...currentPreferences(), showLogs: showLogsInput.checked });
   });
+  blockPasteInput?.addEventListener("change", () => {
+    applyPreferences({ ...currentPreferences(), blockPaste: blockPasteInput.checked });
+  });
+  blockCopyInput?.addEventListener("change", () => {
+    applyPreferences({ ...currentPreferences(), blockCopy: blockCopyInput.checked });
+  });
+  document.addEventListener("copy", (e) => {
+    if (!clipboardCopyBlocked() || !isTerminalCopyTarget(e.target)) return;
+    e.preventDefault();
+    line("Copy is blocked by Preferences.", "muted");
+  }, { capture: true });
+  pasteConfirmCancel?.addEventListener("click", closePasteConfirmDialog);
+  pasteConfirmCancelX?.addEventListener("click", closePasteConfirmDialog);
+  pasteConfirmRun?.addEventListener("click", confirmNativePaste);
+  pasteConfirmDialog?.addEventListener("cancel", (e) => {
+    e.preventDefault();
+    closePasteConfirmDialog();
+  });
+  pasteConfirmDialog?.addEventListener("click", (e) => {
+    if (e.target === pasteConfirmDialog) closePasteConfirmDialog();
+  });
   const syncMotion = () => applyTerminalEffect(currentPreferences().effect);
   if (reducedMotionMedia?.addEventListener) reducedMotionMedia.addEventListener("change", syncMotion);
   else if (reducedMotionMedia?.addListener) reducedMotionMedia.addListener(syncMotion);
@@ -210,6 +251,25 @@ function initPreferences() {
   preferencesClose?.addEventListener("click", closePreferences);
   preferencesDialog?.addEventListener("click", (e) => {
     if (e.target === preferencesDialog) closePreferences();
+  });
+}
+
+function initHeaderMenus() {
+  const menus = Array.from(document.querySelectorAll(".header-menu"));
+  for (const menu of menus) {
+    menu.addEventListener("toggle", () => {
+      if (!menu.open) return;
+      for (const other of menus) {
+        if (other !== menu) other.open = false;
+      }
+    });
+  }
+  document.querySelector(".actions-menu .header-menu-panel")?.addEventListener("click", (e) => {
+    if (!(e.target instanceof HTMLButtonElement)) return;
+    const menu = e.currentTarget.closest(".header-menu");
+    window.setTimeout(() => {
+      if (menu) menu.open = false;
+    }, 0);
   });
 }
 
@@ -1420,12 +1480,16 @@ function readPreferences() {
   const fontSize = storageGet(PREF_KEYS.fontSize);
   const effect = storageGet(PREF_KEYS.effect);
   const showLogs = storageGet(PREF_KEYS.showLogs);
+  const blockPaste = storageGet(PREF_KEYS.blockPaste);
+  const blockCopy = storageGet(PREF_KEYS.blockCopy);
   return {
     theme: THEMES.has(theme) ? theme : DEFAULT_PREFERENCES.theme,
     palette: PALETTES.has(palette) ? palette : DEFAULT_PREFERENCES.palette,
     fontSize: FONT_SIZES.has(fontSize) ? fontSize : DEFAULT_PREFERENCES.fontSize,
     effect: EFFECTS.has(effect) ? effect : DEFAULT_PREFERENCES.effect,
     showLogs: showLogs === null ? DEFAULT_PREFERENCES.showLogs : showLogs !== "false",
+    blockPaste: blockPaste === null ? DEFAULT_PREFERENCES.blockPaste : blockPaste === "true",
+    blockCopy: blockCopy === null ? DEFAULT_PREFERENCES.blockCopy : blockCopy === "true",
   };
 }
 
@@ -1436,6 +1500,8 @@ function currentPreferences() {
     fontSize: classChoice(FONT_SIZES, "font", DEFAULT_PREFERENCES.fontSize),
     effect: classChoice(EFFECTS, "effect", DEFAULT_PREFERENCES.effect),
     showLogs: !document.body.classList.contains("logs-hidden"),
+    blockPaste: document.body.classList.contains("paste-blocked"),
+    blockCopy: document.body.classList.contains("copy-blocked"),
   };
 }
 
@@ -1453,23 +1519,32 @@ function applyPreferences(next, persist = true) {
     fontSize: FONT_SIZES.has(next.fontSize) ? next.fontSize : DEFAULT_PREFERENCES.fontSize,
     effect: EFFECTS.has(next.effect) ? next.effect : DEFAULT_PREFERENCES.effect,
     showLogs: next.showLogs !== false,
+    blockPaste: next.blockPaste === true,
+    blockCopy: next.blockCopy === true,
   };
   replaceBodyChoice(THEMES, "theme", prefs.theme);
   replaceBodyChoice(PALETTES, "palette", prefs.palette);
   replaceBodyChoice(FONT_SIZES, "font", prefs.fontSize);
   replaceBodyChoice(EFFECTS, "effect", prefs.effect);
   document.body.classList.toggle("logs-hidden", !prefs.showLogs);
+  document.body.classList.toggle("paste-blocked", prefs.blockPaste);
+  document.body.classList.toggle("copy-blocked", prefs.blockCopy);
   if (showLogsInput) showLogsInput.checked = prefs.showLogs;
+  if (blockPasteInput) blockPasteInput.checked = prefs.blockPaste;
+  if (blockCopyInput) blockCopyInput.checked = prefs.blockCopy;
   syncChoiceButtons(themeButtons, "theme", prefs.theme);
   syncChoiceButtons(paletteButtons, "palette", prefs.palette);
   syncChoiceButtons(fontSizeButtons, "fontSize", prefs.fontSize);
   syncChoiceButtons(effectButtons, "effect", prefs.effect);
+  syncPaletteSummary(prefs.palette);
   if (persist) {
     storageSet(PREF_KEYS.theme, prefs.theme);
     storageSet(PREF_KEYS.palette, prefs.palette);
     storageSet(PREF_KEYS.fontSize, prefs.fontSize);
     storageSet(PREF_KEYS.effect, prefs.effect);
     storageSet(PREF_KEYS.showLogs, String(prefs.showLogs));
+    storageSet(PREF_KEYS.blockPaste, String(prefs.blockPaste));
+    storageSet(PREF_KEYS.blockCopy, String(prefs.blockCopy));
   }
   applyTerminalEffect(prefs.effect);
   updateNativeTerminalAppearance();
@@ -1588,6 +1663,108 @@ function syncChoiceButtons(buttons, key, selected) {
   }
 }
 
+function syncPaletteSummary(palette) {
+  const selected = PALETTES.has(palette) ? palette : DEFAULT_PREFERENCES.palette;
+  if (paletteSelected) paletteSelected.textContent = paletteLabel(selected);
+  if (paletteSelectedSwatch) {
+    paletteSelectedSwatch.className = `selected-palette-swatch palette-${selected}`;
+  }
+}
+
+function paletteLabel(palette) {
+  return String(palette || "")
+    .split("-")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ") || "Accent";
+}
+
+function clipboardPasteBlocked() {
+  return document.body.classList.contains("paste-blocked");
+}
+
+function clipboardCopyBlocked() {
+  return document.body.classList.contains("copy-blocked");
+}
+
+function isTerminalCopyTarget(target) {
+  const node = target instanceof Element ? target : target?.parentElement;
+  if (!node) return false;
+  return Boolean(node.closest(".term-output, .native-xterm, .workspace-tabs, .line-actions"));
+}
+
+function showClipboardBlocked(kind) {
+  line(`${kind} is blocked by Preferences.`, "muted");
+}
+
+function shouldConfirmNativePaste(text) {
+  const value = String(text ?? "");
+  return /[\r\n]/.test(value) || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(value) || value.length > 80;
+}
+
+function isLikelyNativePasteData(data) {
+  const value = String(data ?? "");
+  if (!value || value === "\r" || value === "\n") return false;
+  if (/^\x1b\[[0-9;?]*[~A-Za-z]$/.test(value)) return false;
+  return value.length > 12 || /[\r\n]/.test(value);
+}
+
+function queueNativePaste(tab, text) {
+  if (!text) return;
+  if (clipboardPasteBlocked()) {
+    showClipboardBlocked("Paste");
+    return;
+  }
+  if (shouldConfirmNativePaste(text)) {
+    openPasteConfirmDialog(tab, text);
+    return;
+  }
+  queueNativeInput(tab, text, true);
+}
+
+function openPasteConfirmDialog(tab, text) {
+  if (!tab?.id) return;
+  pendingNativePaste = { tabId: tab.id, text: String(text ?? "") };
+  if (pasteConfirmPreview) pasteConfirmPreview.textContent = nativePastePreview(pendingNativePaste.text);
+  if (!pasteConfirmDialog) {
+    if (confirm("Paste this text into the native shell?")) confirmNativePaste();
+    return;
+  }
+  if (typeof pasteConfirmDialog.showModal === "function") pasteConfirmDialog.showModal();
+  else pasteConfirmDialog.setAttribute("open", "");
+  pasteConfirmRun?.focus();
+}
+
+function closePasteConfirmDialog() {
+  pendingNativePaste = null;
+  if (!pasteConfirmDialog) return;
+  if (typeof pasteConfirmDialog.close === "function" && pasteConfirmDialog.open) pasteConfirmDialog.close();
+  else pasteConfirmDialog.removeAttribute("open");
+  focusActiveInput();
+}
+
+function confirmNativePaste() {
+  const pending = pendingNativePaste;
+  pendingNativePaste = null;
+  if (pasteConfirmDialog?.open) {
+    if (typeof pasteConfirmDialog.close === "function") pasteConfirmDialog.close();
+    else pasteConfirmDialog.removeAttribute("open");
+  }
+  const tab = tabs.find((item) => item.id === pending?.tabId);
+  if (tab?.type === "native" && pending?.text) queueNativeInput(tab, pending.text, true);
+  focusActiveInput();
+}
+
+function nativePastePreview(text) {
+  const normalized = String(text ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const visible = normalized
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, (ch) => `^${String.fromCharCode(ch.charCodeAt(0) + 64)}`);
+  const lines = visible.split("\n");
+  const clipped = lines.slice(0, 8).join("\n");
+  const suffix = lines.length > 8 ? `\n... ${lines.length - 8} more line(s)` : "";
+  return (clipped + suffix).slice(0, 1200);
+}
+
 function openPreferences() {
   if (!preferencesDialog) return;
   if (typeof preferencesDialog.showModal === "function") preferencesDialog.showModal();
@@ -1633,8 +1810,19 @@ function initWorkspace() {
 }
 
 function initPageRefreshGuard() {
+  pageReloadStay?.addEventListener("click", closePageReloadDialog);
+  pageReloadStayX?.addEventListener("click", closePageReloadDialog);
+  pageReloadConfirm?.addEventListener("click", confirmPageReload);
+  pageReloadDialog?.addEventListener("cancel", (e) => {
+    e.preventDefault();
+    closePageReloadDialog();
+  });
+  pageReloadDialog?.addEventListener("click", (e) => {
+    if (e.target === pageReloadDialog) closePageReloadDialog();
+  });
+
   window.addEventListener("beforeunload", (e) => {
-    if (!shouldConfirmPageExit()) return;
+    if (pageReloadConfirmed || !shouldConfirmPageExit()) return;
     e.preventDefault();
     e.returnValue = PAGE_EXIT_MESSAGE;
     return PAGE_EXIT_MESSAGE;
@@ -1646,10 +1834,40 @@ function initPageRefreshGuard() {
       key === "f5" ||
       ((e.ctrlKey || e.metaKey) && key === "r");
     if (!refreshShortcut || !shouldConfirmPageExit()) return;
-    if (confirm(PAGE_EXIT_MESSAGE)) return;
     e.preventDefault();
     e.stopPropagation();
+    openPageReloadDialog();
   }, { capture: true });
+}
+
+function openPageReloadDialog() {
+  if (!pageReloadDialog) {
+    if (confirm(PAGE_EXIT_MESSAGE)) confirmPageReload();
+    return;
+  }
+  if (pageReloadDialog.open) return;
+  if (typeof pageReloadDialog.showModal === "function") pageReloadDialog.showModal();
+  else pageReloadDialog.setAttribute("open", "");
+  pageReloadConfirm?.focus();
+}
+
+function closePageReloadDialog() {
+  if (!pageReloadDialog) return;
+  if (typeof pageReloadDialog.close === "function" && pageReloadDialog.open) pageReloadDialog.close();
+  else pageReloadDialog.removeAttribute("open");
+  focusActiveInput();
+}
+
+function confirmPageReload() {
+  pageReloadConfirmed = true;
+  if (pageReloadDialog?.open) {
+    if (typeof pageReloadDialog.close === "function") pageReloadDialog.close();
+    else pageReloadDialog.removeAttribute("open");
+  }
+  location.reload();
+  window.setTimeout(() => {
+    pageReloadConfirmed = false;
+  }, 3000);
 }
 
 function shouldConfirmPageExit() {
@@ -1909,6 +2127,11 @@ function nativeTabMeta(tab) {
 }
 
 async function copyNativeTerminal(tab, button) {
+  if (clipboardCopyBlocked()) {
+    flashButton(button, "Blocked");
+    showClipboardBlocked("Copy");
+    return;
+  }
   const text = nativeTerminalCopyText(tab);
   if (!text.trim()) {
     flashButton(button, "Empty");
@@ -2238,9 +2461,25 @@ function mountNativeTerminal(tab) {
   const fitAddon = new FitAddonCtor();
   term.loadAddon(fitAddon);
   term.open(host);
+  host.addEventListener("paste", (e) => {
+    const text = e.clipboardData?.getData("text") ?? "";
+    if (!text) return;
+    e.preventDefault();
+    queueNativePaste(tab, text);
+  }, { capture: true });
   tab.native.terminal = term;
   tab.native.fitAddon = fitAddon;
-  tab.native.dataDisposable = term.onData((data) => queueNativeInput(tab, data, true));
+  tab.native.dataDisposable = term.onData((data) => {
+    if (clipboardPasteBlocked() && isLikelyNativePasteData(data)) {
+      showClipboardBlocked("Paste");
+      return;
+    }
+    if (isLikelyNativePasteData(data) && shouldConfirmNativePaste(data)) {
+      openPasteConfirmDialog(tab, data);
+      return;
+    }
+    queueNativeInput(tab, data, true);
+  });
   tab.native.resizeDisposable = term.onResize(({ cols, rows }) => queueNativeResize(tab, cols, rows));
   if (typeof ResizeObserver === "function") {
     tab.native.resizeObserver = new ResizeObserver(() => fitNativeTerminal(tab));
@@ -2874,6 +3113,11 @@ function positiveInteger(value) {
 }
 
 async function copyLineText(text, button) {
+  if (clipboardCopyBlocked()) {
+    flashButton(button, "Blocked");
+    showClipboardBlocked("Copy");
+    return;
+  }
   try {
     await writeClipboardText(text);
     flashButton(button, "Copied");
@@ -2883,6 +3127,7 @@ async function copyLineText(text, button) {
 }
 
 async function writeClipboardText(text) {
+  if (clipboardCopyBlocked()) throw new Error("copy blocked");
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text);
     return;
@@ -2932,6 +3177,11 @@ async function exportScreenshot(action) {
   const redacted = screenshotRedact?.checked ? redactScreenshotText(text) : text;
   const canvas = renderTextScreenshot(output, redacted, screenshotScope);
   if (action === "copy") {
+    if (clipboardCopyBlocked()) {
+      flashButton(screenshotCopy, "Blocked");
+      showClipboardBlocked("Copy");
+      return;
+    }
     try {
       await copyCanvasPng(canvas);
       flashButton(screenshotCopy, "Copied");
@@ -3079,6 +3329,7 @@ function splitLongScreenshotChunk(ctx, chunk, maxWidth) {
 }
 
 async function copyCanvasPng(canvas) {
+  if (clipboardCopyBlocked()) throw new Error("copy blocked");
   if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") {
     throw new Error("image clipboard unavailable");
   }
@@ -4821,11 +5072,16 @@ input.addEventListener("keydown", (e) => {
 
 input.addEventListener("paste", (e) => {
   const tab = activeTab();
+  if (clipboardPasteBlocked()) {
+    e.preventDefault();
+    showClipboardBlocked("Paste");
+    return;
+  }
   if (tab?.type !== "native") return;
   const text = e.clipboardData?.getData("text") ?? "";
   if (!text) return;
   e.preventDefault();
-  queueNativeInput(tab, text, true);
+  queueNativePaste(tab, text);
 });
 
 form.addEventListener("submit", (e) => {

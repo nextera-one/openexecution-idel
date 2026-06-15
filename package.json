@@ -13,11 +13,17 @@
     "typecheck": "tsc --build --dry",
     "smoke": "node scripts/smoke-test.mjs",
     "smoke:bash": "bash scripts/smoke-test.sh",
+    "upgrade:latest": "bash scripts/upgrade-latest.sh",
+    "upgrade:latest:npm": "bash scripts/upgrade-latest.sh --npm",
     "publish:dry-run": "pnpm -r publish --dry-run --no-git-checks",
     "install:local": "bash scripts/install-local.sh",
     "serve": "node scripts/sync-xterm-assets.mjs && node packages/cli/bin/idel.js serve --static packages/web/public",
     "ui": "node scripts/sync-xterm-assets.mjs && node packages/cli/bin/idel.js serve --static packages/web/public --enable-native-terminal --open",
-    "ui:dev": "bash scripts/run-ui.sh"
+    "ui:dev": "bash scripts/run-ui.sh",
+    "desktop:build": "node scripts/build-desktop.mjs",
+    "desktop:build:linux": "node scripts/build-desktop.mjs --platform linux",
+    "desktop:build:macos": "node scripts/build-desktop.mjs --platform macos",
+    "desktop:build:windows": "node scripts/build-desktop.mjs --platform windows"
   },
   "engines": {
     "node": ">=22.3"
@@ -28,6 +34,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.9.3",
+    "electron": "^42.4.0",
     "rimraf": "^6.1.3",
     "typescript": "^6.0.3",
     "vite": "^8.0.16",

@@ -178,7 +178,7 @@ idel 'run.script path=./scripts/start.sh shell=bash && wait.time seconds=2 && ta
 
 Each step is parsed, classified, policy-checked, executed, and logged as its own command. The next step starts only after the previous step completes successfully. During an explicit `--dry-run`, dry-run steps are allowed to continue so you can preview a whole batch. A line beginning with `!` remains native passthrough, so `! cmd1 && cmd2` keeps normal shell semantics inside the IDEL terminal. From Bash, quote the whole IDEL line: `idel '! cmd1 && cmd2'`.
 
-**Web / desktop terminal.** `idel serve` starts a local HTTP+SSE server (loopback, port 7878 by default) that exposes the same runtime — registry-driven autocomplete, risk/policy classification, and signed OpenLogs — over a small JSON API. It is the boundary the browser and desktop (Javelle) terminals talk to; pass `--static <dir>` to also serve a built UI. A command typed in the GUI is audited identically to one typed at the CLI.
+**Web / desktop terminal.** `idel serve` starts a local HTTP+SSE server (loopback, port 7878 by default) that exposes the same runtime — registry-driven autocomplete, risk/policy classification, and signed OpenLogs — over a small JSON API. It is the boundary the browser and Electron desktop terminal talk to; pass `--static <dir>` to also serve a built UI. A command typed in the GUI is audited identically to one typed at the CLI.
 
 A ready-made, dependency-free web terminal + landing page ships in `packages/web/public`. The fastest way to see it:
 
@@ -186,6 +186,32 @@ A ready-made, dependency-free web terminal + landing page ships in `packages/web
 pnpm ui            # builds if needed, then serves the terminal at http://127.0.0.1:7878
 # (equivalently: idel serve --static packages/web/public --enable-native-terminal)
 ```
+
+Build Electron desktop folders for each platform:
+
+```bash
+pnpm desktop:build          # all Electron launchers under dist/desktop/
+pnpm desktop:build:linux    # dist/desktop/linux/openexecution-idel.sh
+pnpm desktop:build:macos    # dist/desktop/macos/OpenExecution IDEL.app
+pnpm desktop:build:windows  # dist/desktop/windows/OpenExecution IDEL.cmd/.ps1
+```
+
+These are repo-backed Electron launchers around the same `idel serve` boundary
+and bundled web UI, not signed installers. They require this checkout and the
+local Electron dev dependency to remain available on the desktop machine. Set
+`IDEL_DESKTOP_PORT=9000` to choose another port, or `IDEL_ELECTRON_BIN=/path`
+to use a specific Electron executable.
+
+Upgrade dependencies to the latest published versions:
+
+```bash
+pnpm upgrade:latest       # npx npm-check-updates -u, pnpm install, pnpm audit --fix update, build, test
+pnpm upgrade:latest:npm   # same flow using npm install and npm audit fix
+```
+
+Pass npm-check-updates options after `--`, for example
+`pnpm upgrade:latest -- --target minor`. The pnpm path is the default because
+the workspace declares `packageManager: pnpm`.
 
 The page at `/` explains the runtime; `/terminal.html` is a live terminal with an **IDEL** mode (registry completion, history, a live audit-log panel), an **Ask Claude** mode that drives the embedded console over `/api/agent/stream`, and optional `sh` tabs for a native OS shell. The Claude console lights up when Claude is reachable on the `idel serve` process (see [Using your Claude subscription](#using-your-claude-subscription)) — the credential never reaches the browser.
 
@@ -257,7 +283,7 @@ parse → resolve → coerce → safety (two-phase) → policy → plan → exec
 | `packages/adapters-powershell` | Windows PowerShell adapter. |
 | `packages/openlogs` | Signed, hash-chained audit writer (OpenLogs v2) with secret redaction. |
 | `packages/runtime` | Orchestrates the whole pipeline; handles native passthrough, approval, meta commands, and outcome assembly. |
-| `packages/server` | A dependency-free local HTTP+SSE boundary over the runtime (`idel serve`). Backs the web/desktop (Javelle) terminal; every request still flows through the full safety/policy/OpenLogs pipeline. |
+| `packages/server` | A dependency-free local HTTP+SSE boundary over the runtime (`idel serve`). Backs the web/Electron desktop terminal; every request still flows through the full safety/policy/OpenLogs pipeline. |
 | `packages/agent` | The embedded Claude console: exposes IDEL to Claude as a small tool surface, plus `idel learn` (CLI → IDEL draft). The only package that depends on `@anthropic-ai/sdk`; the key lives in the host process, never the browser. |
 | `packages/web` | The dependency-free static web terminal + landing page (no build step). Served by `idel serve --static`. |
 | `packages/cli` | The `idel` executable, flag parsing, rendering, completion, the interactive terminal, `idel ask`, `idel learn`, and `idel serve`. |
