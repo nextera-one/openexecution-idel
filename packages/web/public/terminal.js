@@ -14,6 +14,7 @@ const input = $("input");
 const form = $("form");
 const promptEl = $("prompt");
 const batchToggle = $("batch-toggle");
+const riskIndicator = $("risk-indicator");
 const completionsEl = $("completions");
 const statusEl = $("status");
 const logsEl = $("logs");
@@ -114,6 +115,9 @@ let serverOnline = false;
 let nativeAvailable = true;
 let nativeSessionRefreshTimer = 0;
 let nextNativeGeneration = 1;
+let riskPreviewTimer = 0;
+let riskPreviewSeq = 0;
+let riskPreviewAbort = null;
 let effectCanvas = null;
 let matrixAnimationId = 0;
 let matrixColumns = [];
@@ -4428,6 +4432,137 @@ function endsWithTokenSeparator(value) {
 }
 
 // ---------------------------------------------------------------------------
+// Live risk preview
+// ---------------------------------------------------------------------------
+
+function setRiskIndicator(state, label, title) {
+  if (!riskIndicator) return;
+  const safeState = String(state || "empty").replace(/[^a-z-]/g, "");
+  riskIndicator.className = `risk-indicator risk-indicator--${safeState}`;
+  const labelEl = riskIndicator.querySelector(".risk-indicator-label");
+  if (labelEl) labelEl.textContent = label || "risk";
+  riskIndicator.title = title || "Command risk preview";
+  riskIndicator.setAttribute("aria-label", riskIndicator.title);
+}
+
+function scheduleRiskPreview() {
+  if (!riskIndicator) return;
+  window.clearTimeout(riskPreviewTimer);
+  riskPreviewSeq += 1;
+  const seq = riskPreviewSeq;
+  if (riskPreviewAbort) {
+    riskPreviewAbort.abort();
+    riskPreviewAbort = null;
+  }
+
+  const tab = activeTab();
+  if (form.hidden || tab?.type === "editor") {
+    setRiskIndicator("empty", "risk", "Command risk preview");
+    return;
+  }
+  if (tab?.type === "native") {
+    setRiskIndicator("empty", "direct", "Native shell input is direct and is not risk-scanned per command.");
+    return;
+  }
+  if (mode !== "idel") {
+    setRiskIndicator("empty", "agent", "Ask Claude proposals are risk-scanned before the runtime runs them.");
+    return;
+  }
+
+  const command = currentInputSegment().value.trim();
+  if (!command) {
+    setRiskIndicator("empty", "risk", "Command risk preview");
+    return;
+  }
+  if (isSingleLocalClearCommand(command) || isWorkflowCommand(command)) {
+    setRiskIndicator("safe", "local", "Local terminal action. No runtime execution.");
+    return;
+  }
+  const learnCommand = parseLearnCommand(command);
+  if (learnCommand) {
+    setRiskIndicator(
+      learnCommand.write ? "caution" : "safe",
+      learnCommand.write ? "write" : "learn",
+      learnCommand.write
+        ? "Learning will write accepted command definitions to the custom registry."
+        : "Learning previews command definitions without writing them.",
+    );
+    return;
+  }
+
+  setRiskIndicator("pending", "check", "Checking command risk...");
+  riskPreviewTimer = window.setTimeout(() => {
+    void previewCommandRisk(command, seq);
+  }, 160);
+}
+
+async function previewCommandRisk(command, seq) {
+  const controller = typeof AbortController === "function" ? new AbortController() : null;
+  riskPreviewAbort = controller;
+  try {
+    const res = await fetch("/api/preview", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ command }),
+      ...(controller ? { signal: controller.signal } : {}),
+    });
+    if (seq !== riskPreviewSeq) return;
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      setRiskIndicator("offline", "error", `Preview failed: HTTP ${res.status}${text ? ` ${text}` : ""}`);
+      return;
+    }
+    const preview = await res.json();
+    if (seq !== riskPreviewSeq) return;
+    renderRiskPreview(preview);
+  } catch (err) {
+    if (err?.name === "AbortError" || seq !== riskPreviewSeq) return;
+    setRiskIndicator("offline", "offline", "Could not reach the IDEL preview endpoint.");
+  } finally {
+    if (riskPreviewAbort === controller) riskPreviewAbort = null;
+  }
+}
+
+function renderRiskPreview(preview) {
+  const risk = String(preview?.risk?.level ?? "LOW").toUpperCase();
+  const action = String(preview?.decision?.action ?? "allow");
+  const findings = preview?.risk?.findings ?? [];
+  const invalid = action === "block" && findings.some((f) => f.code === "parse-error" || f.code === "usage-error");
+  if (invalid) {
+    setRiskIndicator("invalid", "invalid", riskPreviewTitle(preview, "Invalid command"));
+    return;
+  }
+
+  const state =
+    risk === "CRITICAL" ? "critical" :
+      risk === "HIGH" ? "danger" :
+        risk === "MEDIUM" ? "caution" :
+          action === "block" ? "danger" :
+            "safe";
+  const label =
+    risk === "CRITICAL" ? "critical" :
+      risk === "HIGH" ? "high" :
+        risk === "MEDIUM" ? "medium" :
+          "safe";
+  setRiskIndicator(state, label, riskPreviewTitle(preview));
+}
+
+function riskPreviewTitle(preview, prefix = "") {
+  const risk = preview?.risk?.level ?? "LOW";
+  const action = preview?.decision?.action ?? "allow";
+  const parts = [];
+  if (prefix) parts.push(prefix);
+  if (preview?.batch) parts.push(`${preview.commands?.length ?? 0} batch steps`);
+  parts.push(`Risk: ${risk}`);
+  parts.push(`Decision: ${String(action).replaceAll("_", " ")}`);
+  const translated = translateLine(preview);
+  if (translated) parts.push(`Translates to: ${translated}`);
+  const firstFinding = preview?.risk?.findings?.[0];
+  if (firstFinding) parts.push(`${firstFinding.code}: ${firstFinding.message}`);
+  return parts.join(" · ");
+}
+
+// ---------------------------------------------------------------------------
 // Audit log side panel
 // ---------------------------------------------------------------------------
 
@@ -4504,8 +4639,8 @@ function setMultilineBatch(next) {
   batchToggle?.setAttribute(
     "title",
     multilineBatch
-      ? "Multiline batch input is on. Use Ctrl+Enter to run."
-      : "Multiline batch input. Use Ctrl+Enter to run.",
+      ? "Multiline batch input is on. Ctrl+B toggles; Ctrl+Enter runs."
+      : "Multiline batch input. Ctrl+B toggles; Ctrl+Enter runs.",
   );
   renderKnowledgeBase();
   syncInputPlaceholder();
@@ -4520,6 +4655,7 @@ function resizeCommandInput() {
   const nextHeight = Math.min(input.scrollHeight, max);
   input.style.height = `${Math.max(nextHeight, 22)}px`;
   input.style.overflowY = input.scrollHeight > max ? "auto" : "hidden";
+  scheduleRiskPreview();
 }
 
 function currentInputSegment() {
@@ -4613,6 +4749,11 @@ input.addEventListener("keydown", (e) => {
   const tab = activeTab();
   if (tab?.type === "native") {
     handleNativeKeydown(tab, e);
+    return;
+  }
+  if (e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === "b") {
+    e.preventDefault();
+    if (!e.repeat) setMultilineBatch(!multilineBatch);
     return;
   }
   if (e.ctrlKey && !e.metaKey && e.key.toLowerCase() === "c") {

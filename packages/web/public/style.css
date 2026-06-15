@@ -1413,6 +1413,69 @@ h1 {
   color: var(--control-active-fg);
 }
 
+.risk-indicator {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  min-width: 5.25rem;
+  min-height: 1.8rem;
+  padding: 0 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--fg-dim);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.risk-indicator-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  background: currentColor;
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 14%, transparent);
+}
+.risk-indicator--pending .risk-indicator-dot {
+  animation: riskPulse 0.9s ease-in-out infinite;
+}
+.risk-indicator--safe {
+  border-color: color-mix(in srgb, var(--green) 48%, var(--border));
+  background: color-mix(in srgb, var(--green) 11%, var(--panel));
+  color: var(--green);
+}
+.risk-indicator--caution {
+  border-color: color-mix(in srgb, var(--yellow) 50%, var(--border));
+  background: color-mix(in srgb, var(--yellow) 12%, var(--panel));
+  color: var(--yellow);
+}
+.risk-indicator--danger,
+.risk-indicator--invalid,
+.risk-indicator--offline {
+  border-color: color-mix(in srgb, var(--red) 54%, var(--border));
+  background: color-mix(in srgb, var(--red) 12%, var(--panel));
+  color: var(--red);
+}
+.risk-indicator--critical {
+  border-color: color-mix(in srgb, var(--crit) 64%, var(--border));
+  background: color-mix(in srgb, var(--crit) 16%, var(--panel));
+  color: var(--crit);
+}
+
+@keyframes riskPulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
 .completions {
   list-style: none;
   margin: 0;
@@ -2352,6 +2415,12 @@ body.logs-hidden .term-side {
     min-height: 1.65rem;
     padding-inline: 0.4rem;
     font-size: 0.7rem;
+  }
+  .risk-indicator {
+    min-width: 4.65rem;
+    min-height: 1.65rem;
+    padding-inline: 0.42rem;
+    font-size: 0.66rem;
   }
   .editor-tools {
     grid-template-columns: repeat(2, minmax(0, 1fr));

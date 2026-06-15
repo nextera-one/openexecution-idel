@@ -11,9 +11,11 @@ import type {
   ExecutionOutcome,
   OpenLogRecord,
   ParamValue,
+  PolicyDecision,
   RiskLevel,
   RuntimeContext,
   RuntimeOutcome,
+  RuntimePreview,
 } from "@openexecution/types";
 
 import { complete } from "./complete.js";
@@ -83,6 +85,26 @@ export interface CompleteRequest {
   input: string;
   /** Directory to resolve `path=` value completions against. */
   cwd?: string;
+}
+
+/** A non-executing command preview request for live UI risk indicators. */
+export interface PreviewRequest {
+  /** The IDEL command line, e.g. `remove.folder name=dist recursive=true`. */
+  command: string;
+  /** Treat `command` as a native shell line (prefix with `! `). */
+  native?: boolean;
+  /** Per-request working directory override. Defaults to the service cwd. */
+  cwd?: string;
+  /** Command origin for policy/source matching. */
+  origin?: CommandOrigin;
+}
+
+export interface BatchPreviewResult {
+  batch: true;
+  commands: string[];
+  previews: RuntimePreview[];
+  risk: RuntimePreview["risk"];
+  decision: PolicyDecision;
 }
 
 export interface EditorOpenRequest {
@@ -191,6 +213,25 @@ export class TerminalService {
     return { batch: true, commands, outcomes, ok: true };
   }
 
+  /** Preview risk/policy/translation without executing or appending OpenLogs. */
+  async preview(req: PreviewRequest): Promise<RuntimePreview | BatchPreviewResult> {
+    const commands = req.native ? [req.command] : this.batchCommands(req.command ?? "");
+    if (!req.native && commands.length > 1) {
+      const previews: RuntimePreview[] = [];
+      for (const command of commands) {
+        previews.push(await this.previewOne({ ...req, command, native: false }));
+      }
+      return {
+        batch: true,
+        commands,
+        previews,
+        risk: highestPreviewRisk(previews),
+        decision: mostRestrictiveDecision(previews),
+      };
+    }
+    return this.previewOne(req);
+  }
+
   /** Registry-driven completion for the current input. */
   complete(req: CompleteRequest): string[] {
     return complete(req.input, this.runtime.reg, req.cwd ?? this.baseCwd);
@@ -258,6 +299,13 @@ export class TerminalService {
     const writer = this.runtime.logWriter;
     if (!writer) return { ok: true, records: 0, reason: "no log writer" };
     return await writer.verify();
+  }
+
+  private async previewOne(req: PreviewRequest): Promise<RuntimePreview> {
+    const cwd = req.cwd ?? this.baseCwd;
+    const ctx = this.makeContext(cwd, true, undefined, req.origin);
+    const line = req.native ? `! ${req.command}` : req.command;
+    return await this.runtime.preview(line, ctx);
   }
 
   /** Record native terminal lifecycle events that bypass the IDEL command parser. */
@@ -388,6 +436,49 @@ function renderAdapterPattern(spec: AdapterSpec): string {
 
 export function batchStepSucceeded(outcome: RuntimeOutcome, explicitDryRun = false): boolean {
   return outcome.record.result === "success" || (explicitDryRun && outcome.record.result === "dry_run");
+}
+
+const RISK_RANK: Record<RiskLevel, number> = {
+  LOW: 0,
+  MEDIUM: 1,
+  HIGH: 2,
+  CRITICAL: 3,
+};
+
+const DECISION_RANK: Record<PolicyDecision["action"], number> = {
+  allow: 0,
+  warn: 1,
+  require_dry_run: 2,
+  approval_required: 3,
+  block: 4,
+};
+
+function highestPreviewRisk(previews: RuntimePreview[]): RuntimePreview["risk"] {
+  const highest = previews.reduce<RuntimePreview | undefined>((current, next) => {
+    if (!current) return next;
+    return RISK_RANK[next.risk.level] > RISK_RANK[current.risk.level] ? next : current;
+  }, undefined);
+  if (!highest) {
+    return { phase: "ast", level: "LOW", findings: [] };
+  }
+  const affectedPathsEstimate = previews.reduce<number | undefined>((current, next) => {
+    const estimate = next.risk.affectedPathsEstimate;
+    if (estimate === undefined) return current;
+    return current === undefined ? estimate : Math.max(current, estimate);
+  }, undefined);
+  return {
+    ...highest.risk,
+    findings: previews.flatMap((preview) => preview.risk.findings),
+    ...(affectedPathsEstimate !== undefined ? { affectedPathsEstimate } : {}),
+  };
+}
+
+function mostRestrictiveDecision(previews: RuntimePreview[]): PolicyDecision {
+  const highest = previews.reduce<RuntimePreview | undefined>((current, next) => {
+    if (!current) return next;
+    return DECISION_RANK[next.decision.action] > DECISION_RANK[current.decision.action] ? next : current;
+  }, undefined);
+  return highest?.decision ?? { action: "allow", matchedRule: -1, reason: "empty batch" };
 }
 
 /** An error carrying an HTTP status for the transport layer to surface. */

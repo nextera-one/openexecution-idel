@@ -208,6 +208,38 @@ describe("TerminalService.complete", () => {
   });
 });
 
+describe("TerminalService.preview", () => {
+  it("classifies a command without executing or appending OpenLogs", async () => {
+    const dir = await sandbox();
+    const writer = new OpenLogWriter({
+      path: join(dir, "openlogs.jsonl"),
+      keyPath: join(dir, "openlogs.key.json"),
+    });
+    const runtime = new Runtime({ registry, policy: defaultPolicy(), logWriter: writer });
+    const svc = new TerminalService({ runtime, cwd: dir });
+
+    const preview = await svc.preview({
+      command: "remove.folder name=/ recursive=true force=true",
+    });
+
+    expect(preview.risk.level).toBe("CRITICAL");
+    expect(preview.decision.action).toBe("block");
+    expect("record" in preview).toBe(false);
+    expect(await writer.read()).toEqual([]);
+  });
+
+  it("aggregates batch previews to the highest risk command", async () => {
+    const svc = makeService(await sandbox());
+    const preview = await svc.preview({
+      command: "create.file name=x && remove.folder name=/ recursive=true force=true",
+    });
+
+    expect("batch" in preview && preview.batch).toBe(true);
+    expect(preview.risk.level).toBe("CRITICAL");
+    expect(preview.decision.action).toBe("block");
+  });
+});
+
 describe("TerminalService.run — the safety/policy contract is preserved", () => {
   it("runs a LOW meta command and succeeds", async () => {
     const svc = makeService(await sandbox());
@@ -568,6 +600,19 @@ describe("startServer (HTTP)", () => {
     const body = (await res.json()) as { record: { result: string }; risk: { level: string } };
     expect(body.risk.level).toBe("CRITICAL");
     expect(body.record.result).toBe("blocked_before_execution");
+  });
+
+  it("POST /api/preview → returns risk without an execution record", async () => {
+    const res = await fetch(`${base}/api/preview`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ command: "remove.folder name=/ recursive=true force=true" }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { record?: unknown; risk: { level: string }; decision: { action: string } };
+    expect(body.record).toBeUndefined();
+    expect(body.risk.level).toBe("CRITICAL");
+    expect(body.decision.action).toBe("block");
   });
 
   it("POST /api/run → returns batch outcomes for && input", async () => {

@@ -353,3 +353,11 @@ export interface RuntimeOutcome {
   decision: PolicyDecision;
   risk: RiskAssessment;
 }
+
+/** A non-executing, non-logging view of how the runtime would classify a command. */
+export interface RuntimePreview {
+  ast: { command: string; params: Record<string, ParamValue> };
+  plan?: ExecutionPlan;
+  decision: PolicyDecision;
+  risk: RiskAssessment;
+}

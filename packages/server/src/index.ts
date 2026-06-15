@@ -21,6 +21,8 @@ export type {
   ServiceOptions,
   RunRequest,
   BatchRunResult,
+  PreviewRequest,
+  BatchPreviewResult,
   CompleteRequest,
   EditorOpenRequest,
   EditorSaveRequest,

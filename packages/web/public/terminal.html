@@ -63,12 +63,22 @@
           placeholder="verb.scope param=value   (Tab to complete, ↑/↓ history)"
           aria-label="command input"
         ></textarea>
+        <span
+          class="risk-indicator risk-indicator--empty"
+          id="risk-indicator"
+          role="status"
+          aria-live="polite"
+          title="Command risk preview"
+        >
+          <span class="risk-indicator-dot" aria-hidden="true"></span>
+          <span class="risk-indicator-label">risk</span>
+        </span>
         <button
           class="input-toggle"
           id="batch-toggle"
           type="button"
           aria-pressed="false"
-          title="Multiline batch input. Use Ctrl+Enter to run."
+          title="Multiline batch input. Ctrl+B toggles; Ctrl+Enter runs."
         >Batch</button>
       </form>
       <ul class="completions" id="completions" hidden></ul>

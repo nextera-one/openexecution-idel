@@ -18,6 +18,7 @@ import type { ParamValue } from "@openexecution/types";
 import type {
   RunRequest,
   CompleteRequest,
+  PreviewRequest,
   ServiceOptions,
 } from "./service.js";
 
@@ -30,6 +31,7 @@ import type {
  *   GET  /api/registry               → RegistryEntry[]
  *   GET  /api/registry/:id           → { resolved, shadowed }
  *   POST /api/complete   {input,cwd} → string[]
+ *   POST /api/preview    {command,cwd} → RuntimePreview (no execute/log)
  *   POST /api/run        RunRequest  → RuntimeOutcome
  *   POST /api/learn      {cli,write} → host-specific learned-command preview
  *   POST /api/editor/open {file,cwd} → { file, content, language, outcome }
@@ -271,6 +273,18 @@ async function handle(
   if (path === "/api/complete" && method === "POST") {
     const body = await readJsonBody<CompleteRequest>(req);
     return sendJson(res, 200, service.complete(body), cors);
+  }
+
+  if (path === "/api/preview" && method === "POST") {
+    const body = await readJsonBody<PreviewRequest>(req);
+    try {
+      return sendJson(res, 200, await service.preview(body), cors);
+    } catch (err) {
+      if (err instanceof ServiceError) {
+        return sendJson(res, err.status, { error: err.message }, cors);
+      }
+      throw err;
+    }
   }
 
   if (path === "/api/run" && method === "POST") {

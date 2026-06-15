@@ -25,6 +25,7 @@ import type {
   ExecutionResult,
   NativeCommandAst,
   OpenLogRecord,
+  ParamValue,
   PolicyConfig,
   PolicyDecision,
   RiskAssessment,
@@ -32,6 +33,7 @@ import type {
   RiskLevel,
   RuntimeContext,
   RuntimeOutcome,
+  RuntimePreview,
 } from "@openexecution/types";
 import { isNativeAst, ParseError, RegistryError } from "@openexecution/types";
 
@@ -182,6 +184,29 @@ export class Runtime {
       return this.runNative(ast, ctx);
     }
     return this.runIdel(normalizeLegacyCommand(ast), ctx);
+  }
+
+  /**
+   * Classify and plan a command without executing it and without appending an
+   * OpenLogs record. This is for live UI affordances such as risk indicators;
+   * `run()` remains the only path that produces auditable command outcomes.
+   */
+  async preview(input: string, ctx: RuntimeContext): Promise<RuntimePreview> {
+    const origin = ctx.origin ?? (ctx.ci ? "ci" : "idel");
+    let ast: AnyAst;
+    try {
+      ast = parse(input, { cwd: ctx.cwd, source: origin });
+    } catch (err) {
+      if (err instanceof ParseError) {
+        return this.previewFailure(input, origin, err.message, "parse-error");
+      }
+      throw err;
+    }
+
+    if (isNativeAst(ast)) {
+      return this.previewNative(ast, ctx);
+    }
+    return this.previewIdel(normalizeLegacyCommand(ast), ctx);
   }
 
   // -------------------------------------------------------------------------
@@ -372,6 +397,161 @@ export class Runtime {
   }
 
   // -------------------------------------------------------------------------
+  // Non-executing preview path
+  // -------------------------------------------------------------------------
+
+  private async previewIdel(
+    ast: CommandAst,
+    ctx: RuntimeContext,
+  ): Promise<RuntimePreview> {
+    if (isMetaCommand(ast.command)) {
+      return this.buildPreview({
+        ast,
+        risk: { level: "LOW", findings: [], affected: undefined },
+        decision: { action: "allow", matchedRule: -1, reason: "meta command" },
+      });
+    }
+
+    const resolved = this.registry.resolve(ast.command);
+    if (!resolved) {
+      return this.previewFailure(
+        ast.command,
+        ast.source,
+        `Unknown command "${ast.command}". Try \`list.registry\` or use native passthrough: ! <command>.`,
+        "usage-error",
+      );
+    }
+
+    const coerced = coerceParams(resolved.def, ast.rawParams, ast.params);
+    if (coerced.errors.length > 0) {
+      return this.previewFailure(
+        ast.command,
+        ast.source,
+        `Invalid parameters: ${coerced.errors.join("; ")}`,
+        "usage-error",
+      );
+    }
+    const typedAst: CommandAst = { ...ast, params: coerced.params };
+
+    const coreDef = this.registry.coreDef(ast.command);
+    const safetyDefs = coreDef && coreDef !== resolved.def
+      ? [resolved.def, coreDef]
+      : [resolved.def];
+    const assessments: RiskAssessment[] = [];
+
+    for (const def of safetyDefs) {
+      const astRisk = assessAst(typedAst, def);
+      assessments.push(astRisk);
+      if (astRisk.level !== "CRITICAL") {
+        try {
+          assessments.push(await assessResolved(typedAst, def));
+        } catch {
+          // Preview follows the runtime's best-effort resolved phase behavior.
+        }
+      }
+    }
+
+    let effectiveRisk: RiskLevel = maxRisk(...assessments);
+    const findings = mergeFindings(...assessments);
+    const affected = maxAffectedEstimate(assessments);
+    const assessmentForBytes = assessmentWithBytes(assessments);
+    const requiresAffectedEstimate = safetyDefs.some(
+      (def) => def.safety?.requiresAffectedPathEstimate === true,
+    );
+
+    if (
+      requiresAffectedEstimate &&
+      affected === undefined &&
+      effectiveRisk !== "CRITICAL"
+    ) {
+      effectiveRisk = higherRisk(effectiveRisk, "HIGH");
+      findings.push({
+        code: "missing-affected-estimate",
+        level: "HIGH",
+        message:
+          "Destructive command requires a blast-radius estimate, but none could be computed; escalated to HIGH (fail-closed).",
+      });
+    }
+
+    const decision = evaluate(
+      {
+        risk: effectiveRisk,
+        command: ast.command,
+        source: typedAst.source,
+        environment: ctx.environment,
+        params: coerced.params,
+      },
+      this.policy,
+    );
+
+    const adapter = this.pickAdapter(resolved.def.id);
+    const plan = adapter ? adapter.plan(resolved, typedAst) : undefined;
+
+    return this.buildPreview({
+      ast: typedAst,
+      risk: { level: effectiveRisk, findings, affected, assessment: assessmentForBytes },
+      decision,
+      plan,
+    });
+  }
+
+  private previewNative(
+    ast: NativeCommandAst,
+    ctx: RuntimeContext,
+  ): RuntimePreview {
+    const loggable = nativeToLoggable(ast);
+    if (ctx.noNative) {
+      return this.buildPreview({
+        ast: loggable,
+        risk: {
+          level: "HIGH",
+          findings: [
+            {
+              code: "native-disabled",
+              level: "HIGH",
+              message: "Native passthrough is disabled in this context (CI/production).",
+            },
+          ],
+          affected: undefined,
+        },
+        decision: {
+          action: "block",
+          matchedRule: -1,
+          reason: "native passthrough disabled",
+        },
+      });
+    }
+
+    const findings = scanNative(ast.native);
+    const risk = levelOfFindings(findings);
+    const decision = evaluate(
+      {
+        risk,
+        command: "native.run",
+        source: "native",
+        environment: ctx.environment,
+        params: {},
+      },
+      this.policy,
+    );
+
+    const isWin = process.platform === "win32";
+    const plan: ExecutionPlan = {
+      adapter: isWin ? "powershell" : "posix",
+      command: isWin ? "powershell" : "/bin/sh",
+      argv: isWin ? ["-NoProfile", "-Command", ast.native] : ["-c", ast.native],
+      describe: ast.native,
+    };
+
+    return this.buildPreview({
+      ast: loggable,
+      risk: { level: risk, findings, affected: undefined, assessment: undefined },
+      decision,
+      plan,
+    });
+  }
+
+  // -------------------------------------------------------------------------
   // Shared enforcement + execution
   // -------------------------------------------------------------------------
 
@@ -545,6 +725,38 @@ export class Runtime {
   // Outcome assembly + logging
   // -------------------------------------------------------------------------
 
+  private buildPreview(args: {
+    ast: { command: string; params: CommandAst["params"] | Record<string, never>; source: CommandAst["source"]; cwd: string };
+    risk: { level: RiskLevel; findings: RiskFinding[]; affected: number | undefined; assessment?: RiskAssessment };
+    decision: PolicyDecision;
+    plan?: ExecutionPlan;
+  }): RuntimePreview {
+    const { ast, risk, decision, plan } = args;
+    return {
+      ast: { command: ast.command, params: ast.params as Record<string, ParamValue> },
+      ...(plan ? { plan } : {}),
+      decision,
+      risk: this.riskToAssessment(risk),
+    };
+  }
+
+  private riskToAssessment(risk: {
+    level: RiskLevel;
+    findings: RiskFinding[];
+    affected: number | undefined;
+    assessment?: RiskAssessment;
+  }): RiskAssessment {
+    return {
+      phase: risk.assessment?.phase ?? "ast",
+      level: risk.level,
+      findings: risk.findings,
+      affectedPathsEstimate: risk.affected,
+      ...(risk.assessment?.affectedBytesEstimate !== undefined
+        ? { affectedBytesEstimate: risk.assessment.affectedBytesEstimate }
+        : {}),
+    };
+  }
+
   private async finish(args: {
     ast: { command: string; params: CommandAst["params"] | Record<string, never>; source: CommandAst["source"]; cwd: string };
     ctx: RuntimeContext;
@@ -600,15 +812,7 @@ export class Runtime {
     // (e.g. the requiresAffectedPathEstimate fail-closed gate) after the
     // resolved-phase assessment was produced, and those must surface in the
     // outcome and the signed record alike.
-    const assessment: RiskAssessment = {
-      phase: risk.assessment?.phase ?? "ast",
-      level: risk.level,
-      findings: risk.findings,
-      affectedPathsEstimate: risk.affected,
-      ...(risk.assessment?.affectedBytesEstimate !== undefined
-        ? { affectedBytesEstimate: risk.assessment.affectedBytesEstimate }
-        : {}),
-    };
+    const assessment = this.riskToAssessment(risk);
 
     return { record, result, plan, decision, risk: assessment };
   }
@@ -616,6 +820,23 @@ export class Runtime {
   // -------------------------------------------------------------------------
   // Error helpers
   // -------------------------------------------------------------------------
+
+  private previewFailure(
+    input: string,
+    source: CommandAst["source"],
+    message: string,
+    code: "parse-error" | "usage-error",
+  ): RuntimePreview {
+    return this.buildPreview({
+      ast: { command: input, params: {}, source, cwd: "" },
+      risk: {
+        level: "LOW",
+        findings: [{ code, level: "LOW", message }],
+        affected: undefined,
+      },
+      decision: { action: "block", matchedRule: -1, reason: message },
+    });
+  }
 
   private failBeforeClassification(
     input: string,
