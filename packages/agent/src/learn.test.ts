@@ -67,6 +67,29 @@ examine the history and state
    status    Show the working tree status
 `;
 
+const GH_HELP = `
+Work seamlessly with GitHub from the command line.
+
+USAGE
+  gh <command> <subcommand> [flags]
+
+CORE COMMANDS
+  auth:          Authenticate gh and git with GitHub
+  browse:        Open repositories, issues, pull requests, and more in the browser
+  issue:         Manage issues
+  pr:            Manage pull requests
+  release:       Manage releases
+  repo:          Manage repositories
+
+GITHUB ACTIONS COMMANDS
+  run:           View details about workflow runs
+  workflow:      View details about GitHub Actions workflows
+
+ADDITIONAL COMMANDS
+  status:        Print information about relevant issues, pull requests, and notifications across repositories
+  secret:        Manage GitHub secrets
+`;
+
 const savedApiKey = process.env["ANTHROPIC_API_KEY"];
 
 afterEach(() => {
@@ -86,6 +109,26 @@ describe("learnCli", () => {
     expect(ids).toContain("remove.git.file");
     expect(ids).toContain("show.git.status");
     expect(result.commands.every((cmd) => cmd.id.split(".")[0] !== "git")).toBe(true);
+  });
+
+  it("generates local draft defs from colon-form gh help", async () => {
+    delete process.env["ANTHROPIC_API_KEY"];
+    const result = await learnCli("gh", {
+      capture: async () => GH_HELP,
+      maxCommands: 12,
+    });
+    const ids = result.accepted.map((def) => def.id);
+    expect(ids).toContain("show.gh.auth");
+    expect(ids).toContain("open.gh.browse");
+    expect(ids).toContain("list.gh.issue");
+    expect(ids).toContain("list.gh.pr");
+    expect(ids).toContain("show.gh.repo");
+    expect(ids).toContain("list.gh.run");
+    const issue = result.accepted.find((def) => def.id === "list.gh.issue");
+    expect(issue?.adapters.posix?.args).toEqual([
+      { kind: "literal", value: "issue" },
+      { kind: "literal", value: "list" },
+    ]);
   });
 
   it("accepts a valid def and tags it as a custom draft", async () => {
@@ -274,6 +317,7 @@ describe("captureHelp", () => {
     await expect(captureHelp("rm -rf /; echo")).rejects.toThrow(/refusing to introspect/);
     await expect(captureHelp("../evil")).rejects.toThrow(/refusing to introspect/);
     await expect(captureHelp("foo|bar")).rejects.toThrow(/refusing to introspect/);
+    await expect(captureHelp("--help")).rejects.toThrow(/refusing to introspect/);
   });
 
   it("accepts a normal CLI name shape (but fails cleanly if not installed)", async () => {

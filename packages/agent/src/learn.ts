@@ -134,7 +134,7 @@ export async function captureHelp(cli: string): Promise<string> {
   // Defense in depth: the CLI name must look like a plain executable name, not
   // a path or a string with shell metacharacters. We never pass it to a shell
   // (shell:false), but reject obviously hostile input early and loudly.
-  if (!/^[A-Za-z0-9_.+-]+$/.test(cli)) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.+-]*$/.test(cli)) {
     throw new Error(
       `refusing to introspect "${cli}": a CLI name may only contain letters, digits, and . _ + -`,
     );
@@ -422,7 +422,7 @@ interface LocalTemplate {
   testParams?: Record<string, string | number | boolean>;
 }
 
-const HELP_COMMAND_RE = /^\s{2,}([A-Za-z][A-Za-z0-9-]{0,39})\s{2,}(.+?)\s*$/;
+const HELP_COMMAND_RE = /^\s{2,}([A-Za-z][A-Za-z0-9-]{0,39}):?\s{2,}(.+?)\s*$/;
 
 function generateLocalDefs(
   cli: string,
@@ -495,6 +495,62 @@ function parseHelpCommands(help: string): HelpCommand[] {
 function templateForHelpCommand(cmd: HelpCommand): LocalTemplate | undefined {
   const summary = cmd.summary.toLowerCase();
   switch (cmd.name) {
+    case "auth":
+      return {
+        action: "show",
+        object: "auth",
+        summary: "Show GitHub CLI authentication status.",
+        risk: "LOW",
+        params: {},
+        args: [{ kind: "literal", value: "status" }],
+      };
+    case "browse":
+      return {
+        action: "open",
+        object: "browse",
+        summary: "Open the current GitHub repository in the browser.",
+        risk: "LOW",
+        params: {
+          target: { type: "string", description: "Optional repository, issue, pull request, or URL target." },
+        },
+        args: [{ kind: "value", param: "target" }],
+      };
+    case "codespace":
+      return ghListTemplate("codespace", "List GitHub Codespaces.");
+    case "gist":
+      return ghListTemplate("gist", "List GitHub gists.");
+    case "issue":
+      return ghListTemplate("issue", "List GitHub issues.");
+    case "pr":
+      return ghListTemplate("pr", "List GitHub pull requests.");
+    case "release":
+      return ghListTemplate("release", "List GitHub releases.");
+    case "repo":
+      return {
+        action: "show",
+        object: "repo",
+        summary: "Show GitHub repository details.",
+        risk: "LOW",
+        params: {
+          repository: { type: "string", description: "Optional OWNER/REPO repository." },
+        },
+        args: [
+          { kind: "literal", value: "view" },
+          { kind: "value", param: "repository" },
+        ],
+      };
+    case "run":
+      return ghListTemplate("run", "List GitHub Actions workflow runs.");
+    case "workflow":
+      return ghListTemplate("workflow", "List GitHub Actions workflows.");
+    case "cache":
+      return ghListTemplate("cache", "List GitHub Actions caches.");
+    case "label":
+      return ghListTemplate("label", "List GitHub labels.");
+    case "secret":
+      return ghListTemplate("secret", "List GitHub secrets.");
+    case "variable":
+      return ghListTemplate("variable", "List GitHub Actions variables.");
     case "clone":
       return {
         action: "clone",
@@ -652,12 +708,21 @@ function templateForHelpCommand(cmd: HelpCommand): LocalTemplate | undefined {
       };
   }
 
-  if (/^(show|display|print)\b/.test(summary)) return lowNoArg("show", cmd.name);
+  if (/^(show|display|print|view)\b/.test(summary)) return lowNoArg("show", cmd.name);
   if (/^(list)\b/.test(summary)) return lowNoArg("list", cmd.name);
-  if (/^(create|make|generate)\b/.test(summary)) {
-    return { action: "create", object: idSegment(cmd.name), risk: "MEDIUM", params: {}, args: [] };
-  }
+  if (/^(search)\b/.test(summary)) return stringArg("search", cmd.name, "LOW", "query", "Search query.");
   return undefined;
+}
+
+function ghListTemplate(object: string, summary: string): LocalTemplate {
+  return {
+    action: "list",
+    object,
+    summary,
+    risk: "LOW",
+    params: {},
+    args: [{ kind: "literal", value: "list" }],
+  };
 }
 
 function lowNoArg(action: string, object?: string, summary?: string): LocalTemplate {
