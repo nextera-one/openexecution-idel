@@ -20,6 +20,11 @@ const META_COMMANDS = new Set<string>([
   "clear.last",
   "clear.first",
   "clear.range",
+  "save.workflow",
+  "list.workflows",
+  "run.workflow",
+  "remove.workflow",
+  "open.workflows",
   "list.logs",
   "show.logs",
 ]);
@@ -65,6 +70,12 @@ export async function runMeta(
     case "clear.first":
     case "clear.range":
       return clearScrollback(ast);
+    case "save.workflow":
+    case "list.workflows":
+    case "run.workflow":
+    case "remove.workflow":
+    case "open.workflows":
+      return workflowHostCommand(ast);
     case "list.logs":
       return logsList(ast, deps);
     case "show.logs":
@@ -79,6 +90,16 @@ function clearScrollback(ast: CommandAst): MetaOutput {
     stdout:
       `${ast.command} is handled by the terminal UI. ` +
       "Use it in the web terminal to clear visible scrollback rows.",
+    stderr: "",
+    exitCode: 0,
+  };
+}
+
+function workflowHostCommand(ast: CommandAst): MetaOutput {
+  return {
+    stdout:
+      `${ast.command} is handled by the web terminal. ` +
+      "Use the Workflows panel there to save, list, run, and remove local workflows.",
     stderr: "",
     exitCode: 0,
   };

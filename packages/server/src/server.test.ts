@@ -366,6 +366,60 @@ describe("startServer (HTTP)", () => {
     expect(body.ok).toBe(true);
     expect(typeof body.platform).toBe("string");
     expect(body.agentAvailable).toBe(false);
+    expect(body.nativeAvailable).toBe(true);
+  });
+
+  it("GET /api/native/sessions → active native terminal list", async () => {
+    const res = await fetch(`${base}/api/native/sessions`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
+  });
+
+  it("POST /api/native/:id/input → 404 for an unknown native terminal", async () => {
+    const res = await fetch(`${base}/api/native/missing/input`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ data: "pwd\n" }),
+    });
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error).toMatch(/not found/i);
+  });
+
+  it("POST /api/native/:id/resize → validates size and returns 404 for unknown sessions", async () => {
+    const invalid = await fetch(`${base}/api/native/missing/resize`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ cols: 1, rows: 0 }),
+    });
+    expect(invalid.status).toBe(400);
+
+    const missing = await fetch(`${base}/api/native/missing/resize`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ cols: 100, rows: 30 }),
+    });
+    expect(missing.status).toBe(404);
+    const body = await missing.json();
+    expect(body.error).toMatch(/not found/i);
+  });
+
+  it("POST /api/native/:id/signal → validates signal and returns 404 for unknown sessions", async () => {
+    const invalid = await fetch(`${base}/api/native/missing/signal`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ signal: "explode" }),
+    });
+    expect(invalid.status).toBe(400);
+
+    const missing = await fetch(`${base}/api/native/missing/signal`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ signal: "SIGINT" }),
+    });
+    expect(missing.status).toBe(404);
+    const body = await missing.json();
+    expect(body.error).toMatch(/not found/i);
   });
 
   it("GET /api/registry → catalog", async () => {

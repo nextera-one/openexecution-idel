@@ -151,12 +151,23 @@ Dry run. No files were changed.
 Log: ~/.idel/logs/openlogs.jsonl
 ```
 
-Other useful commands: `idel list.registry` (41 core commands), `idel check.policy`, `idel terminal` (interactive REPL), `idel completion <partial>`.
+Other useful commands: `idel list.registry` (59 core commands), `idel check.policy`, `idel terminal` (interactive REPL), `idel completion <partial>`.
 
 Web terminal scrollback commands are local to the active terminal tab:
 `clear.all`, `clear.last limit=10`, `clear.first limit=5`, and
 `clear.range from=2 to=8`. They remove visible rows only; they do not delete
 OpenLogs records or command history.
+
+The web terminal also includes a command palette, setup checklist, and local
+workflows. Use `save.workflow name=setup command="cmd.one && cmd.two"`,
+`list.workflows`, `run.workflow name=setup`, or the Workflows panel to save and
+reuse repeatable batches.
+
+Curated package-manager commands are included for common OS package flows:
+`search.apt.package`, `show.apt.package`, `install.apt.package`,
+`search.brew.package`, `install.brew.package`, `search.winget.package`, and
+`install.winget.package`. Install/remove/update commands are HIGH risk, so the
+default policy dry-runs them first.
 
 Batch execution uses shell-like `&&` at the IDEL host layer:
 
@@ -176,7 +187,9 @@ pnpm ui            # builds if needed, then serves the terminal at http://127.0.
 # (equivalently: idel serve --static packages/web/public)
 ```
 
-The page at `/` explains the runtime; `/terminal.html` is a live terminal with an **IDEL** mode (registry completion, history, a live audit-log panel) and an **Ask Claude** mode that drives the embedded console over `/api/agent/stream`. The Claude console lights up when Claude is reachable on the `idel serve` process (see [Using your Claude subscription](#using-your-claude-subscription)) — the credential never reaches the browser.
+The page at `/` explains the runtime; `/terminal.html` is a live terminal with an **IDEL** mode (registry completion, history, a live audit-log panel), an **Ask Claude** mode that drives the embedded console over `/api/agent/stream`, and optional `sh` tabs for a native OS shell. The Claude console lights up when Claude is reachable on the `idel serve` process (see [Using your Claude subscription](#using-your-claude-subscription)) — the credential never reaches the browser.
+
+Use IDEL tabs for the audited policy pipeline. Use a native `sh` tab only when you need interactive OS behavior such as `sudo apt install git`, package prompts, shell autocomplete, Ctrl+C, arrows, or full-screen terminal tools. Native shell tabs are backed by xterm.js and are intentionally direct shell sessions, so commands typed there are not converted into IDEL commands or written as OpenLogs records. `--no-native` disables both `!` passthrough and native shell tabs.
 
 Every command rendered in the terminal — typed or AI-proposed — shows what it **translates to**: the real adapter invocation (e.g. `remove.file name=x force=true` → `rm -f x`, `list.folder` → `ls`), so the mapping from intent to execution is visible at the call site. In the interactive `idel terminal`, a sensitive (HIGH/CRITICAL) command is previewed with its translation and risk and held for confirmation before any real run (and a `require_dry_run`-policy command is shown as dry-run-only, never silently promoted).
 
@@ -341,10 +354,11 @@ idel open.editor file=src/index.ts editor=code wait=true
 idel editor README.md
 ```
 
-Other interactive TTY programs (`less`, `top`, long-running TUIs) are still not
-general-purpose web/runtime commands. They need broader PTY/session management;
-`open.editor` is the scoped editor path that is allowed only from local
-interactive CLI contexts.
+Interactive OS work belongs in a native shell tab in the web terminal, or in a
+local terminal. Native shell tabs are direct OS sessions for prompts, Ctrl+C,
+Tab, and arrows; they are not structured IDEL commands and are not OpenLogs
+records. Use `open.editor` for the scoped editor path in local interactive CLI
+contexts.
 
 Native passthrough is:
 

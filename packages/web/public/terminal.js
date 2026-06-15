@@ -21,6 +21,37 @@ const tabsEl = $("tabs");
 const modeIdelBtn = $("mode-idel");
 const modeAskBtn = $("mode-ask");
 const newTerminalBtn = $("new-terminal");
+const newNativeTerminalBtn = $("new-native-terminal");
+const paletteDialog = $("palette-dialog");
+const paletteOpen = $("palette-open");
+const paletteClose = $("palette-close");
+const paletteSearch = $("palette-search");
+const paletteResults = $("palette-results");
+const paletteEmpty = $("palette-empty");
+const workflowDialog = $("workflow-dialog");
+const workflowOpen = $("workflow-open");
+const workflowClose = $("workflow-close");
+const workflowName = $("workflow-name");
+const workflowCommand = $("workflow-command");
+const workflowSave = $("workflow-save");
+const workflowFillCurrent = $("workflow-fill-current");
+const workflowList = $("workflow-list");
+const workflowEmpty = $("workflow-empty");
+const nativeSessionsDialog = $("native-sessions-dialog");
+const nativeSessionsOpen = $("native-sessions-open");
+const nativeSessionsClose = $("native-sessions-close");
+const nativeSessionsRefresh = $("native-sessions-refresh");
+const nativeSessionsCloseAll = $("native-sessions-close-all");
+const nativeSessionsList = $("native-sessions-list");
+const nativeSessionsEmpty = $("native-sessions-empty");
+const setupDialog = $("setup-check-dialog");
+const setupOpen = $("setup-open");
+const setupClose = $("setup-close");
+const setupChecks = $("setup-checks");
+const setupDismiss = $("setup-dismiss");
+const setupOpenDictionary = $("setup-open-dictionary");
+const setupOpenWorkflows = $("setup-open-workflows");
+const setupOpenAi = $("setup-open-ai");
 const dictionaryDialog = $("dictionary-dialog");
 const dictionaryOpen = $("dictionary-open");
 const dictionaryClose = $("dictionary-close");
@@ -44,6 +75,7 @@ const showLogsInput = $("pref-show-logs");
 const themeButtons = Array.from(document.querySelectorAll("[data-theme]"));
 const paletteButtons = Array.from(document.querySelectorAll("[data-palette]"));
 const fontSizeButtons = Array.from(document.querySelectorAll("[data-font-size]"));
+const effectButtons = Array.from(document.querySelectorAll("[data-effect]"));
 const screenshotDialog = $("screenshot-dialog");
 const screenshotClose = $("screenshot-close");
 const screenshotRedact = $("screenshot-redact");
@@ -57,10 +89,12 @@ let completions = [];
 let compSel = -1;
 let nextTabId = 1;
 let terminalCount = 0;
+let nativeTerminalCount = 0;
 let activeTabId = "";
 let lastTerminalTabId = "";
 const tabs = [];
 const compactInputMedia = typeof window.matchMedia === "function" ? window.matchMedia("(max-width: 520px)") : null;
+const reducedMotionMedia = typeof window.matchMedia === "function" ? window.matchMedia("(prefers-reduced-motion: reduce)") : null;
 let commandBusy = false;
 let screenshotScope = "visible";
 let screenshotSource = null;
@@ -73,22 +107,38 @@ let dictionaryLoading = false;
 let serverPlatform = "";
 let serverAdapter = "posix";
 let multilineBatch = false;
+let paletteItems = [];
+let paletteSel = 0;
+let registryCommandCount = 0;
+let serverOnline = false;
+let nativeAvailable = true;
+let nativeSessionRefreshTimer = 0;
+let nextNativeGeneration = 1;
+let effectCanvas = null;
+let matrixAnimationId = 0;
+let matrixColumns = [];
+let matrixLastFrame = 0;
 
 const THEMES = new Set(["dark", "light"]);
 const PALETTES = new Set(["cyan", "blue", "teal", "green", "amber", "orange", "rose", "red", "violet", "slate"]);
 const FONT_SIZES = new Set(["small", "normal", "large", "xlarge"]);
+const EFFECTS = new Set(["none", "matrix", "scanlines", "glow"]);
 const PREF_KEYS = {
   theme: "idel.theme",
   palette: "idel.palette",
   fontSize: "idel.fontSize",
+  effect: "idel.effect",
   showLogs: "idel.showLogs",
 };
+const WORKFLOW_KEY = "idel.workflows";
+const SETUP_DISMISSED_KEY = "idel.setup.dismissed";
 const PAGE_EXIT_MESSAGE =
   "Refresh or leave IDEL terminal? Current terminal output, running commands, and unsaved editor changes may be lost.";
 const DEFAULT_PREFERENCES = {
   theme: "dark",
   palette: "cyan",
   fontSize: "normal",
+  effect: "none",
   showLogs: true,
 };
 
@@ -141,9 +191,17 @@ function initPreferences() {
       applyPreferences({ ...currentPreferences(), fontSize: btn.dataset.fontSize });
     });
   }
+  for (const btn of effectButtons) {
+    btn.addEventListener("click", () => {
+      applyPreferences({ ...currentPreferences(), effect: btn.dataset.effect });
+    });
+  }
   showLogsInput?.addEventListener("change", () => {
     applyPreferences({ ...currentPreferences(), showLogs: showLogsInput.checked });
   });
+  const syncMotion = () => applyTerminalEffect(currentPreferences().effect);
+  if (reducedMotionMedia?.addEventListener) reducedMotionMedia.addEventListener("change", syncMotion);
+  else if (reducedMotionMedia?.addListener) reducedMotionMedia.addListener(syncMotion);
   preferencesOpen?.addEventListener("click", openPreferences);
   preferencesClose?.addEventListener("click", closePreferences);
   preferencesDialog?.addEventListener("click", (e) => {
@@ -191,7 +249,660 @@ function closeKnowledgeBase() {
   if (!knowledgeDialog) return;
   if (typeof knowledgeDialog.close === "function" && knowledgeDialog.open) knowledgeDialog.close();
   else knowledgeDialog.removeAttribute("open");
-  if (activeTab()?.type !== "editor") input.focus();
+  focusActiveInput();
+}
+
+function initCommandPalette() {
+  paletteOpen?.addEventListener("click", () => void openCommandPalette());
+  paletteClose?.addEventListener("click", closeCommandPalette);
+  paletteDialog?.addEventListener("click", (e) => {
+    if (e.target === paletteDialog) closeCommandPalette();
+  });
+  paletteSearch?.addEventListener("input", renderCommandPalette);
+  paletteSearch?.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeCommandPalette();
+      return;
+    }
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const count = paletteItems.length;
+      if (!count) return;
+      paletteSel =
+        e.key === "ArrowDown"
+          ? (paletteSel + 1) % count
+          : (paletteSel - 1 + count) % count;
+      syncPaletteSelection();
+      return;
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const item = paletteItems[paletteSel] ?? paletteItems[0];
+      if (item) runPaletteItem(item);
+    }
+  });
+  window.addEventListener("keydown", (e) => {
+    const key = e.key.toLowerCase();
+    if ((e.ctrlKey || e.metaKey) && key === "k") {
+      e.preventDefault();
+      void openCommandPalette();
+    }
+  });
+}
+
+async function openCommandPalette() {
+  if (!paletteDialog) return;
+  if (typeof paletteDialog.showModal === "function") paletteDialog.showModal();
+  else paletteDialog.setAttribute("open", "");
+  paletteSearch.value = "";
+  renderCommandPalette();
+  paletteSearch?.focus();
+  await loadDictionary();
+  renderCommandPalette();
+}
+
+function closeCommandPalette() {
+  if (!paletteDialog) return;
+  if (typeof paletteDialog.close === "function" && paletteDialog.open) paletteDialog.close();
+  else paletteDialog.removeAttribute("open");
+  focusActiveInput();
+}
+
+function buildPaletteItems(query) {
+  const active = activeTab();
+  const actions = [
+    paletteAction("New terminal", "Workspace", "Open a new terminal tab", () => createTerminalTab(true)),
+    paletteAction("New native shell", "Workspace", "Open a direct OS shell tab", () => createNativeTerminalTab(true)),
+    paletteAction("Open shell sessions", "Workspace", "Attach, focus, or close native shell sessions", () => void openNativeSessionsDialog()),
+    paletteAction("Open dictionary", "Reference", "Search IDEL to OS mappings", () => void openDictionary()),
+    paletteAction("Open knowledge base", "Reference", "Batch, native, sudo, and package examples", openKnowledgeBase),
+    paletteAction("Open workflows", "Workflow", "Create and run saved batches", openWorkflowDialog),
+    paletteAction("Open setup checklist", "Setup", "Review local IDEL readiness", () => void openSetupChecklist()),
+    paletteAction("Preferences", "Settings", "Theme, palette, font size, audit panel", openPreferences),
+    paletteAction("Ask Claude setup", "AI", "Configure Claude Code or ANTHROPIC_API_KEY", () => openClaudeSetupDialog()),
+    paletteAction(multilineBatch ? "Turn batch input off" : "Turn batch input on", "Input", "Switch single-line and multiline command entry", () => setMultilineBatch(!multilineBatch)),
+  ];
+  if (active?.type === "native") {
+    actions.splice(2, 0,
+      paletteAction("Copy active shell output", "Workspace", "Copy selected text, or the visible native shell output", () => void copyNativeTerminal(active, null)),
+      paletteAction("Screenshot active shell", "Workspace", "Open screenshot options for this native shell", () => openScreenshotDialog(active.pane)),
+      paletteAction("Interrupt active shell", "Workspace", "Send Ctrl+C / SIGINT to the native shell", () => void sendNativeSignal(active, "interrupt", null)),
+      paletteAction("Terminate active shell", "Workspace", "Send SIGTERM to the native shell", () => void sendNativeSignal(active, "terminate", null)),
+      paletteAction("Kill active shell", "Workspace", "Send SIGKILL to the native shell", () => {
+        if (confirm("Force kill this native shell session?")) void sendNativeSignal(active, "kill", null);
+      }),
+      paletteAction("Restart active shell", "Workspace", "Stop this shell and start a fresh one in the same tab", () => void restartNativeTerminal(active)),
+      paletteAction("Close active shell", "Workspace", "Close this native shell tab", () => closeTab(active)),
+    );
+  }
+  if (input.value.trim()) {
+    actions.unshift(paletteAction("Save current input as workflow", "Workflow", input.value.trim(), () => {
+      workflowName.value = "";
+      workflowCommand.value = input.value.trim();
+      openWorkflowDialog();
+      workflowName?.focus();
+    }));
+  }
+
+  const commands = dictionaryEntries.map((entry) => ({
+    kind: "Command",
+    title: entry.id,
+    detail: entry.summary ?? "",
+    keywords: [entry.id, entry.category, entry.risk, ...(entry.examples ?? []), dictionaryHaystack(entry)].join(" "),
+    run: () => {
+      switchTab(activeTerminalTab().id);
+      input.value = dictionaryInsertLine(entry);
+      resizeCommandInput();
+      closeCommandPalette();
+      input.focus();
+    },
+  }));
+
+  const workflows = readWorkflows().map((workflow) => ({
+    kind: "Workflow",
+    title: workflow.name,
+    detail: workflow.command,
+    keywords: `${workflow.name} ${workflow.command}`,
+    run: () => void runSavedWorkflow(workflow),
+  }));
+
+  return [...actions, ...workflows, ...commands]
+    .map((item) => ({ item, score: scorePaletteItem(item, query) }))
+    .filter(({ score }) => score >= 0)
+    .sort((a, b) => b.score - a.score || a.item.title.localeCompare(b.item.title))
+    .slice(0, 60)
+    .map(({ item }) => item);
+}
+
+function paletteAction(title, kind, detail, run) {
+  return { title, kind, detail, keywords: `${title} ${kind} ${detail}`, run };
+}
+
+function scorePaletteItem(item, query) {
+  const q = String(query ?? "").trim().toLowerCase();
+  if (!q) return item.kind === "Action" ? 10 : 1;
+  const haystack = `${item.title} ${item.kind} ${item.detail} ${item.keywords ?? ""}`.toLowerCase();
+  if (item.title.toLowerCase() === q) return 1000;
+  if (item.title.toLowerCase().startsWith(q)) return 800;
+  if (haystack.includes(q)) return 400;
+  const tokens = q.split(/\s+/).filter(Boolean);
+  let score = 0;
+  for (const token of tokens) {
+    if (!haystack.includes(token)) return -1;
+    score += item.title.toLowerCase().includes(token) ? 80 : 30;
+  }
+  return score;
+}
+
+function renderCommandPalette() {
+  if (!paletteResults || !paletteEmpty) return;
+  paletteItems = buildPaletteItems(paletteSearch?.value ?? "");
+  paletteSel = Math.min(paletteSel, Math.max(0, paletteItems.length - 1));
+  paletteResults.innerHTML = "";
+  for (const [index, item] of paletteItems.entries()) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "palette-item";
+    btn.setAttribute("role", "option");
+    btn.setAttribute("aria-selected", String(index === paletteSel));
+    const title = document.createElement("div");
+    title.className = "palette-item-title";
+    const name = document.createElement("span");
+    name.textContent = item.title;
+    const kind = document.createElement("span");
+    kind.className = "palette-kind";
+    kind.textContent = item.kind;
+    title.append(name, kind);
+    const detail = document.createElement("div");
+    detail.className = "palette-item-detail";
+    detail.textContent = item.detail;
+    btn.append(title, detail);
+    btn.addEventListener("mouseenter", () => {
+      paletteSel = index;
+      syncPaletteSelection();
+    });
+    btn.addEventListener("click", () => runPaletteItem(item));
+    paletteResults.appendChild(btn);
+  }
+  paletteEmpty.hidden = paletteItems.length > 0;
+  syncPaletteSelection();
+}
+
+function syncPaletteSelection() {
+  const items = Array.from(paletteResults?.children ?? []);
+  for (const [index, item] of items.entries()) {
+    item.classList.toggle("sel", index === paletteSel);
+    item.setAttribute("aria-selected", String(index === paletteSel));
+  }
+  items[paletteSel]?.scrollIntoView?.({ block: "nearest" });
+}
+
+function runPaletteItem(item) {
+  closeCommandPalette();
+  item.run();
+}
+
+function initWorkflowDialog() {
+  workflowOpen?.addEventListener("click", openWorkflowDialog);
+  workflowClose?.addEventListener("click", closeWorkflowDialog);
+  workflowDialog?.addEventListener("click", (e) => {
+    if (e.target === workflowDialog) closeWorkflowDialog();
+  });
+  workflowFillCurrent?.addEventListener("click", () => {
+    workflowCommand.value = input.value.trim();
+    workflowCommand.focus();
+  });
+  workflowSave?.addEventListener("click", () => {
+    const name = workflowName.value.trim();
+    const command = workflowCommand.value.trim();
+    if (!name || !command) {
+      line("Workflow save requires name and commands.", "err");
+      return;
+    }
+    saveWorkflow({ name, command });
+    workflowName.value = "";
+    workflowCommand.value = "";
+    renderWorkflowList();
+    renderCommandPalette();
+    line(`saved workflow: ${name}`, "ok");
+  });
+}
+
+function openWorkflowDialog() {
+  if (!workflowDialog) return;
+  renderWorkflowList();
+  if (typeof workflowDialog.showModal === "function") workflowDialog.showModal();
+  else workflowDialog.setAttribute("open", "");
+}
+
+function closeWorkflowDialog() {
+  if (!workflowDialog) return;
+  if (typeof workflowDialog.close === "function" && workflowDialog.open) workflowDialog.close();
+  else workflowDialog.removeAttribute("open");
+  focusActiveInput();
+}
+
+function readWorkflows() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(WORKFLOW_KEY) || "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item) => item && typeof item.name === "string" && typeof item.command === "string")
+      .map((item) => ({
+        name: item.name,
+        command: item.command,
+        createdAt: item.createdAt || new Date().toISOString(),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  } catch {
+    return [];
+  }
+}
+
+function writeWorkflows(workflows) {
+  try {
+    localStorage.setItem(WORKFLOW_KEY, JSON.stringify(workflows, null, 2));
+  } catch {
+    line("Could not persist workflows in local storage.", "err");
+  }
+}
+
+function saveWorkflow(workflow) {
+  const workflows = readWorkflows().filter((item) => item.name !== workflow.name);
+  workflows.push({ ...workflow, createdAt: new Date().toISOString() });
+  writeWorkflows(workflows);
+}
+
+function deleteWorkflow(name) {
+  writeWorkflows(readWorkflows().filter((workflow) => workflow.name !== name));
+  renderWorkflowList();
+  renderCommandPalette();
+}
+
+function renderWorkflowList() {
+  if (!workflowList || !workflowEmpty) return;
+  const workflows = readWorkflows();
+  workflowList.innerHTML = "";
+  for (const workflow of workflows) {
+    const item = document.createElement("article");
+    item.className = "workflow-item";
+    const title = document.createElement("div");
+    title.className = "workflow-title";
+    const name = document.createElement("span");
+    name.textContent = workflow.name;
+    const created = document.createElement("span");
+    created.className = "palette-kind";
+    created.textContent = "saved";
+    title.append(name, created);
+    const command = document.createElement("div");
+    command.className = "workflow-command";
+    command.textContent = workflow.command;
+    const actions = document.createElement("div");
+    actions.className = "workflow-actions";
+    const run = workflowButton("Run", () => void runSavedWorkflow(workflow));
+    const insert = workflowButton("Insert", () => {
+      switchTab(activeTerminalTab().id);
+      input.value = workflow.command;
+      resizeCommandInput();
+      closeWorkflowDialog();
+      input.focus();
+    });
+    const remove = workflowButton("Delete", () => deleteWorkflow(workflow.name));
+    actions.append(run, insert, remove);
+    item.append(title, command, actions);
+    workflowList.appendChild(item);
+  }
+  workflowEmpty.hidden = workflows.length > 0;
+}
+
+function workflowButton(label, onClick) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "editor-btn";
+  btn.textContent = label;
+  btn.addEventListener("click", onClick);
+  return btn;
+}
+
+function initNativeSessionsDialog() {
+  nativeSessionsOpen?.addEventListener("click", () => void openNativeSessionsDialog());
+  nativeSessionsClose?.addEventListener("click", closeNativeSessionsDialog);
+  nativeSessionsDialog?.addEventListener("click", (e) => {
+    if (e.target === nativeSessionsDialog) closeNativeSessionsDialog();
+  });
+  nativeSessionsRefresh?.addEventListener("click", () => void refreshNativeSessionsDialog());
+  nativeSessionsCloseAll?.addEventListener("click", () => void closeAllNativeSessions());
+}
+
+async function openNativeSessionsDialog() {
+  if (!nativeSessionsDialog) return;
+  if (!nativeAvailable) {
+    line("Native shell sessions are disabled on this server.", "err");
+    return;
+  }
+  renderNativeSessionsLoading();
+  if (typeof nativeSessionsDialog.showModal === "function") nativeSessionsDialog.showModal();
+  else nativeSessionsDialog.setAttribute("open", "");
+  await refreshNativeSessionsDialog();
+}
+
+function closeNativeSessionsDialog() {
+  if (!nativeSessionsDialog) return;
+  if (typeof nativeSessionsDialog.close === "function" && nativeSessionsDialog.open) nativeSessionsDialog.close();
+  else nativeSessionsDialog.removeAttribute("open");
+  focusActiveInput();
+}
+
+function renderNativeSessionsLoading() {
+  if (!nativeSessionsList || !nativeSessionsEmpty) return;
+  nativeSessionsList.innerHTML = "";
+  nativeSessionsEmpty.hidden = false;
+  nativeSessionsEmpty.textContent = "Loading shell sessions...";
+  if (nativeSessionsCloseAll) nativeSessionsCloseAll.disabled = true;
+}
+
+async function refreshNativeSessionsDialog() {
+  if (!nativeSessionsList || !nativeSessionsEmpty) return [];
+  try {
+    const sessions = await fetchNativeSessions();
+    renderNativeSessions(sessions);
+    return sessions;
+  } catch (err) {
+    nativeSessionsList.innerHTML = "";
+    nativeSessionsEmpty.hidden = false;
+    nativeSessionsEmpty.textContent = "Could not load shell sessions.";
+    line("Shell sessions refresh failed: " + (err?.message ?? String(err)), "err");
+    return [];
+  }
+}
+
+async function fetchNativeSessions() {
+  const res = await fetch("/api/native/sessions");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const sessions = await res.json();
+  return Array.isArray(sessions) ? sessions : [];
+}
+
+function renderNativeSessions(sessions) {
+  if (!nativeSessionsList || !nativeSessionsEmpty) return;
+  const sorted = [...sessions].sort((a, b) => String(a.startedAt ?? "").localeCompare(String(b.startedAt ?? "")));
+  nativeSessionsList.innerHTML = "";
+  for (const info of sorted) nativeSessionsList.appendChild(nativeSessionItem(info));
+  nativeSessionsEmpty.hidden = sorted.length > 0;
+  nativeSessionsEmpty.textContent = "No running native shell sessions.";
+  if (nativeSessionsCloseAll) nativeSessionsCloseAll.disabled = sorted.length === 0;
+}
+
+function nativeSessionItem(info) {
+  const localTab = nativeTabForSession(info.id);
+  const item = document.createElement("article");
+  item.className = "native-session-item";
+
+  const title = document.createElement("div");
+  title.className = "native-session-title";
+  const name = document.createElement("span");
+  const code = document.createElement("code");
+  code.textContent = String(info.shell ?? "shell");
+  name.appendChild(code);
+  const state = document.createElement("span");
+  state.className = localTab ? "native-session-local" : "palette-kind";
+  state.textContent = localTab ? "open tab" : "server";
+  title.append(name, state);
+
+  const detail = document.createElement("div");
+  detail.className = "native-session-detail";
+  detail.textContent = nativeSessionDetail(info);
+
+  const actions = document.createElement("div");
+  actions.className = "native-session-actions";
+  actions.append(
+    workflowButton(localTab ? "Focus" : "Attach", () => {
+      if (localTab) switchTab(localTab.id);
+      else attachNativeSession(info);
+      closeNativeSessionsDialog();
+    }),
+  );
+  if (localTab) {
+    actions.append(workflowButton("Restart", () => {
+      closeNativeSessionsDialog();
+      void restartNativeTerminal(localTab);
+    }));
+  }
+  actions.append(workflowButton("Close", () => void closeNativeSessionId(info.id)));
+
+  item.append(title, detail, actions);
+  return item;
+}
+
+function nativeSessionDetail(info) {
+  const bits = [
+    String(info.cwd ?? ""),
+    info.pid ? `pid ${info.pid}` : "",
+    `${Number(info.cols ?? 0) || 80}x${Number(info.rows ?? 0) || 24}`,
+    info.startedAt ? `started ${formatNativeSessionTime(info.startedAt)}` : "",
+  ].filter(Boolean);
+  return bits.join(" · ");
+}
+
+function formatNativeSessionTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function nativeTabForSession(id) {
+  if (!id) return null;
+  return tabs.find((tab) => tab.type === "native" && tab.native?.id === id) ?? null;
+}
+
+function scheduleNativeSessionsRefresh(delay = 250) {
+  if (nativeSessionRefreshTimer) clearTimeout(nativeSessionRefreshTimer);
+  nativeSessionRefreshTimer = window.setTimeout(() => {
+    nativeSessionRefreshTimer = 0;
+    if (nativeSessionsDialog?.open) void refreshNativeSessionsDialog();
+  }, delay);
+}
+
+async function closeNativeSessionId(id) {
+  const sessionId = String(id ?? "");
+  if (!sessionId) return false;
+  const localTab = nativeTabForSession(sessionId);
+  if (localTab) {
+    localTab.native.stopping = true;
+    updateNativeShellUi(localTab);
+  }
+  try {
+    const res = await fetch(`/api/native/${encodeURIComponent(sessionId)}/close`, { method: "POST" });
+    if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`);
+    if (localTab) {
+      if (res.status === 404) {
+        localTab.native.closed = true;
+        localTab.native.stopping = false;
+        localTab.native.exitCode = null;
+        nativeNotice(localTab, "Shell session is no longer running.");
+        updateNativeShellUi(localTab);
+      } else {
+        nativeNotice(localTab, "Close signal sent.");
+      }
+    }
+    scheduleNativeSessionsRefresh();
+    return true;
+  } catch (err) {
+    if (localTab) {
+      localTab.native.stopping = false;
+      updateNativeShellUi(localTab);
+    }
+    line("Close shell failed: " + (err?.message ?? String(err)), "err");
+    return false;
+  }
+}
+
+async function closeAllNativeSessions() {
+  const sessions = await fetchNativeSessions().catch((err) => {
+    line("Close all shells failed: " + (err?.message ?? String(err)), "err");
+    return [];
+  });
+  if (!sessions.length) {
+    renderNativeSessions([]);
+    return;
+  }
+  if (!confirm(`Close ${sessions.length} native shell session(s)?`)) return;
+  await Promise.all(sessions.map((session) => closeNativeSessionId(session.id)));
+  await refreshNativeSessionsDialog();
+}
+
+function workflowByName(name) {
+  return readWorkflows().find((workflow) => workflow.name === name);
+}
+
+function isWorkflowCommand(command) {
+  return new Set(["save.workflow", "list.workflows", "run.workflow", "remove.workflow", "open.workflows"]).has(parseIdelLine(command).command);
+}
+
+async function handleWorkflowCommand(command) {
+  const parsed = parseIdelLine(command);
+  switch (parsed.command) {
+    case "open.workflows":
+      line("idel> " + command, "cmd");
+      openWorkflowDialog();
+      return true;
+    case "list.workflows": {
+      line("idel> " + command, "cmd");
+      const workflows = readWorkflows();
+      line(workflows.length ? workflows.map((workflow) => `${workflow.name}: ${workflow.command}`).join("\n") : "(no workflows)", "text");
+      return true;
+    }
+    case "save.workflow": {
+      line("idel> " + command, "cmd");
+      const name = String(parsed.params.name ?? parsed.params.title ?? "").trim();
+      const body = String(parsed.params.command ?? parsed.params.steps ?? parsed.args.join(" ")).trim();
+      if (!name || !body) {
+        line('Usage: save.workflow name=<name> command="<cmd.one && cmd.two>"', "err");
+        return false;
+      }
+      saveWorkflow({ name, command: body });
+      line(`saved workflow: ${name}`, "ok");
+      return true;
+    }
+    case "run.workflow": {
+      line("idel> " + command, "cmd");
+      const name = String(parsed.params.name ?? parsed.args[0] ?? "").trim();
+      const workflow = workflowByName(name);
+      if (!workflow) {
+        line(`No workflow named ${name || "(missing)"}.`, "err");
+        return false;
+      }
+      return await runSavedWorkflow(workflow, { echo: false });
+    }
+    case "remove.workflow": {
+      line("idel> " + command, "cmd");
+      const name = String(parsed.params.name ?? parsed.args[0] ?? "").trim();
+      if (!name || !workflowByName(name)) {
+        line(`No workflow named ${name || "(missing)"}.`, "err");
+        return false;
+      }
+      deleteWorkflow(name);
+      line(`removed workflow: ${name}`, "ok");
+      return true;
+    }
+    default:
+      return false;
+  }
+}
+
+async function runSavedWorkflow(workflow, options = {}) {
+  closeWorkflowDialog();
+  closeCommandPalette();
+  if (options.echo !== false) line(`workflow> ${workflow.name}`, "cmd");
+  const command = workflow.command.trim();
+  if (!command) return false;
+  if (multilineCommands(command).length > 1) {
+    await runMultilineBatch(command);
+    return true;
+  }
+  if (isSingleLocalClearCommand(command)) return clearTerminalLines(command);
+  if (isWorkflowCommand(command)) return await handleWorkflowCommand(command);
+  await runIdel(command);
+  return true;
+}
+
+function initSetupChecklist() {
+  setupOpen?.addEventListener("click", () => void openSetupChecklist());
+  setupClose?.addEventListener("click", closeSetupChecklist);
+  setupDialog?.addEventListener("click", (e) => {
+    if (e.target === setupDialog) closeSetupChecklist();
+  });
+  setupDismiss?.addEventListener("click", () => {
+    storageSet(SETUP_DISMISSED_KEY, "true");
+    closeSetupChecklist();
+  });
+  setupOpenDictionary?.addEventListener("click", () => {
+    closeSetupChecklist();
+    void openDictionary();
+  });
+  setupOpenWorkflows?.addEventListener("click", () => {
+    closeSetupChecklist();
+    openWorkflowDialog();
+  });
+  setupOpenAi?.addEventListener("click", () => {
+    closeSetupChecklist();
+    openClaudeSetupDialog();
+  });
+}
+
+async function openSetupChecklist() {
+  if (!setupDialog) return;
+  await loadDictionary();
+  renderSetupChecklist();
+  if (typeof setupDialog.showModal === "function") setupDialog.showModal();
+  else setupDialog.setAttribute("open", "");
+}
+
+function closeSetupChecklist() {
+  if (!setupDialog) return;
+  if (typeof setupDialog.close === "function" && setupDialog.open) setupDialog.close();
+  else setupDialog.removeAttribute("open");
+  focusActiveInput();
+}
+
+function renderSetupChecklist() {
+  if (!setupChecks) return;
+  const packagePack = dictionaryEntries.some((entry) => /\.apt\.|\.brew\.|\.winget\./.test(entry.id));
+  const workflows = readWorkflows();
+  const checks = [
+    setupCheck("Server", serverOnline, serverOnline ? "Local runtime is reachable." : "Start idel serve or scripts/run-ui.sh."),
+    setupCheck("Operating system", Boolean(serverPlatform), serverPlatformLabel()),
+    setupCheck("Registry", registryCommandCount > 0, registryCommandCount ? `${registryCommandCount} commands loaded.` : "Registry is not loaded yet."),
+    setupCheck("Package commands", packagePack, packagePack ? "Curated package-manager commands are available." : "Package-manager commands are not loaded."),
+    setupCheck("Native shell", nativeAvailable, nativeAvailable ? "Native shell tabs are available." : "Native shell tabs are disabled.", "warn"),
+    setupCheck("AI provider", agentAvailable, agentAvailable ? "Ask Claude is ready." : "Ask Claude needs Claude Code or ANTHROPIC_API_KEY."),
+    setupCheck("Saved workflows", workflows.length > 0, workflows.length ? `${workflows.length} workflow(s) saved.` : "No workflows saved yet.", "warn"),
+  ];
+  setupChecks.innerHTML = "";
+  for (const check of checks) setupChecks.appendChild(setupCheckNode(check));
+}
+
+function setupCheck(title, ok, detail, fallbackState = "fail") {
+  return { title, detail, state: ok ? "ok" : fallbackState };
+}
+
+function setupCheckNode(check) {
+  const item = document.createElement("article");
+  item.className = `setup-check ${check.state}`;
+  const head = document.createElement("div");
+  head.className = "setup-check-title";
+  const title = document.createElement("span");
+  title.textContent = check.title;
+  const state = document.createElement("span");
+  state.className = "setup-check-state";
+  state.textContent = check.state;
+  head.append(title, state);
+  const detail = document.createElement("div");
+  detail.className = "setup-check-detail";
+  detail.textContent = check.detail;
+  item.append(head, detail);
+  return item;
 }
 
 function renderKnowledgeBase() {
@@ -201,10 +912,10 @@ function renderKnowledgeBase() {
       ? {
           native: "! winget install --id Git.Git -e",
           nativeShell: "winget install --id Git.Git -e",
-          packages: "! winget search Git\n! winget install --id Git.Git -e\n! winget list Git",
+          packages: "search.winget.package query=Git\nshow.winget.package id=Git.Git\ninstall.winget.package id=Git.Git",
           packageTitle: "Elevation And Windows Packages",
           packageNote:
-            "Some installers open UAC or interactive prompts. In the web terminal, prefer commands that can complete without an interactive prompt, or run them from a real terminal when elevation is required.",
+            "Some installers open UAC or interactive prompts. Use curated IDEL package commands when possible; use a sh tab when an installer needs native interaction.",
           wait:
             "run.script path=./scripts/start.ps1 shell=powershell && wait.time seconds=2 && tail.file file=app.log lines=40",
         }
@@ -212,20 +923,20 @@ function renderKnowledgeBase() {
         ? {
             native: "! brew install git",
             nativeShell: "brew install git",
-            packages: "! brew search git\n! brew install git\n! brew info git",
+            packages: "search.brew.package query=git\nshow.brew.package name=git\ninstall.brew.package name=git",
             packageTitle: "Elevation And macOS Packages",
             packageNote:
-              "Homebrew usually does not need sudo. If a command asks for elevation or opens an interactive prompt, run it from a real terminal session.",
+              "Homebrew usually does not need sudo. If a command asks for elevation or opens an interactive prompt, run it from a sh tab.",
             wait:
               "run.script path=./scripts/start.sh shell=bash && wait.time seconds=2 && tail.file file=app.log lines=40",
           }
         : {
             native: "! sudo apt install git",
             nativeShell: "sudo apt install git",
-            packages: "! sudo apt update\n! sudo apt install git\n! apt search git",
+            packages: "search.apt.package query=git\nshow.apt.package name=git\ninstall.apt.package name=git",
             packageTitle: "Sudo And Apt",
             packageNote:
-              "Interactive sudo password prompts work best in a real terminal. In the web terminal, prefer commands that do not need an interactive password prompt, or run the server from a session where sudo is already ready.",
+              "Use curated IDEL apt commands for structured installs and audit decisions. Use a sh tab for interactive sudo password prompts or package prompts.",
             wait:
               "run.script path=./scripts/start.sh shell=bash && wait.time seconds=2 && tail.file file=app.log lines=40",
           };
@@ -238,6 +949,7 @@ function renderKnowledgeBase() {
   setElementText("knowledge-native-example", data.native);
   setElementText("knowledge-native-quoted-example", `! "${data.nativeShell}"`);
   setElementText("knowledge-native-shell-example", data.nativeShell);
+  setElementText("knowledge-native-tab-example", data.nativeShell);
   setElementText("knowledge-package-title", data.packageTitle);
   setElementText("knowledge-package-examples", data.packages);
   setElementText("knowledge-package-note", data.packageNote);
@@ -262,7 +974,7 @@ function closeDictionary() {
   if (!dictionaryDialog) return;
   if (typeof dictionaryDialog.close === "function" && dictionaryDialog.open) dictionaryDialog.close();
   else dictionaryDialog.removeAttribute("open");
-  if (activeTab()?.type !== "editor") input.focus();
+  focusActiveInput();
 }
 
 async function loadDictionary() {
@@ -273,9 +985,11 @@ async function loadDictionary() {
     const res = await fetch("/api/registry");
     dictionaryEntries = res.ok ? await res.json() : [];
     dictionaryEntries.sort((a, b) => a.category.localeCompare(b.category) || a.id.localeCompare(b.id));
+    registryCommandCount = dictionaryEntries.length;
     dictionaryLoaded = true;
   } catch {
     dictionaryEntries = [];
+    registryCommandCount = 0;
   } finally {
     dictionaryLoading = false;
   }
@@ -378,6 +1092,7 @@ function dictionaryEntryNode(entry, query) {
   insert.textContent = "Insert";
   insert.title = "Insert first example into the terminal";
   insert.addEventListener("click", () => {
+    switchTab(activeTerminalTab().id);
     input.value = dictionaryInsertLine(entry);
     closeDictionary();
     input.focus();
@@ -614,6 +1329,19 @@ function setAgentAvailability(available) {
   if (!available && mode === "ask") setMode("idel", { suppressSetup: true });
 }
 
+function setNativeAvailability(available) {
+  nativeAvailable = available;
+  for (const btn of [newNativeTerminalBtn, nativeSessionsOpen]) {
+    if (!btn) continue;
+    btn.disabled = !available;
+    btn.classList.toggle("unavailable", !available);
+    btn.setAttribute("aria-disabled", String(!available));
+    btn.title = available
+      ? btn === nativeSessionsOpen ? "Manage native shell sessions" : "New native shell"
+      : "Native shell tabs are disabled on this server.";
+  }
+}
+
 function askClaudeUnavailable() {
   return agentStatusKnown && !agentAvailable;
 }
@@ -623,8 +1351,13 @@ async function refreshAgentAvailability() {
     const res = await fetch("/api/health");
     const d = res.ok ? await res.json() : null;
     if (d?.ok && Object.prototype.hasOwnProperty.call(d, "agentAvailable")) {
+      serverOnline = true;
       if (Object.prototype.hasOwnProperty.call(d, "platform")) setServerPlatform(d.platform);
+      if (Object.prototype.hasOwnProperty.call(d, "nativeAvailable")) {
+        setNativeAvailability(d.nativeAvailable !== false);
+      }
       setAgentAvailability(d.agentAvailable !== false);
+      renderSetupChecklist();
       return agentAvailable;
     }
   } catch {
@@ -681,11 +1414,13 @@ function readPreferences() {
   const theme = storageGet(PREF_KEYS.theme);
   const palette = storageGet(PREF_KEYS.palette);
   const fontSize = storageGet(PREF_KEYS.fontSize);
+  const effect = storageGet(PREF_KEYS.effect);
   const showLogs = storageGet(PREF_KEYS.showLogs);
   return {
     theme: THEMES.has(theme) ? theme : DEFAULT_PREFERENCES.theme,
     palette: PALETTES.has(palette) ? palette : DEFAULT_PREFERENCES.palette,
     fontSize: FONT_SIZES.has(fontSize) ? fontSize : DEFAULT_PREFERENCES.fontSize,
+    effect: EFFECTS.has(effect) ? effect : DEFAULT_PREFERENCES.effect,
     showLogs: showLogs === null ? DEFAULT_PREFERENCES.showLogs : showLogs !== "false",
   };
 }
@@ -695,6 +1430,7 @@ function currentPreferences() {
     theme: classChoice(THEMES, "theme", DEFAULT_PREFERENCES.theme),
     palette: classChoice(PALETTES, "palette", DEFAULT_PREFERENCES.palette),
     fontSize: classChoice(FONT_SIZES, "font", DEFAULT_PREFERENCES.fontSize),
+    effect: classChoice(EFFECTS, "effect", DEFAULT_PREFERENCES.effect),
     showLogs: !document.body.classList.contains("logs-hidden"),
   };
 }
@@ -711,27 +1447,133 @@ function applyPreferences(next, persist = true) {
     theme: THEMES.has(next.theme) ? next.theme : DEFAULT_PREFERENCES.theme,
     palette: PALETTES.has(next.palette) ? next.palette : DEFAULT_PREFERENCES.palette,
     fontSize: FONT_SIZES.has(next.fontSize) ? next.fontSize : DEFAULT_PREFERENCES.fontSize,
+    effect: EFFECTS.has(next.effect) ? next.effect : DEFAULT_PREFERENCES.effect,
     showLogs: next.showLogs !== false,
   };
   replaceBodyChoice(THEMES, "theme", prefs.theme);
   replaceBodyChoice(PALETTES, "palette", prefs.palette);
   replaceBodyChoice(FONT_SIZES, "font", prefs.fontSize);
+  replaceBodyChoice(EFFECTS, "effect", prefs.effect);
   document.body.classList.toggle("logs-hidden", !prefs.showLogs);
   if (showLogsInput) showLogsInput.checked = prefs.showLogs;
   syncChoiceButtons(themeButtons, "theme", prefs.theme);
   syncChoiceButtons(paletteButtons, "palette", prefs.palette);
   syncChoiceButtons(fontSizeButtons, "fontSize", prefs.fontSize);
+  syncChoiceButtons(effectButtons, "effect", prefs.effect);
   if (persist) {
     storageSet(PREF_KEYS.theme, prefs.theme);
     storageSet(PREF_KEYS.palette, prefs.palette);
     storageSet(PREF_KEYS.fontSize, prefs.fontSize);
+    storageSet(PREF_KEYS.effect, prefs.effect);
     storageSet(PREF_KEYS.showLogs, String(prefs.showLogs));
   }
+  applyTerminalEffect(prefs.effect);
+  updateNativeTerminalAppearance();
 }
 
 function replaceBodyChoice(options, prefix, selected) {
   for (const option of options) document.body.classList.remove(`${prefix}-${option}`);
   document.body.classList.add(`${prefix}-${selected}`);
+}
+
+function applyTerminalEffect(effect) {
+  const selected = EFFECTS.has(effect) ? effect : DEFAULT_PREFERENCES.effect;
+  if (selected === "matrix" && !reducedMotionMedia?.matches) {
+    startMatrixEffect();
+    return;
+  }
+  stopMatrixEffect();
+}
+
+function ensureEffectCanvas() {
+  if (effectCanvas) return effectCanvas;
+  effectCanvas = document.createElement("canvas");
+  effectCanvas.className = "terminal-effect-canvas";
+  effectCanvas.setAttribute("aria-hidden", "true");
+  document.body.prepend(effectCanvas);
+  window.addEventListener("resize", resizeMatrixEffect);
+  return effectCanvas;
+}
+
+function startMatrixEffect() {
+  const canvas = ensureEffectCanvas();
+  resizeMatrixEffect();
+  if (matrixAnimationId) return;
+  const frame = (time) => {
+    drawMatrixFrame(time);
+    matrixAnimationId = requestAnimationFrame(frame);
+  };
+  matrixAnimationId = requestAnimationFrame(frame);
+  canvas.hidden = false;
+}
+
+function stopMatrixEffect() {
+  if (matrixAnimationId) cancelAnimationFrame(matrixAnimationId);
+  matrixAnimationId = 0;
+  matrixLastFrame = 0;
+  if (effectCanvas) {
+    const ctx = effectCanvas.getContext("2d");
+    ctx?.clearRect(0, 0, effectCanvas.width, effectCanvas.height);
+    effectCanvas.hidden = true;
+  }
+}
+
+function resizeMatrixEffect() {
+  if (!effectCanvas) return;
+  const ratio = Math.min(window.devicePixelRatio || 1, 2);
+  const width = Math.max(1, Math.floor(window.innerWidth * ratio));
+  const height = Math.max(1, Math.floor(window.innerHeight * ratio));
+  if (effectCanvas.width === width && effectCanvas.height === height) return;
+  effectCanvas.width = width;
+  effectCanvas.height = height;
+  effectCanvas.style.width = `${window.innerWidth}px`;
+  effectCanvas.style.height = `${window.innerHeight}px`;
+  const fontSize = Math.max(13, Math.floor(15 * ratio));
+  const count = Math.ceil(width / fontSize);
+  matrixColumns = Array.from({ length: count }, () => Math.floor(Math.random() * (height / fontSize)));
+  const ctx = effectCanvas.getContext("2d");
+  if (ctx) ctx.font = `${fontSize}px ${getComputedStyle(document.body).getPropertyValue("--mono").trim() || "monospace"}`;
+}
+
+function drawMatrixFrame(time) {
+  if (!effectCanvas || !document.body.classList.contains("effect-matrix")) return;
+  if (time - matrixLastFrame < 48) return;
+  matrixLastFrame = time;
+  const ctx = effectCanvas.getContext("2d");
+  if (!ctx) return;
+  const ratio = Math.min(window.devicePixelRatio || 1, 2);
+  const fontSize = Math.max(13, Math.floor(15 * ratio));
+  const css = getComputedStyle(document.body);
+  const bg = css.getPropertyValue("--bg").trim() || "#0b0e14";
+  const accent = css.getPropertyValue("--accent").trim() || "#5cc8ff";
+  ctx.fillStyle = colorWithAlpha(bg, 0.18);
+  ctx.fillRect(0, 0, effectCanvas.width, effectCanvas.height);
+  ctx.font = `${fontSize}px ${css.getPropertyValue("--mono").trim() || "monospace"}`;
+  ctx.fillStyle = colorWithAlpha(accent, 0.88);
+  for (let i = 0; i < matrixColumns.length; i++) {
+    const x = i * fontSize;
+    const y = matrixColumns[i] * fontSize;
+    ctx.fillText(randomMatrixGlyph(), x, y);
+    if (y > effectCanvas.height && Math.random() > 0.975) matrixColumns[i] = 0;
+    else matrixColumns[i] += 1;
+  }
+}
+
+function randomMatrixGlyph() {
+  const glyphs = "01アイウエオカキクケコサシスセソ<>/{}[]#$";
+  return glyphs[Math.floor(Math.random() * glyphs.length)] || "0";
+}
+
+function colorWithAlpha(color, alpha) {
+  const value = String(color ?? "").trim();
+  if (/^#[0-9a-f]{6}$/i.test(value)) {
+    const r = Number.parseInt(value.slice(1, 3), 16);
+    const g = Number.parseInt(value.slice(3, 5), 16);
+    const b = Number.parseInt(value.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+  if (/^rgb\(/i.test(value)) return value.replace(/^rgb\((.*)\)$/i, `rgba($1, ${alpha})`);
+  return value;
 }
 
 function syncChoiceButtons(buttons, key, selected) {
@@ -823,18 +1665,47 @@ function activeTerminalTab() {
 }
 
 function activeOutput() {
+  const tab = activeTab();
+  if (tab?.type === "terminal" || tab?.type === "native") return tab.pane;
   return activeTerminalTab().pane;
 }
 
+function activeInputHistoryTab() {
+  const tab = activeTab();
+  if (tab?.type === "terminal" || tab?.type === "native") return tab;
+  return activeTerminalTab();
+}
+
+function focusActiveInput() {
+  const tab = activeTab();
+  if (tab?.type === "native") {
+    tab.native?.terminal?.focus?.();
+    return;
+  }
+  if (tab?.type !== "editor") input.focus();
+}
+
 function syncCommandArea() {
-  const editorActive = activeTab()?.type === "editor";
-  form.hidden = editorActive;
-  form.setAttribute("aria-hidden", String(editorActive));
-  input.disabled = editorActive || commandBusy;
+  const tab = activeTab();
+  const editorActive = tab?.type === "editor";
+  const nativeActive = tab?.type === "native";
+  const nativeXtermActive = nativeActive && Boolean(tab?.native?.terminal);
+  const hidden = editorActive || nativeXtermActive;
+  form.hidden = hidden;
+  form.setAttribute("aria-hidden", String(hidden));
+  input.disabled = editorActive || (commandBusy && !nativeActive);
+  batchToggle.hidden = nativeActive;
+  batchToggle.setAttribute("aria-hidden", String(nativeActive));
   if (editorActive) {
     input.value = "";
     hideCompletions();
   }
+  if (nativeActive) {
+    input.value = "";
+    hideCompletions();
+  }
+  syncPrompt();
+  syncInputPlaceholder();
   resizeCommandInput();
 }
 
@@ -860,6 +1731,270 @@ function createTerminalTab(activate = true) {
   return tab;
 }
 
+function createNativeTerminalTab(activate = true, options = {}) {
+  if (!options.session && !nativeAvailable) {
+    line("Native shell tabs are disabled on this server.", "err");
+    return null;
+  }
+  nativeTerminalCount += 1;
+  const nativeNumber = nativeTerminalCount;
+  const pane = document.createElement("section");
+  pane.className = "term-output native-output";
+  pane.setAttribute("aria-live", "polite");
+  pane.hidden = true;
+  form.parentNode.insertBefore(pane, form);
+  const tab = {
+    id: `tab-${nextTabId++}`,
+    type: "native",
+    title: `Shell ${nativeNumber}`,
+    pane,
+    history: [],
+    histIdx: -1,
+    native: createNativeState(nativeNumber),
+  };
+  buildNativeToolbar(tab);
+  tabs.push(tab);
+  if (activate) switchTab(tab.id);
+  else renderTabs();
+  mountNativeTerminal(tab);
+  if (options.session) {
+    attachNativeSessionToTab(tab, options.session);
+  } else {
+    nativeNotice(tab, "Starting native shell...");
+    nativeNotice(tab, "Direct OS shell: not parsed by IDEL and not written to OpenLogs.");
+    void startNativeTerminal(tab);
+  }
+  focusActiveInput();
+  return tab;
+}
+
+function createNativeState(number) {
+  return {
+    number,
+    generation: nextNativeGeneration++,
+    id: "",
+    shell: "",
+    cwd: "",
+    pid: undefined,
+    startedAt: "",
+    pty: true,
+    eventSource: null,
+    inputBuffer: "",
+    flushTimer: 0,
+    writeChain: Promise.resolve(),
+    terminal: null,
+    fitAddon: null,
+    resizeObserver: null,
+    resizeDisposable: null,
+    resizeTimer: 0,
+    cols: 80,
+    rows: 24,
+    sentCols: 0,
+    sentRows: 0,
+    dataDisposable: null,
+    streamBody: null,
+    ansi: defaultAnsiState(),
+    closed: false,
+    stopping: false,
+    streamDisconnected: false,
+    exitCode: null,
+    toolbar: null,
+    toolbarTitle: null,
+    toolbarMeta: null,
+    toolbarStatus: null,
+    restartButton: null,
+    closeButton: null,
+    signalButtons: [],
+  };
+}
+
+function buildNativeToolbar(tab) {
+  if (tab.type !== "native") return null;
+  const toolbar = document.createElement("div");
+  toolbar.className = "native-toolbar";
+  const title = document.createElement("span");
+  title.className = "native-toolbar-title";
+  const meta = document.createElement("span");
+  meta.className = "native-toolbar-meta";
+  const spacer = document.createElement("span");
+  spacer.className = "native-toolbar-spacer";
+  const status = document.createElement("span");
+  status.className = "native-status-pill";
+  const copy = nativeToolbarButton("Copy", () => void copyNativeTerminal(tab, copy));
+  copy.title = "Copy selected native terminal text, or visible output";
+  const shot = nativeToolbarButton("Shot", () => openScreenshotDialog(tab.pane));
+  shot.title = "Screenshot this native shell";
+  const interrupt = nativeToolbarButton("Ctrl+C", () => void sendNativeSignal(tab, "interrupt", interrupt));
+  interrupt.title = "Send SIGINT / Ctrl+C";
+  const terminate = nativeToolbarButton("Term", () => void sendNativeSignal(tab, "terminate", terminate));
+  terminate.title = "Send SIGTERM";
+  const kill = nativeToolbarButton("Kill", () => {
+    if (confirm("Force kill this native shell session?")) void sendNativeSignal(tab, "kill", kill);
+  });
+  kill.title = "Send SIGKILL";
+  const sessions = nativeToolbarButton("Sessions", () => void openNativeSessionsDialog());
+  const restart = nativeToolbarButton("Restart", () => void restartNativeTerminal(tab));
+  const close = nativeToolbarButton("Close", () => closeTab(tab));
+  toolbar.append(title, meta, spacer, status, copy, shot, interrupt, terminate, kill, sessions, restart, close);
+  tab.native.toolbar = toolbar;
+  tab.native.toolbarTitle = title;
+  tab.native.toolbarMeta = meta;
+  tab.native.toolbarStatus = status;
+  tab.native.restartButton = restart;
+  tab.native.closeButton = close;
+  tab.native.signalButtons = [interrupt, terminate, kill];
+  tab.pane.appendChild(toolbar);
+  updateNativeShellUi(tab, { renderTabs: false });
+  return toolbar;
+}
+
+function nativeToolbarButton(label, onClick) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "editor-btn";
+  btn.textContent = label;
+  btn.addEventListener("click", onClick);
+  return btn;
+}
+
+function updateNativeShellUi(tab, options = {}) {
+  if (tab?.type !== "native" || !tab.native) return;
+  const state = nativeTabState(tab);
+  if (tab.native.toolbarTitle) tab.native.toolbarTitle.textContent = tab.native.shell || tab.title;
+  if (tab.native.toolbarMeta) tab.native.toolbarMeta.textContent = nativeTabMeta(tab);
+  if (tab.native.toolbarStatus) {
+    tab.native.toolbarStatus.className = `native-status-pill ${state}`;
+    tab.native.toolbarStatus.textContent = nativeStatusLabel(state);
+  }
+  if (tab.native.restartButton) tab.native.restartButton.disabled = tab.native.stopping && !tab.native.closed;
+  if (tab.native.closeButton) tab.native.closeButton.disabled = state === "exited" && !tab.native.id;
+  for (const btn of tab.native.signalButtons ?? []) btn.disabled = !tab.native.id || tab.native.closed;
+  if (options.renderTabs !== false) renderTabs();
+}
+
+function nativeTabState(tab) {
+  if (tab?.type !== "native" || !tab.native) return "exited";
+  if (tab.native.stopping) return "stopping";
+  if (tab.native.closed) return "exited";
+  if (!tab.native.id) return "starting";
+  if (tab.native.streamDisconnected) return "disconnected";
+  return "running";
+}
+
+function nativeStatusLabel(state) {
+  switch (state) {
+    case "running":
+      return "running";
+    case "starting":
+      return "starting";
+    case "stopping":
+      return "stopping";
+    case "disconnected":
+      return "offline";
+    default:
+      return "exited";
+  }
+}
+
+function nativeTabMeta(tab) {
+  const native = tab?.native;
+  if (!native) return "";
+  const size = `${native.cols || 80}x${native.rows || 24}`;
+  const pid = native.pid ? `pid ${native.pid}` : "";
+  return [native.cwd, pid, size].filter(Boolean).join(" · ");
+}
+
+async function copyNativeTerminal(tab, button) {
+  const text = nativeTerminalCopyText(tab);
+  if (!text.trim()) {
+    flashButton(button, "Empty");
+    return;
+  }
+  try {
+    await writeClipboardText(text);
+    flashButton(button, "Copied");
+  } catch {
+    flashButton(button, "Failed");
+  }
+}
+
+function nativeTerminalCopyText(tab) {
+  const selected = tab?.native?.terminal?.getSelection?.();
+  if (String(selected ?? "").trim()) return selected;
+  return nativeTerminalBufferText(tab, "visible");
+}
+
+async function sendNativeSignal(tab, signal, button) {
+  if (!tab?.native?.id || tab.native.closed || tab.native.stopping) {
+    flashButton(button, "Off");
+    return false;
+  }
+  if (signal === "kill") {
+    tab.native.stopping = true;
+    updateNativeShellUi(tab);
+  }
+  try {
+    const res = await fetch(`/api/native/${encodeURIComponent(tab.native.id)}/signal`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ signal }),
+    });
+    if (!res.ok) {
+      if (signal === "kill") {
+        tab.native.stopping = false;
+        updateNativeShellUi(tab);
+      }
+      if (res.status === 404) {
+        tab.native.closed = true;
+        updateNativeShellUi(tab);
+      }
+      flashButton(button, "Failed");
+      return false;
+    }
+    flashButton(button, "Sent");
+    if (signal !== "interrupt") scheduleNativeSessionsRefresh();
+    return true;
+  } catch {
+    if (signal === "kill") {
+      tab.native.stopping = false;
+      updateNativeShellUi(tab);
+    }
+    flashButton(button, "Failed");
+    return false;
+  }
+}
+
+function tabForOutput(output) {
+  return tabs.find((tab) => tab.pane === output) ?? null;
+}
+
+function nativeTerminalBufferText(tab, scope = "visible") {
+  const term = tab?.native?.terminal;
+  const buffer = term?.buffer?.active;
+  if (!term || !buffer || typeof buffer.getLine !== "function") {
+    return textFromNativeFallback(tab?.pane);
+  }
+  const rows = [];
+  const start = scope === "visible" ? Math.max(0, Number(buffer.viewportY) || 0) : 0;
+  const visibleRows = Math.max(1, Number(term.rows) || 24);
+  const end = scope === "visible"
+    ? Math.min(Number(buffer.length) || 0, start + visibleRows)
+    : Number(buffer.length) || 0;
+  for (let index = start; index < end; index++) {
+    const line = buffer.getLine(index);
+    if (!line) continue;
+    rows.push(line.translateToString?.(true) ?? "");
+  }
+  return rows.join("\n").replace(/[ \t\n]+$/g, "");
+}
+
+function textFromNativeFallback(output) {
+  return Array.from(output?.querySelectorAll?.(".line-body") ?? [])
+    .map((node) => node.textContent.trimEnd())
+    .filter(Boolean)
+    .join("\n");
+}
+
 function switchTab(id) {
   const tab = tabs.find((candidate) => candidate.id === id);
   if (!tab) return;
@@ -869,8 +2004,9 @@ function switchTab(id) {
   syncCommandArea();
   completionsEl.hidden = true;
   if (tab.type === "editor") hideCompletions();
-  else input.focus();
   renderTabs();
+  fitNativeTerminal(tab);
+  focusActiveInput();
 }
 
 function closeTab(tab) {
@@ -879,6 +2015,7 @@ function closeTab(tab) {
     return;
   }
   if (tab.type === "editor" && tab.dirty && !confirm(`Close ${tab.title} without saving?`)) return;
+  if (tab.type === "native") void shutdownNativeSession(tab, { requestServer: true, dispose: true });
   const index = tabs.findIndex((candidate) => candidate.id === tab.id);
   if (index === -1) return;
   const closingActiveEditor = activeTabId === tab.id && tab.type === "editor";
@@ -907,6 +2044,8 @@ function renderTabs() {
     btn.className = "workspace-tab";
     btn.classList.toggle("active", tab.id === activeTabId);
     btn.classList.toggle("dirty", Boolean(tab.dirty));
+    btn.classList.toggle("native-tab", tab.type === "native");
+    if (tab.type === "native") btn.classList.add(`state-${nativeTabState(tab)}`);
     btn.setAttribute("role", "tab");
     btn.setAttribute("aria-selected", String(tab.id === activeTabId));
     btn.title = tab.title;
@@ -914,7 +2053,17 @@ function renderTabs() {
     label.className = "tab-label";
     label.textContent = tab.title;
     btn.appendChild(label);
-    const canClose = tab.type === "editor" || tabs.filter((candidate) => candidate.type === "terminal").length > 1;
+    if (tab.type === "native") {
+      const state = nativeTabState(tab);
+      const status = document.createElement("span");
+      status.className = `tab-status ${state}`;
+      status.title = nativeStatusLabel(state);
+      btn.appendChild(status);
+    }
+    const canClose =
+      tab.type === "editor" ||
+      tab.type === "native" ||
+      tabs.filter((candidate) => candidate.type === "terminal").length > 1;
     if (canClose) {
       const close = document.createElement("span");
       close.className = "tab-close";
@@ -941,6 +2090,13 @@ function lineNode(text, cls = "") {
   return div;
 }
 
+function paneLine(tab, text, cls = "") {
+  const div = lineNode(text, cls);
+  tab.pane.appendChild(div);
+  tab.pane.scrollTop = tab.pane.scrollHeight;
+  return div;
+}
+
 // ---------------------------------------------------------------------------
 // Output helpers
 // ---------------------------------------------------------------------------
@@ -951,6 +2107,7 @@ function attachLineActions(lineEl, text, cls = "") {
   const actions = document.createElement("span");
   actions.className = "line-actions";
   actions.setAttribute("aria-label", "Line actions");
+  const classes = new Set(String(cls).split(/\s+/).filter(Boolean));
 
   const copy = document.createElement("button");
   copy.type = "button";
@@ -966,7 +2123,43 @@ function attachLineActions(lineEl, text, cls = "") {
   shot.title = "Screenshot terminal";
   shot.addEventListener("click", () => openScreenshotDialog(lineEl.closest(".term-output")));
 
-  actions.append(copy, shot);
+  actions.append(copy);
+  if (classes.has("cmd")) {
+    const command = commandFromLineText(text);
+    if (command) {
+      const rerun = document.createElement("button");
+      rerun.type = "button";
+      rerun.className = "line-action";
+      rerun.textContent = "Run";
+      rerun.title = "Run this command again";
+      rerun.addEventListener("click", () => {
+        input.value = command;
+        resizeCommandInput();
+        submitCommandInput();
+      });
+      const save = document.createElement("button");
+      save.type = "button";
+      save.className = "line-action";
+      save.textContent = "Save";
+      save.title = "Save as workflow";
+      save.addEventListener("click", () => {
+        workflowCommand.value = command;
+        openWorkflowDialog();
+        workflowName?.focus();
+      });
+      actions.append(rerun, save);
+    }
+  }
+  if (classes.has("err")) {
+    const explain = document.createElement("button");
+    explain.type = "button";
+    explain.className = "line-action";
+    explain.textContent = "Explain";
+    explain.title = "Ask AI to explain this error";
+    explain.addEventListener("click", () => explainErrorText(text));
+    actions.append(explain);
+  }
+  actions.append(shot);
   lineEl.appendChild(actions);
 }
 
@@ -974,6 +2167,25 @@ function shouldAddLineActions(cls, text) {
   if (!String(text ?? "").trim()) return false;
   const classes = new Set(String(cls).split(/\s+/).filter(Boolean));
   return ["cmd", "ask", "text", "err", "ok"].some((name) => classes.has(name));
+}
+
+function commandFromLineText(text) {
+  const value = String(text ?? "").trim();
+  if (value.startsWith("idel> ")) return value.slice("idel> ".length).trim();
+  if (value.startsWith("batch ") && value.includes("> ")) return value.slice(value.indexOf("> ") + 2).trim();
+  return "";
+}
+
+function explainErrorText(text) {
+  const prompt = `Explain this IDEL terminal error and suggest the safest fix:\n${String(text ?? "").trim()}`;
+  if (askClaudeUnavailable()) {
+    input.value = `ask.ai prompt=${quoteDictionaryValue(prompt)}`;
+    resizeCommandInput();
+    openClaudeSetupDialog({ switchToAsk: false });
+    line("Ask Claude is not set up. Opened setup guide.", "err");
+    return;
+  }
+  void runAsk(prompt, "? explain error");
 }
 
 function line(text, cls = "") {
@@ -992,6 +2204,609 @@ function html(node) {
 
 function terminalLines(output = activeOutput()) {
   return Array.from(output?.children ?? []).filter((node) => node.classList?.contains("line"));
+}
+
+function xtermGlobals() {
+  const TerminalCtor = globalThis.Terminal;
+  const FitAddonCtor = globalThis.FitAddon?.FitAddon;
+  return { TerminalCtor, FitAddonCtor };
+}
+
+function mountNativeTerminal(tab) {
+  const { TerminalCtor, FitAddonCtor } = xtermGlobals();
+  if (!TerminalCtor || !FitAddonCtor || tab.native.terminal) return;
+
+  const host = document.createElement("div");
+  host.className = "native-xterm";
+  tab.pane.appendChild(host);
+
+  const term = new TerminalCtor({
+    cols: 80,
+    rows: 24,
+    cursorBlink: true,
+    convertEol: false,
+    disableStdin: false,
+    fontFamily: getComputedStyle(document.body).getPropertyValue("--mono").trim() || "monospace",
+    fontSize: xtermFontSize(),
+    scrollback: 5000,
+    theme: xtermTheme(),
+  });
+  const fitAddon = new FitAddonCtor();
+  term.loadAddon(fitAddon);
+  term.open(host);
+  tab.native.terminal = term;
+  tab.native.fitAddon = fitAddon;
+  tab.native.dataDisposable = term.onData((data) => queueNativeInput(tab, data, true));
+  tab.native.resizeDisposable = term.onResize(({ cols, rows }) => queueNativeResize(tab, cols, rows));
+  if (typeof ResizeObserver === "function") {
+    tab.native.resizeObserver = new ResizeObserver(() => fitNativeTerminal(tab));
+    tab.native.resizeObserver.observe(tab.pane);
+  }
+  fitNativeTerminal(tab);
+  if (activeTab()?.id === tab.id) syncCommandArea();
+}
+
+function nativeNotice(tab, text) {
+  if (tab.native?.terminal) {
+    tab.native.terminal.writeln(`\x1b[2m${text}\x1b[0m`);
+    return;
+  }
+  paneLine(tab, text, "muted");
+}
+
+function fitNativeTerminal(tab) {
+  if (tab?.type !== "native" || tab.pane.hidden || !tab.native?.fitAddon) return;
+  try {
+    tab.native.fitAddon.fit();
+    const size = nativeTerminalSize(tab);
+    queueNativeResize(tab, size.cols, size.rows);
+  } catch {
+    /* xterm may not have measurable dimensions while a tab is hidden */
+  }
+}
+
+function updateNativeTerminalAppearance() {
+  for (const tab of tabs) {
+    if (tab.type !== "native" || !tab.native?.terminal) continue;
+    tab.native.terminal.options.theme = xtermTheme();
+    tab.native.terminal.options.fontSize = xtermFontSize();
+    fitNativeTerminal(tab);
+  }
+}
+
+function xtermTheme() {
+  const css = getComputedStyle(document.body);
+  return {
+    background: css.getPropertyValue("--bg").trim() || "#0b0e14",
+    foreground: css.getPropertyValue("--fg").trim() || "#d7dce5",
+    cursor: css.getPropertyValue("--accent").trim() || "#5cc8ff",
+    cursorAccent: css.getPropertyValue("--bg").trim() || "#0b0e14",
+    selectionBackground: colorMix(css.getPropertyValue("--accent").trim() || "#5cc8ff", 0.32),
+    black: "#1f2937",
+    red: "#ef4444",
+    green: "#22c55e",
+    yellow: "#eab308",
+    blue: "#3b82f6",
+    magenta: "#d946ef",
+    cyan: "#06b6d4",
+    white: "#e5e7eb",
+    brightBlack: "#6b7280",
+    brightRed: "#f87171",
+    brightGreen: "#4ade80",
+    brightYellow: "#facc15",
+    brightBlue: "#60a5fa",
+    brightMagenta: "#e879f9",
+    brightCyan: "#22d3ee",
+    brightWhite: "#f9fafb",
+  };
+}
+
+function colorMix(color, alpha) {
+  const value = color.trim();
+  if (/^#[0-9a-f]{6}$/i.test(value)) {
+    const r = Number.parseInt(value.slice(1, 3), 16);
+    const g = Number.parseInt(value.slice(3, 5), 16);
+    const b = Number.parseInt(value.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+  return value;
+}
+
+function xtermFontSize() {
+  const px = Number.parseFloat(getComputedStyle(input).fontSize);
+  return Number.isFinite(px) ? px : 14;
+}
+
+async function startNativeTerminal(tab) {
+  if (!nativeAvailable) {
+    nativeNotice(tab, "Native terminals are disabled on this server.");
+    tab.native.closed = true;
+    updateNativeShellUi(tab);
+    return;
+  }
+  const generation = tab.native.generation;
+  try {
+    const size = nativeTerminalSize(tab);
+    const res = await fetch("/api/native/start", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(size),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (tab.native.generation !== generation) return;
+    if (!res.ok) {
+      nativeNotice(tab, "Native terminal error: " + (body.error ?? `HTTP ${res.status}`));
+      tab.native.closed = true;
+      updateNativeShellUi(tab);
+      return;
+    }
+    applyNativeSessionInfo(tab, body, size);
+    nativeNotice(tab, `${body.shell ?? "shell"} · ${body.cwd ?? ""}`);
+    updateNativeShellUi(tab);
+    queueNativeResize(tab, tab.native.cols || size.cols, tab.native.rows || size.rows, true);
+    openNativeStream(tab);
+    scheduleNativeSessionsRefresh();
+  } catch (err) {
+    if (tab.native.generation !== generation) return;
+    nativeNotice(tab, "Native terminal error: " + (err?.message ?? String(err)));
+    tab.native.closed = true;
+    updateNativeShellUi(tab);
+  }
+}
+
+function applyNativeSessionInfo(tab, info, fallbackSize = {}) {
+  if (tab?.type !== "native" || !tab.native) return;
+  tab.native.id = String(info.id ?? tab.native.id ?? "");
+  tab.native.shell = String(info.shell ?? tab.native.shell ?? "");
+  tab.native.cwd = String(info.cwd ?? tab.native.cwd ?? "");
+  tab.native.pid = info.pid;
+  tab.native.startedAt = String(info.startedAt ?? tab.native.startedAt ?? "");
+  tab.native.pty = info.pty !== false;
+  tab.native.cols = Number(info.cols ?? fallbackSize.cols ?? tab.native.cols) || tab.native.cols || 80;
+  tab.native.rows = Number(info.rows ?? fallbackSize.rows ?? tab.native.rows) || tab.native.rows || 24;
+  tab.native.sentCols = Number(info.cols ?? fallbackSize.cols ?? tab.native.sentCols) || tab.native.sentCols || 0;
+  tab.native.sentRows = Number(info.rows ?? fallbackSize.rows ?? tab.native.sentRows) || tab.native.sentRows || 0;
+  tab.native.closed = Boolean(info.exited);
+  tab.native.stopping = false;
+  tab.native.streamDisconnected = false;
+  tab.native.exitCode = info.exitCode ?? null;
+  tab.title = tab.native.pty ? `PTY ${tab.native.number}` : `Shell ${tab.native.number}`;
+}
+
+function attachNativeSession(info) {
+  const existing = nativeTabForSession(info?.id);
+  if (existing) {
+    switchTab(existing.id);
+    return existing;
+  }
+  return createNativeTerminalTab(true, { session: info });
+}
+
+function attachNativeSessionToTab(tab, info) {
+  const size = nativeTerminalSize(tab);
+  applyNativeSessionInfo(tab, info, size);
+  nativeNotice(tab, `Attached to ${tab.native.shell || "shell"} · ${tab.native.cwd || ""}`);
+  updateNativeShellUi(tab);
+  openNativeStream(tab);
+  queueNativeResize(tab, tab.native.cols || size.cols, tab.native.rows || size.rows, true);
+  scheduleNativeSessionsRefresh();
+}
+
+function openNativeStream(tab) {
+  if (!tab.native?.id || typeof EventSource !== "function") return;
+  const generation = tab.native.generation;
+  const source = new EventSource(`/api/native/${encodeURIComponent(tab.native.id)}/stream`);
+  tab.native.eventSource = source;
+  source.addEventListener("ready", (e) => {
+    if (tab.native.generation !== generation) return;
+    const data = parseSsePayload(e);
+    applyNativeSessionInfo(tab, data, nativeTerminalSize(tab));
+    updateNativeShellUi(tab);
+  });
+  source.addEventListener("data", (e) => {
+    if (tab.native.generation !== generation) return;
+    const data = parseSsePayload(e).data ?? "";
+    appendNativeOutput(tab, data);
+  });
+  source.addEventListener("exit", (e) => {
+    if (tab.native.generation !== generation) return;
+    const data = parseSsePayload(e);
+    tab.native.closed = true;
+    tab.native.stopping = false;
+    tab.native.exitCode = data.code ?? null;
+    paneLine(tab, `native shell exited${data.code == null ? "" : ` (${data.code})`}`, "muted");
+    updateNativeShellUi(tab);
+    scheduleNativeSessionsRefresh();
+    source.close();
+  });
+  source.addEventListener("done", () => source.close());
+  source.onerror = () => {
+    if (tab.native.generation !== generation) return;
+    if (!tab.native.closed) paneLine(tab, "native shell stream disconnected", "err");
+    tab.native.streamDisconnected = true;
+    tab.native.stopping = false;
+    updateNativeShellUi(tab);
+    scheduleNativeSessionsRefresh();
+    source.close();
+  };
+}
+
+function parseSsePayload(event) {
+  try {
+    return JSON.parse(event.data || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function queueNativeInput(tab, data, immediate = false) {
+  if (!tab?.native?.id || tab.native.closed || tab.native.stopping || tab.native.streamDisconnected) return;
+  tab.native.inputBuffer += data;
+  if (immediate) {
+    void flushNativeInput(tab);
+    return;
+  }
+  if (!tab.native.flushTimer) {
+    tab.native.flushTimer = window.setTimeout(() => {
+      tab.native.flushTimer = 0;
+      void flushNativeInput(tab);
+    }, 12);
+  }
+}
+
+function nativeTerminalSize(tab) {
+  const term = tab?.native?.terminal;
+  return {
+    cols: Math.max(2, Math.min(1000, Math.floor(Number(term?.cols || tab?.native?.cols || 80)))),
+    rows: Math.max(1, Math.min(1000, Math.floor(Number(term?.rows || tab?.native?.rows || 24)))),
+  };
+}
+
+function queueNativeResize(tab, cols, rows, immediate = false) {
+  if (!tab?.native || tab.native.closed || tab.native.stopping) return;
+  const size = {
+    cols: Math.max(2, Math.min(1000, Math.floor(Number(cols) || 80))),
+    rows: Math.max(1, Math.min(1000, Math.floor(Number(rows) || 24))),
+  };
+  tab.native.cols = size.cols;
+  tab.native.rows = size.rows;
+  if (!tab.native.id) return;
+  if (immediate) {
+    void sendNativeResize(tab);
+    return;
+  }
+  if (tab.native.resizeTimer) clearTimeout(tab.native.resizeTimer);
+  tab.native.resizeTimer = window.setTimeout(() => {
+    tab.native.resizeTimer = 0;
+    void sendNativeResize(tab);
+  }, 80);
+}
+
+async function sendNativeResize(tab) {
+  if (!tab?.native?.id || tab.native.closed || tab.native.stopping) return;
+  if (tab.native.resizeTimer) {
+    clearTimeout(tab.native.resizeTimer);
+    tab.native.resizeTimer = 0;
+  }
+  const { cols, rows } = nativeTerminalSize(tab);
+  tab.native.cols = cols;
+  tab.native.rows = rows;
+  if (tab.native.sentCols === cols && tab.native.sentRows === rows) return;
+  try {
+    const res = await fetch(`/api/native/${encodeURIComponent(tab.native.id)}/resize`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ cols, rows }),
+    });
+    if (res.ok) {
+      tab.native.sentCols = cols;
+      tab.native.sentRows = rows;
+      updateNativeShellUi(tab, { renderTabs: false });
+    }
+  } catch {
+    /* resize is best-effort; input/output remains usable */
+  }
+}
+
+async function flushNativeInput(tab) {
+  if (!tab?.native?.id || tab.native.closed || tab.native.stopping || tab.native.streamDisconnected) return;
+  if (tab.native.flushTimer) {
+    clearTimeout(tab.native.flushTimer);
+    tab.native.flushTimer = 0;
+  }
+  const data = tab.native.inputBuffer;
+  if (!data) return;
+  tab.native.inputBuffer = "";
+  tab.native.writeChain = tab.native.writeChain.then(async () => {
+    const res = await fetch(`/api/native/${encodeURIComponent(tab.native.id)}/input`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ data }),
+    });
+    if (!res.ok) paneLine(tab, `native input failed: HTTP ${res.status}`, "err");
+  }).catch((err) => {
+    paneLine(tab, "native input failed: " + (err?.message ?? String(err)), "err");
+  });
+  await tab.native.writeChain;
+}
+
+async function shutdownNativeSession(tab, options = {}) {
+  if (!tab?.native) return false;
+  const requestServer = options.requestServer !== false;
+  const dispose = options.dispose !== false;
+  const sessionId = tab.native.id;
+  const generation = tab.native.generation;
+  tab.native.stopping = true;
+  tab.native.closed = true;
+  updateNativeShellUi(tab, { renderTabs: options.renderTabs });
+  tab.native.eventSource?.close();
+  if (tab.native.flushTimer) clearTimeout(tab.native.flushTimer);
+  if (tab.native.resizeTimer) clearTimeout(tab.native.resizeTimer);
+  tab.native.flushTimer = 0;
+  tab.native.resizeTimer = 0;
+  tab.native.inputBuffer = "";
+  if (dispose) {
+    tab.native.dataDisposable?.dispose?.();
+    tab.native.resizeDisposable?.dispose?.();
+    tab.native.resizeObserver?.disconnect?.();
+    tab.native.terminal?.dispose?.();
+  }
+  if (requestServer && sessionId) {
+    await fetch(`/api/native/${encodeURIComponent(sessionId)}/close`, { method: "POST" }).catch(() => undefined);
+  }
+  if (tab.native.generation === generation) {
+    tab.native.stopping = false;
+    updateNativeShellUi(tab, { renderTabs: options.renderTabs });
+  }
+  scheduleNativeSessionsRefresh();
+  return true;
+}
+
+async function restartNativeTerminal(tab) {
+  if (tab?.type !== "native" || !tab.native) return;
+  const number = tab.native.number;
+  await shutdownNativeSession(tab, { requestServer: true, dispose: true, renderTabs: false });
+  tab.pane.innerHTML = "";
+  tab.native = createNativeState(number);
+  tab.title = `Shell ${number}`;
+  buildNativeToolbar(tab);
+  mountNativeTerminal(tab);
+  nativeNotice(tab, "Restarting native shell...");
+  nativeNotice(tab, "Direct OS shell: not parsed by IDEL and not written to OpenLogs.");
+  updateNativeShellUi(tab);
+  renderTabs();
+  syncCommandArea();
+  focusActiveInput();
+  void startNativeTerminal(tab);
+}
+
+function appendNativeOutput(tab, raw) {
+  if (tab.native?.terminal) {
+    tab.native.terminal.write(String(raw ?? ""));
+    return;
+  }
+  const text = String(raw ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\u0007/g, "");
+  if (!text) return;
+  appendAnsiText(tab, text);
+  tab.pane.scrollTop = tab.pane.scrollHeight;
+}
+
+function ensureNativeStreamBody(tab) {
+  let body = tab.native.streamBody;
+  if (!body || !body.isConnected) {
+    const div = document.createElement("div");
+    div.className = "line native-stream";
+    body = document.createElement("span");
+    body.className = "line-body";
+    div.appendChild(body);
+    tab.native.streamBody = body;
+    tab.pane.appendChild(div);
+  }
+  return body;
+}
+
+function appendAnsiText(tab, value) {
+  let body = ensureNativeStreamBody(tab);
+  let i = 0;
+  while (i < value.length) {
+    const esc = value.indexOf("\x1b", i);
+    if (esc === -1) {
+      appendStyledNativeText(body, value.slice(i), tab.native.ansi);
+      break;
+    }
+    if (esc > i) appendStyledNativeText(body, value.slice(i, esc), tab.native.ansi);
+    i = consumeAnsiSequence(tab, body, value, esc);
+    if (!body.isConnected) body = ensureNativeStreamBody(tab);
+  }
+}
+
+function consumeAnsiSequence(tab, body, value, index) {
+  const next = value[index + 1];
+  if (next === "]") {
+    const bell = value.indexOf("\u0007", index + 2);
+    const st = value.indexOf("\x1b\\", index + 2);
+    const end = bell === -1 ? st : st === -1 ? bell : Math.min(bell, st);
+    if (end === -1) return value.length;
+    return end === st ? end + 2 : end + 1;
+  }
+  if (next !== "[") return Math.min(index + 2, value.length);
+
+  let end = index + 2;
+  while (end < value.length && !/[\x40-\x7e]/.test(value[end])) end++;
+  if (end >= value.length) return value.length;
+
+  const command = value[end];
+  const params = value.slice(index + 2, end);
+  if (command === "m") {
+    applyAnsiSgr(tab.native.ansi, params);
+  } else if (command === "J" && shouldClearAnsiScreen(params)) {
+    tab.pane.innerHTML = "";
+    tab.native.streamBody = null;
+  } else if (command === "K") {
+    body.textContent = "";
+  }
+  return end + 1;
+}
+
+function appendStyledNativeText(body, text, state) {
+  if (!text) return;
+  let chunk = "";
+  for (const ch of text) {
+    if (ch === "\b" || ch === "\u007f") {
+      if (chunk) {
+        appendNativeChunk(body, chunk, state);
+        chunk = "";
+      }
+      removeLastNativeCharacter(body);
+      continue;
+    }
+    chunk += ch;
+  }
+  if (chunk) appendNativeChunk(body, chunk, state);
+}
+
+function appendNativeChunk(body, text, state) {
+  const style = nativeAnsiStyle(state);
+  if (!style) {
+    body.appendChild(document.createTextNode(text));
+    return;
+  }
+  const span = document.createElement("span");
+  span.textContent = text;
+  Object.assign(span.style, style);
+  body.appendChild(span);
+}
+
+function removeLastNativeCharacter(node) {
+  const last = node.lastChild;
+  if (!last) return;
+  if (last.nodeType === Node.TEXT_NODE) {
+    last.textContent = last.textContent.slice(0, -1);
+    if (!last.textContent) last.remove();
+    return;
+  }
+  removeLastNativeCharacter(last);
+  if (!last.textContent) last.remove();
+}
+
+function defaultAnsiState() {
+  return {
+    fg: "",
+    bg: "",
+    bold: false,
+    faint: false,
+    italic: false,
+    underline: false,
+    inverse: false,
+  };
+}
+
+function resetAnsiState(state) {
+  Object.assign(state, defaultAnsiState());
+}
+
+function applyAnsiSgr(state, rawParams) {
+  const params = parseAnsiParams(rawParams);
+  if (!params.length) params.push(0);
+  for (let i = 0; i < params.length; i++) {
+    const code = params[i] ?? 0;
+    if (code === 0) resetAnsiState(state);
+    else if (code === 1) state.bold = true;
+    else if (code === 2) state.faint = true;
+    else if (code === 3) state.italic = true;
+    else if (code === 4) state.underline = true;
+    else if (code === 7) state.inverse = true;
+    else if (code === 22) state.bold = state.faint = false;
+    else if (code === 23) state.italic = false;
+    else if (code === 24) state.underline = false;
+    else if (code === 27) state.inverse = false;
+    else if (code === 39) state.fg = "";
+    else if (code === 49) state.bg = "";
+    else if ((code >= 30 && code <= 37) || (code >= 90 && code <= 97)) state.fg = ansiBasicColor(code);
+    else if ((code >= 40 && code <= 47) || (code >= 100 && code <= 107)) state.bg = ansiBasicColor(code - 10);
+    else if ((code === 38 || code === 48) && params[i + 1] === 5 && params[i + 2] !== undefined) {
+      state[code === 38 ? "fg" : "bg"] = ansi256Color(params[i + 2]);
+      i += 2;
+    } else if (
+      (code === 38 || code === 48) &&
+      params[i + 1] === 2 &&
+      params[i + 2] !== undefined &&
+      params[i + 3] !== undefined &&
+      params[i + 4] !== undefined
+    ) {
+      state[code === 38 ? "fg" : "bg"] = `rgb(${clampRgb(params[i + 2])}, ${clampRgb(params[i + 3])}, ${clampRgb(params[i + 4])})`;
+      i += 4;
+    }
+  }
+}
+
+function parseAnsiParams(rawParams) {
+  if (!rawParams) return [];
+  return rawParams
+    .split(/[;:]/)
+    .filter((part) => part !== "")
+    .map((part) => Number.parseInt(part, 10))
+    .filter((value) => Number.isFinite(value));
+}
+
+function shouldClearAnsiScreen(params) {
+  const values = parseAnsiParams(params);
+  return values.length === 0 || values.includes(2) || values.includes(3);
+}
+
+function nativeAnsiStyle(state) {
+  let fg = state.fg;
+  let bg = state.bg;
+  if (state.inverse) [fg, bg] = [bg || "var(--fg)", fg || "var(--field-bg)"];
+  const style = {};
+  if (fg) style.color = fg;
+  if (bg) style.backgroundColor = bg;
+  if (state.bold) style.fontWeight = "700";
+  if (state.faint) style.opacity = "0.72";
+  if (state.italic) style.fontStyle = "italic";
+  if (state.underline) style.textDecoration = "underline";
+  return Object.keys(style).length ? style : null;
+}
+
+function ansiBasicColor(code) {
+  const colors = {
+    30: "#1f2937",
+    31: "#ef4444",
+    32: "#22c55e",
+    33: "#eab308",
+    34: "#3b82f6",
+    35: "#d946ef",
+    36: "#06b6d4",
+    37: "#e5e7eb",
+    90: "#6b7280",
+    91: "#f87171",
+    92: "#4ade80",
+    93: "#facc15",
+    94: "#60a5fa",
+    95: "#e879f9",
+    96: "#22d3ee",
+    97: "#f9fafb",
+  };
+  return colors[code] ?? "";
+}
+
+function ansi256Color(value) {
+  const n = Math.max(0, Math.min(255, Number(value) || 0));
+  if (n < 16) return ansiBasicColor(n < 8 ? 30 + n : 90 + n - 8);
+  if (n >= 232) {
+    const level = 8 + (n - 232) * 10;
+    return `rgb(${level}, ${level}, ${level})`;
+  }
+  const idx = n - 16;
+  const r = Math.floor(idx / 36);
+  const g = Math.floor((idx % 36) / 6);
+  const b = idx % 6;
+  const scale = (part) => part === 0 ? 0 : 55 + part * 40;
+  return `rgb(${scale(r)}, ${scale(g)}, ${scale(b)})`;
+}
+
+function clampRgb(value) {
+  return Math.max(0, Math.min(255, Number(value) || 0));
 }
 
 function clearTerminalLines(command) {
@@ -1128,6 +2943,8 @@ async function exportScreenshot(action) {
 }
 
 function screenshotText(output, scope) {
+  const tab = tabForOutput(output);
+  if (tab?.type === "native" && tab.native?.terminal) return nativeTerminalBufferText(tab, scope);
   const lineEls = terminalLineElements(output, scope);
   return lineEls.map(textFromTerminalLine).filter(Boolean).join("\n");
 }
@@ -1441,6 +3258,7 @@ async function runMultilineBatch(raw) {
 
 async function runBatchStep(command) {
   if (isLocalClearCommand(command)) return clearTerminalLines(command);
+  if (isWorkflowCommand(command)) return await handleWorkflowCommand(command);
   let lastOutcome;
   let stopped = false;
   let errored = false;
@@ -2649,17 +4467,27 @@ function setMode(next, options = {}) {
   mode = next;
   modeIdelBtn.classList.toggle("active", mode === "idel");
   modeAskBtn.classList.toggle("active", mode === "ask");
-  promptEl.textContent = mode === "ask" ? "?" : "idel>";
-  promptEl.classList.toggle("ask", mode === "ask");
+  syncPrompt();
   syncInputPlaceholder();
   hideCompletions();
   syncCommandArea();
   resizeCommandInput();
-  if (activeTab()?.type !== "editor") input.focus();
+  focusActiveInput();
+}
+
+function syncPrompt() {
+  const nativeActive = activeTab()?.type === "native";
+  promptEl.textContent = nativeActive ? "sh>" : mode === "ask" ? "?" : "idel>";
+  promptEl.classList.toggle("ask", mode === "ask" && !nativeActive);
+  promptEl.classList.toggle("native", nativeActive);
 }
 
 function syncInputPlaceholder() {
   const compact = compactInputMedia?.matches ?? false;
+  if (activeTab()?.type === "native") {
+    input.placeholder = compact ? "native shell" : "native shell input is live: Tab, arrows, Ctrl+C go to the shell";
+    return;
+  }
   input.placeholder =
     mode === "ask"
       ? compact ? "ask what to do" : "describe what you want — e.g. delete the dist folder"
@@ -2682,13 +4510,13 @@ function setMultilineBatch(next) {
   renderKnowledgeBase();
   syncInputPlaceholder();
   resizeCommandInput();
-  input.focus();
+  focusActiveInput();
 }
 
 function resizeCommandInput() {
   if (!input || input.tagName !== "TEXTAREA") return;
   input.style.height = "auto";
-  const max = multilineBatch ? 144 : 32;
+  const max = multilineBatch && activeTab()?.type !== "native" ? 144 : 32;
   const nextHeight = Math.min(input.scrollHeight, max);
   input.style.height = `${Math.max(nextHeight, 22)}px`;
   input.style.overflowY = input.scrollHeight > max ? "auto" : "hidden";
@@ -2728,22 +4556,70 @@ modeAskBtn.addEventListener("click", () => {
 });
 $("refresh-logs").addEventListener("click", refreshLogs);
 newTerminalBtn.addEventListener("click", () => createTerminalTab(true));
+newNativeTerminalBtn?.addEventListener("click", () => createNativeTerminalTab(true));
 if (compactInputMedia?.addEventListener) compactInputMedia.addEventListener("change", syncInputPlaceholder);
 else if (compactInputMedia?.addListener) compactInputMedia.addListener(syncInputPlaceholder);
 
 batchToggle?.addEventListener("click", () => setMultilineBatch(!multilineBatch));
 
 input.addEventListener("input", () => {
+  if (activeTab()?.type === "native") {
+    input.value = "";
+    return;
+  }
   resizeCommandInput();
   void updateCompletions();
 });
 
+function handleNativeKeydown(tab, e) {
+  let data = "";
+  const key = e.key;
+  const lower = key.toLowerCase();
+
+  if (e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (lower === "c") data = "\x03";
+    else if (lower === "d") data = "\x04";
+    else if (lower === "l") data = "\x0c";
+    else if (lower === "z") data = "\x1a";
+    else if (key === "[") data = "\x1b";
+  } else {
+    const special = {
+      Enter: "\r",
+      Backspace: "\x7f",
+      Tab: "\t",
+      Escape: "\x1b",
+      ArrowUp: "\x1b[A",
+      ArrowDown: "\x1b[B",
+      ArrowRight: "\x1b[C",
+      ArrowLeft: "\x1b[D",
+      Home: "\x1b[H",
+      End: "\x1b[F",
+      Delete: "\x1b[3~",
+      PageUp: "\x1b[5~",
+      PageDown: "\x1b[6~",
+    };
+    data = special[key] ?? "";
+    if (!data && key.length === 1 && !e.metaKey && !e.altKey) data = key;
+  }
+
+  if (!data) return;
+  e.preventDefault();
+  input.value = "";
+  resizeCommandInput();
+  queueNativeInput(tab, data, data === "\r" || data.length > 1);
+}
+
 input.addEventListener("keydown", (e) => {
+  const tab = activeTab();
+  if (tab?.type === "native") {
+    handleNativeKeydown(tab, e);
+    return;
+  }
   if (e.ctrlKey && !e.metaKey && e.key.toLowerCase() === "c") {
     if (input.value.length > 0 || !completionsEl.hidden) {
       e.preventDefault();
       input.value = "";
-      activeTerminalTab().histIdx = -1;
+      activeInputHistoryTab().histIdx = -1;
       hideCompletions();
       line("^C", "muted");
     }
@@ -2784,7 +4660,7 @@ input.addEventListener("keydown", (e) => {
   if (e.key === "Escape") return hideCompletions();
   if (e.key === "ArrowUp" && completionsEl.hidden) {
     e.preventDefault();
-    const terminal = activeTerminalTab();
+    const terminal = activeInputHistoryTab();
     if (terminal.history.length) {
       terminal.histIdx = terminal.histIdx < 0 ? terminal.history.length - 1 : Math.max(0, terminal.histIdx - 1);
       input.value = terminal.history[terminal.histIdx] ?? "";
@@ -2793,13 +4669,22 @@ input.addEventListener("keydown", (e) => {
   }
   if (e.key === "ArrowDown" && completionsEl.hidden) {
     e.preventDefault();
-    const terminal = activeTerminalTab();
+    const terminal = activeInputHistoryTab();
     if (terminal.histIdx >= 0) {
       terminal.histIdx = terminal.histIdx + 1;
       input.value = terminal.histIdx >= terminal.history.length ? ((terminal.histIdx = -1), "") : terminal.history[terminal.histIdx];
       resizeCommandInput();
     }
   }
+});
+
+input.addEventListener("paste", (e) => {
+  const tab = activeTab();
+  if (tab?.type !== "native") return;
+  const text = e.clipboardData?.getData("text") ?? "";
+  if (!text) return;
+  e.preventDefault();
+  queueNativeInput(tab, text, true);
 });
 
 form.addEventListener("submit", (e) => {
@@ -2812,10 +4697,17 @@ function submitCommandInput() {
 }
 
 async function submitCommandInputAsync() {
+  const tab = activeTab();
+  if (tab?.type === "native") {
+    input.value = "";
+    resizeCommandInput();
+    queueNativeInput(tab, "\r", true);
+    return;
+  }
   const value = input.value.trim();
   if (input.disabled) return;
   if (!value) return;
-  const terminal = activeTerminalTab();
+  const terminal = activeInputHistoryTab();
   terminal.history.push(value);
   terminal.histIdx = -1;
   input.value = "";
@@ -2827,6 +4719,7 @@ async function submitCommandInputAsync() {
     if (mode === "ask") await runAsk(value);
     else if (multilineBatch && multilineCommands(value).length > 1) await runMultilineBatch(value);
     else if (isSingleLocalClearCommand(value)) clearTerminalLines(value);
+    else if (isWorkflowCommand(value)) await handleWorkflowCommand(value);
     else if (isBatchLine(value)) await runIdel(value);
     else if (parseLearnCommand(value)) await runLearnCommand(value);
     else if (isAskAiCommand(value)) {
@@ -2839,7 +4732,7 @@ async function submitCommandInputAsync() {
   } finally {
     commandBusy = false;
     syncCommandArea();
-    if (activeTab()?.type !== "editor") input.focus();
+    focusActiveInput();
   }
 }
 
@@ -2853,6 +4746,7 @@ async function boot() {
     const res = await fetch("/api/health");
     const d = res.ok ? await res.json() : null;
     if (d?.ok) {
+      serverOnline = true;
       statusEl.textContent = "● online · idel " + (d.version ?? "");
       statusEl.classList.add("online");
       if (Object.prototype.hasOwnProperty.call(d, "platform")) setServerPlatform(d.platform);
@@ -2860,8 +4754,12 @@ async function boot() {
         sawHealthAgentStatus = true;
         setAgentAvailability(d.agentAvailable !== false);
       }
+      if (Object.prototype.hasOwnProperty.call(d, "nativeAvailable")) {
+        setNativeAvailability(d.nativeAvailable !== false);
+      }
     } else throw new Error();
   } catch {
+    serverOnline = false;
     statusEl.textContent = "○ offline — start `idel serve --static …`";
     statusEl.classList.add("offline");
   }
@@ -2870,12 +4768,19 @@ async function boot() {
   if (!sawHealthAgentStatus) await probeAgentAvailability();
   setMode(mode, { suppressSetup: true });
   refreshLogs();
+  if (!storageGet(SETUP_DISMISSED_KEY)) {
+    window.setTimeout(() => void openSetupChecklist(), 450);
+  }
 }
 
 initPreferences();
 initClaudeSetupDialog();
 initDictionary();
 initKnowledgeBase();
+initCommandPalette();
+initWorkflowDialog();
+initNativeSessionsDialog();
+initSetupChecklist();
 initScreenshotActions();
 initWorkspace();
 initPageRefreshGuard();

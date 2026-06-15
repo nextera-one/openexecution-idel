@@ -413,6 +413,28 @@ describe("meta commands", () => {
     expect(out.result?.stdout).toMatch(/terminal UI/i);
   });
 
+  it("workflow commands report that the web terminal handles local workflows", async () => {
+    const rt = await makeRuntime();
+    const out = await rt.run("run.workflow name=setup", ctx());
+    expect(out.risk.level).toBe("LOW");
+    expect(out.record.result).toBe("success");
+    expect(out.result?.stdout).toMatch(/web terminal/i);
+  });
+
+  it("package-manager commands expose curated risk and adapter plans", async () => {
+    const rt = await makeRuntime();
+    const search = await rt.run("search.apt.package query=git", ctx({ dryRun: true }));
+    expect(search.risk.level).toBe("LOW");
+    expect(search.plan?.command).toBe("apt");
+    expect(search.plan?.argv).toEqual(["search", "git"]);
+
+    const install = await rt.run("install.apt.package name=git", ctx());
+    expect(install.risk.level).toBe("HIGH");
+    expect(install.record.result).toBe("dry_run");
+    expect(install.plan?.command).toBe("sudo");
+    expect(install.plan?.argv).toEqual(["apt", "install", "git"]);
+  });
+
   it("list.history returns recent audited commands capped by limit", async () => {
     const dir = await sandbox();
     const rt = new Runtime({

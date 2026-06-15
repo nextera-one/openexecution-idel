@@ -154,6 +154,68 @@
     "tests": [{ "input": "clear.range from=1 to=2", "expectRisk": "LOW" }]
   },
   {
+    "id": "save.workflow",
+    "version": "1.0.0",
+    "summary": "Save a named workflow in the web terminal.",
+    "category": "meta",
+    "riskDefault": "LOW",
+    "params": {
+      "name": { "type": "string", "required": true, "description": "Workflow name." },
+      "command": { "type": "string", "required": true, "description": "IDEL command, multiline batch, or && batch to save." }
+    },
+    "adapters": {},
+    "examples": ["save.workflow name=setup command=\"create.folder name=tmp && list.folder path=.\""],
+    "tests": [{ "input": "save.workflow name=setup command=\"list.folder path=.\"", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "list.workflows",
+    "version": "1.0.0",
+    "summary": "List saved web terminal workflows.",
+    "category": "meta",
+    "riskDefault": "LOW",
+    "params": {},
+    "adapters": {},
+    "examples": ["list.workflows"],
+    "tests": [{ "input": "list.workflows", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "run.workflow",
+    "version": "1.0.0",
+    "summary": "Run a saved web terminal workflow by name.",
+    "category": "meta",
+    "riskDefault": "LOW",
+    "params": {
+      "name": { "type": "string", "required": true, "description": "Saved workflow name." }
+    },
+    "adapters": {},
+    "examples": ["run.workflow name=setup"],
+    "tests": [{ "input": "run.workflow name=setup", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "remove.workflow",
+    "version": "1.0.0",
+    "summary": "Remove a saved web terminal workflow by name.",
+    "category": "meta",
+    "riskDefault": "LOW",
+    "params": {
+      "name": { "type": "string", "required": true, "description": "Saved workflow name." }
+    },
+    "adapters": {},
+    "examples": ["remove.workflow name=setup"],
+    "tests": [{ "input": "remove.workflow name=setup", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "open.workflows",
+    "version": "1.0.0",
+    "summary": "Open the web terminal workflow manager.",
+    "category": "meta",
+    "riskDefault": "LOW",
+    "params": {},
+    "adapters": {},
+    "examples": ["open.workflows"],
+    "tests": [{ "input": "open.workflows", "expectRisk": "LOW" }]
+  },
+  {
     "id": "list.logs",
     "version": "1.0.0",
     "summary": "List recent OpenLog audit records for this session or user.",

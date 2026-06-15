@@ -1,0 +1,291 @@
+[
+  {
+    "id": "search.apt.package",
+    "version": "1.0.0",
+    "summary": "Search APT package metadata on Debian/Ubuntu systems.",
+    "category": "package",
+    "riskDefault": "LOW",
+    "params": {
+      "query": { "type": "string", "required": true, "description": "Package search term." }
+    },
+    "adapters": {
+      "posix": {
+        "command": "apt",
+        "args": [
+          { "kind": "literal", "value": "search" },
+          { "kind": "value", "param": "query" }
+        ]
+      }
+    },
+    "examples": ["search.apt.package query=git"],
+    "tests": [{ "input": "search.apt.package query=git", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "show.apt.package",
+    "version": "1.0.0",
+    "summary": "Show details for an APT package.",
+    "category": "package",
+    "riskDefault": "LOW",
+    "params": {
+      "name": { "type": "string", "required": true, "description": "Package name." }
+    },
+    "adapters": {
+      "posix": {
+        "command": "apt",
+        "args": [
+          { "kind": "literal", "value": "show" },
+          { "kind": "value", "param": "name" }
+        ]
+      }
+    },
+    "examples": ["show.apt.package name=git"],
+    "tests": [{ "input": "show.apt.package name=git", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "update.apt.index",
+    "version": "1.0.0",
+    "summary": "Refresh APT package indexes with sudo apt update.",
+    "category": "package",
+    "riskDefault": "HIGH",
+    "params": {},
+    "adapters": {
+      "posix": {
+        "command": "sudo",
+        "args": [
+          { "kind": "literal", "value": "apt" },
+          { "kind": "literal", "value": "update" }
+        ],
+        "semanticNotes": "Requires sudo on most systems. Interactive password prompts work best in a real terminal session."
+      }
+    },
+    "examples": ["update.apt.index"],
+    "tests": [{ "input": "update.apt.index", "expectRisk": "HIGH" }]
+  },
+  {
+    "id": "install.apt.package",
+    "version": "1.0.0",
+    "summary": "Install an APT package with sudo apt install.",
+    "category": "package",
+    "riskDefault": "HIGH",
+    "params": {
+      "name": { "type": "string", "required": true, "description": "Package name to install." },
+      "assumeYes": { "type": "boolean", "default": false, "description": "Pass -y to apt install." }
+    },
+    "adapters": {
+      "posix": {
+        "command": "sudo",
+        "args": [
+          { "kind": "literal", "value": "apt" },
+          { "kind": "literal", "value": "install" },
+          { "kind": "flag", "flag": "-y", "when": "assumeYes" },
+          { "kind": "value", "param": "name" }
+        ],
+        "semanticNotes": "HIGH risk because it changes system packages. Default policy dry-runs it first."
+      }
+    },
+    "examples": ["install.apt.package name=git", "install.apt.package name=git assumeYes=true"],
+    "tests": [{ "input": "install.apt.package name=git", "expectRisk": "HIGH" }]
+  },
+  {
+    "id": "remove.apt.package",
+    "version": "1.0.0",
+    "summary": "Remove an APT package with sudo apt remove.",
+    "category": "package",
+    "riskDefault": "HIGH",
+    "params": {
+      "name": { "type": "string", "required": true, "description": "Package name to remove." },
+      "assumeYes": { "type": "boolean", "default": false, "description": "Pass -y to apt remove." }
+    },
+    "adapters": {
+      "posix": {
+        "command": "sudo",
+        "args": [
+          { "kind": "literal", "value": "apt" },
+          { "kind": "literal", "value": "remove" },
+          { "kind": "flag", "flag": "-y", "when": "assumeYes" },
+          { "kind": "value", "param": "name" }
+        ],
+        "semanticNotes": "HIGH risk because removing packages can break dependent workflows."
+      }
+    },
+    "examples": ["remove.apt.package name=git"],
+    "tests": [{ "input": "remove.apt.package name=git", "expectRisk": "HIGH" }]
+  },
+  {
+    "id": "search.brew.package",
+    "version": "1.0.0",
+    "summary": "Search Homebrew formulae and casks.",
+    "category": "package",
+    "riskDefault": "LOW",
+    "params": {
+      "query": { "type": "string", "required": true, "description": "Package search term." }
+    },
+    "adapters": {
+      "posix": {
+        "command": "brew",
+        "args": [
+          { "kind": "literal", "value": "search" },
+          { "kind": "value", "param": "query" }
+        ]
+      }
+    },
+    "examples": ["search.brew.package query=git"],
+    "tests": [{ "input": "search.brew.package query=git", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "show.brew.package",
+    "version": "1.0.0",
+    "summary": "Show Homebrew package details.",
+    "category": "package",
+    "riskDefault": "LOW",
+    "params": {
+      "name": { "type": "string", "required": true, "description": "Formula or cask name." }
+    },
+    "adapters": {
+      "posix": {
+        "command": "brew",
+        "args": [
+          { "kind": "literal", "value": "info" },
+          { "kind": "value", "param": "name" }
+        ]
+      }
+    },
+    "examples": ["show.brew.package name=git"],
+    "tests": [{ "input": "show.brew.package name=git", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "install.brew.package",
+    "version": "1.0.0",
+    "summary": "Install a Homebrew formula or cask.",
+    "category": "package",
+    "riskDefault": "HIGH",
+    "params": {
+      "name": { "type": "string", "required": true, "description": "Formula or cask name." }
+    },
+    "adapters": {
+      "posix": {
+        "command": "brew",
+        "args": [
+          { "kind": "literal", "value": "install" },
+          { "kind": "value", "param": "name" }
+        ]
+      }
+    },
+    "examples": ["install.brew.package name=git"],
+    "tests": [{ "input": "install.brew.package name=git", "expectRisk": "HIGH" }]
+  },
+  {
+    "id": "remove.brew.package",
+    "version": "1.0.0",
+    "summary": "Uninstall a Homebrew formula or cask.",
+    "category": "package",
+    "riskDefault": "HIGH",
+    "params": {
+      "name": { "type": "string", "required": true, "description": "Formula or cask name." }
+    },
+    "adapters": {
+      "posix": {
+        "command": "brew",
+        "args": [
+          { "kind": "literal", "value": "uninstall" },
+          { "kind": "value", "param": "name" }
+        ]
+      }
+    },
+    "examples": ["remove.brew.package name=git"],
+    "tests": [{ "input": "remove.brew.package name=git", "expectRisk": "HIGH" }]
+  },
+  {
+    "id": "search.winget.package",
+    "version": "1.0.0",
+    "summary": "Search Windows Package Manager packages.",
+    "category": "package",
+    "riskDefault": "LOW",
+    "params": {
+      "query": { "type": "string", "required": true, "description": "Package search term." }
+    },
+    "adapters": {
+      "powershell": {
+        "command": "winget",
+        "args": [
+          { "kind": "literal", "value": "search" },
+          { "kind": "value", "param": "query" }
+        ]
+      }
+    },
+    "examples": ["search.winget.package query=Git"],
+    "tests": [{ "input": "search.winget.package query=Git", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "show.winget.package",
+    "version": "1.0.0",
+    "summary": "Show Windows Package Manager package details.",
+    "category": "package",
+    "riskDefault": "LOW",
+    "params": {
+      "id": { "type": "string", "required": true, "description": "Winget package id." }
+    },
+    "adapters": {
+      "powershell": {
+        "command": "winget",
+        "args": [
+          { "kind": "literal", "value": "show" },
+          { "kind": "literal", "value": "--id" },
+          { "kind": "value", "param": "id" }
+        ]
+      }
+    },
+    "examples": ["show.winget.package id=Git.Git"],
+    "tests": [{ "input": "show.winget.package id=Git.Git", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "install.winget.package",
+    "version": "1.0.0",
+    "summary": "Install a Windows Package Manager package.",
+    "category": "package",
+    "riskDefault": "HIGH",
+    "params": {
+      "id": { "type": "string", "required": true, "description": "Winget package id." },
+      "exact": { "type": "boolean", "default": true, "description": "Pass -e for exact id matching." }
+    },
+    "adapters": {
+      "powershell": {
+        "command": "winget",
+        "args": [
+          { "kind": "literal", "value": "install" },
+          { "kind": "literal", "value": "--id" },
+          { "kind": "value", "param": "id" },
+          { "kind": "flag", "flag": "-e", "when": "exact" }
+        ],
+        "semanticNotes": "HIGH risk because installers may change system state or trigger UAC prompts."
+      }
+    },
+    "examples": ["install.winget.package id=Git.Git"],
+    "tests": [{ "input": "install.winget.package id=Git.Git", "expectRisk": "HIGH" }]
+  },
+  {
+    "id": "remove.winget.package",
+    "version": "1.0.0",
+    "summary": "Uninstall a Windows Package Manager package.",
+    "category": "package",
+    "riskDefault": "HIGH",
+    "params": {
+      "id": { "type": "string", "required": true, "description": "Winget package id." },
+      "exact": { "type": "boolean", "default": true, "description": "Pass -e for exact id matching." }
+    },
+    "adapters": {
+      "powershell": {
+        "command": "winget",
+        "args": [
+          { "kind": "literal", "value": "uninstall" },
+          { "kind": "literal", "value": "--id" },
+          { "kind": "value", "param": "id" },
+          { "kind": "flag", "flag": "-e", "when": "exact" }
+        ],
+        "semanticNotes": "HIGH risk because uninstalling packages can remove user tools or shared dependencies."
+      }
+    },
+    "examples": ["remove.winget.package id=Git.Git"],
+    "tests": [{ "input": "remove.winget.package id=Git.Git", "expectRisk": "HIGH" }]
+  }
+]

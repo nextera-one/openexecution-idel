@@ -158,6 +158,46 @@ body.font-xlarge {
   --logs-font-size: 0.9rem;
 }
 
+.terminal-effect-canvas {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  width: 100vw;
+  height: 100dvh;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+
+body.effect-matrix .terminal-effect-canvas {
+  opacity: 0.38;
+}
+
+body.effect-scanlines::before,
+body.effect-glow::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+body.effect-scanlines::before {
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.035) 50%, rgba(0, 0, 0, 0.1) 50%),
+    linear-gradient(90deg, rgba(255, 0, 0, 0.03), rgba(0, 255, 120, 0.02), rgba(0, 120, 255, 0.03));
+  background-size: 100% 4px, 6px 100%;
+  mix-blend-mode: soft-light;
+  opacity: 0.46;
+}
+
+body.effect-glow::before {
+  background:
+    radial-gradient(circle at 24% 18%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 28rem),
+    radial-gradient(circle at 80% 70%, color-mix(in srgb, var(--accent-2) 14%, transparent), transparent 30rem);
+  opacity: 0.62;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -176,6 +216,11 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+.terminal-page > *:not(.terminal-effect-canvas) {
+  position: relative;
+  z-index: 1;
+}
+
 code {
   font-family: var(--mono);
   font-size: 0.9em;
@@ -192,10 +237,24 @@ a {
 a:hover {
   text-decoration: underline;
 }
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 
 .demo,
 .term-output,
 .editor-input,
+.palette-results,
+.workflow-list,
+.native-sessions-list,
+.setup-checks,
 .dictionary-results,
 .knowledge-body,
 .completions,
@@ -210,6 +269,10 @@ a:hover {
 .demo:hover,
 .term-output:hover,
 .editor-input:hover,
+.palette-results:hover,
+.workflow-list:hover,
+.native-sessions-list:hover,
+.setup-checks:hover,
 .dictionary-results:hover,
 .knowledge-body:hover,
 .completions:hover,
@@ -222,6 +285,10 @@ a:hover {
 .demo::-webkit-scrollbar,
 .term-output::-webkit-scrollbar,
 .editor-input::-webkit-scrollbar,
+.palette-results::-webkit-scrollbar,
+.workflow-list::-webkit-scrollbar,
+.native-sessions-list::-webkit-scrollbar,
+.setup-checks::-webkit-scrollbar,
 .dictionary-results::-webkit-scrollbar,
 .knowledge-body::-webkit-scrollbar,
 .completions::-webkit-scrollbar,
@@ -235,6 +302,10 @@ a:hover {
 .demo::-webkit-scrollbar-track,
 .term-output::-webkit-scrollbar-track,
 .editor-input::-webkit-scrollbar-track,
+.palette-results::-webkit-scrollbar-track,
+.workflow-list::-webkit-scrollbar-track,
+.native-sessions-list::-webkit-scrollbar-track,
+.setup-checks::-webkit-scrollbar-track,
 .dictionary-results::-webkit-scrollbar-track,
 .knowledge-body::-webkit-scrollbar-track,
 .completions::-webkit-scrollbar-track,
@@ -247,6 +318,10 @@ a:hover {
 .demo::-webkit-scrollbar-thumb,
 .term-output::-webkit-scrollbar-thumb,
 .editor-input::-webkit-scrollbar-thumb,
+.palette-results::-webkit-scrollbar-thumb,
+.workflow-list::-webkit-scrollbar-thumb,
+.native-sessions-list::-webkit-scrollbar-thumb,
+.setup-checks::-webkit-scrollbar-thumb,
 .dictionary-results::-webkit-scrollbar-thumb,
 .knowledge-body::-webkit-scrollbar-thumb,
 .completions::-webkit-scrollbar-thumb,
@@ -263,6 +338,10 @@ a:hover {
 .demo::-webkit-scrollbar-thumb:hover,
 .term-output::-webkit-scrollbar-thumb:hover,
 .editor-input::-webkit-scrollbar-thumb:hover,
+.palette-results::-webkit-scrollbar-thumb:hover,
+.workflow-list::-webkit-scrollbar-thumb:hover,
+.native-sessions-list::-webkit-scrollbar-thumb:hover,
+.setup-checks::-webkit-scrollbar-thumb:hover,
 .dictionary-results::-webkit-scrollbar-thumb:hover,
 .knowledge-body::-webkit-scrollbar-thumb:hover,
 .completions::-webkit-scrollbar-thumb:hover,
@@ -276,6 +355,10 @@ a:hover {
 .demo::-webkit-scrollbar-thumb:active,
 .term-output::-webkit-scrollbar-thumb:active,
 .editor-input::-webkit-scrollbar-thumb:active,
+.palette-results::-webkit-scrollbar-thumb:active,
+.workflow-list::-webkit-scrollbar-thumb:active,
+.native-sessions-list::-webkit-scrollbar-thumb:active,
+.setup-checks::-webkit-scrollbar-thumb:active,
 .dictionary-results::-webkit-scrollbar-thumb:active,
 .knowledge-body::-webkit-scrollbar-thumb:active,
 .completions::-webkit-scrollbar-thumb:active,
@@ -288,6 +371,10 @@ a:hover {
 .demo::-webkit-scrollbar-corner,
 .term-output::-webkit-scrollbar-corner,
 .editor-input::-webkit-scrollbar-corner,
+.palette-results::-webkit-scrollbar-corner,
+.workflow-list::-webkit-scrollbar-corner,
+.native-sessions-list::-webkit-scrollbar-corner,
+.setup-checks::-webkit-scrollbar-corner,
 .dictionary-results::-webkit-scrollbar-corner,
 .knowledge-body::-webkit-scrollbar-corner,
 .completions::-webkit-scrollbar-corner,
@@ -789,11 +876,37 @@ h1 {
   content: " *";
   color: var(--yellow);
 }
+.workspace-tab.native-tab .tab-label::before {
+  content: "$ ";
+  color: var(--accent);
+}
+.workspace-tab.native-tab.state-exited .tab-label::before,
+.workspace-tab.native-tab.state-disconnected .tab-label::before {
+  color: var(--fg-dim);
+}
 .tab-label {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.tab-status {
+  flex: 0 0 auto;
+  width: 0.48rem;
+  height: 0.48rem;
+  border-radius: 999px;
+  background: var(--fg-dim);
+}
+.tab-status.running {
+  background: var(--green);
+}
+.tab-status.starting,
+.tab-status.stopping {
+  background: var(--yellow);
+}
+.tab-status.exited,
+.tab-status.disconnected {
+  background: var(--red);
 }
 .tab-close {
   display: inline-grid;
@@ -814,6 +927,16 @@ h1 {
   padding: 0;
   font-size: 1rem;
 }
+.tab-new.native-new {
+  min-width: 2.65rem;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+.tab-new:disabled,
+.tab-new[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
 .tab-new:hover,
 .workspace-tab:hover {
   border-color: var(--accent);
@@ -828,6 +951,109 @@ h1 {
   font-family: var(--mono);
   font-size: var(--term-font-size);
   line-height: 1.55;
+}
+.native-output {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  color: var(--fg);
+}
+.native-output > .line {
+  margin: 0.9rem 1.3rem 0;
+}
+.native-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 2.3rem;
+  padding: 0.35rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--editor-head-bg);
+  color: var(--fg-dim);
+  font-family: var(--sans);
+  font-size: 0.78rem;
+}
+.native-toolbar-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+  font-weight: 650;
+}
+.native-toolbar-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.native-toolbar-spacer {
+  flex: 1 1 auto;
+}
+.native-status-pill {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.12rem 0.45rem;
+  color: var(--fg-dim);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+}
+.native-status-pill.running {
+  border-color: color-mix(in srgb, var(--green) 50%, var(--border));
+  color: var(--green);
+}
+.native-status-pill.starting,
+.native-status-pill.stopping {
+  border-color: color-mix(in srgb, var(--yellow) 50%, var(--border));
+  color: var(--yellow);
+}
+.native-status-pill.exited,
+.native-status-pill.disconnected {
+  border-color: color-mix(in srgb, var(--red) 50%, var(--border));
+  color: var(--red);
+}
+.native-toolbar .editor-btn {
+  min-width: 0;
+  height: 1.55rem;
+  padding-inline: 0.48rem;
+  font-size: 0.72rem;
+}
+.native-xterm {
+  flex: 1;
+  min-height: 0;
+  padding: 0.85rem 1rem;
+}
+.native-xterm .xterm {
+  height: 100%;
+}
+.native-xterm .xterm-viewport,
+.native-xterm .xterm-screen {
+  background: transparent !important;
+}
+.native-xterm .xterm-viewport {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb) transparent;
+}
+.native-xterm .xterm-viewport::-webkit-scrollbar {
+  width: 10px;
+}
+.native-xterm .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+.native-xterm .xterm-viewport::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: var(--scroll-thumb);
+  background-clip: padding-box;
+}
+.native-xterm .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: var(--scroll-thumb-hover);
+  background-clip: padding-box;
+}
+.native-stream .line-body {
+  white-space: pre-wrap;
 }
 .line {
   white-space: pre-wrap;
@@ -1149,6 +1375,9 @@ h1 {
 .term-prompt.ask {
   color: var(--accent-2);
 }
+.term-prompt.native {
+  color: var(--green);
+}
 #input {
   flex: 1;
   min-width: 0;
@@ -1269,6 +1498,10 @@ body.logs-hidden .term-side {
 }
 
 .preferences-dialog,
+.palette-dialog,
+.workflow-dialog,
+.native-sessions-dialog,
+.setup-check-dialog,
 .dictionary-dialog,
 .knowledge-dialog,
 .claude-setup-dialog,
@@ -1281,6 +1514,10 @@ body.logs-hidden .term-side {
   color: var(--fg);
 }
 .preferences-dialog::backdrop,
+.palette-dialog::backdrop,
+.workflow-dialog::backdrop,
+.native-sessions-dialog::backdrop,
+.setup-check-dialog::backdrop,
 .dictionary-dialog::backdrop,
 .knowledge-dialog::backdrop,
 .claude-setup-dialog::backdrop,
@@ -1299,9 +1536,21 @@ body.logs-hidden .term-side {
 .dictionary-dialog {
   width: min(94vw, 64rem);
 }
+.palette-dialog {
+  width: min(94vw, 46rem);
+}
+.workflow-dialog,
+.native-sessions-dialog,
+.setup-check-dialog {
+  width: min(94vw, 46rem);
+}
 .knowledge-dialog {
   width: min(94vw, 58rem);
 }
+.palette-panel,
+.workflow-panel,
+.native-sessions-panel,
+.setup-check-panel,
 .dictionary-panel {
   display: flex;
   flex-direction: column;
@@ -1311,6 +1560,142 @@ body.logs-hidden .term-side {
   border-radius: 10px;
   background: var(--panel);
   box-shadow: 0 24px 80px var(--shadow-soft);
+}
+.palette-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.65rem;
+  align-items: center;
+  padding: 0.75rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--editor-head-bg);
+}
+.palette-search input,
+.workflow-editor input,
+.workflow-editor textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--field-bg);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 0.86rem;
+  outline: 0;
+  padding: 0.55rem 0.65rem;
+}
+.palette-search input:focus,
+.workflow-editor input:focus,
+.workflow-editor textarea:focus {
+  border-color: var(--accent);
+}
+.workflow-editor textarea {
+  resize: vertical;
+  line-height: 1.45;
+}
+.palette-results,
+.workflow-list,
+.native-sessions-list,
+.setup-checks {
+  display: grid;
+  gap: 0.55rem;
+  overflow-y: auto;
+  padding: 0.75rem;
+}
+.palette-item,
+.workflow-item,
+.native-session-item,
+.setup-check {
+  display: grid;
+  gap: 0.25rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-alt);
+  color: var(--fg);
+  padding: 0.65rem 0.75rem;
+}
+.palette-item {
+  width: 100%;
+  cursor: pointer;
+  text-align: left;
+}
+.palette-item:hover,
+.palette-item.sel {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-alt));
+}
+.palette-item-title,
+.workflow-title,
+.native-session-title,
+.setup-check-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.9rem;
+  font-weight: 650;
+}
+.palette-kind,
+.setup-check-state {
+  color: var(--fg-dim);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+}
+.palette-item-detail,
+.workflow-command,
+.native-session-detail,
+.setup-check-detail {
+  color: var(--fg-dim);
+  font-size: 0.78rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.workflow-editor {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.75rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-alt);
+}
+.workflow-editor-actions,
+.workflow-actions,
+.native-session-actions,
+.native-sessions-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  justify-content: flex-end;
+}
+.native-sessions-actions {
+  padding: 0.75rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-alt);
+}
+.workflow-empty,
+.palette-empty,
+.native-sessions-empty {
+  padding: 1.2rem 0.75rem;
+  color: var(--fg-dim);
+  text-align: center;
+}
+.native-session-title code {
+  color: var(--fg);
+}
+.native-session-local {
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+}
+.setup-check.ok {
+  border-left: 3px solid var(--green);
+}
+.setup-check.warn {
+  border-left: 3px solid var(--yellow);
+}
+.setup-check.fail {
+  border-left: 3px solid var(--red);
 }
 .knowledge-panel {
   display: flex;
@@ -1370,6 +1755,10 @@ body.logs-hidden .term-side {
 .preference-row .theme-toggle,
 .preference-row .palette-controls {
   flex: 0 0 auto;
+}
+.preference-row .effect-toggle {
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 .preference-row .palette-controls {
   flex-wrap: wrap;
@@ -1829,6 +2218,22 @@ body.logs-hidden .term-side {
   .term-output {
     padding: 0.85rem;
   }
+  .native-output {
+    padding: 0;
+  }
+  .native-toolbar {
+    flex-wrap: wrap;
+  }
+  .native-toolbar-meta {
+    flex: 1 1 100%;
+    order: 2;
+  }
+  .native-toolbar-spacer {
+    display: none;
+  }
+  .native-xterm {
+    padding: 0.7rem 0.75rem;
+  }
   .term-input {
     padding: 0.7rem 0.85rem;
   }
@@ -1863,16 +2268,28 @@ body.logs-hidden .term-side {
     padding: 0.75rem 0.85rem;
   }
   .preferences-dialog,
+  .palette-dialog,
+  .workflow-dialog,
+  .native-sessions-dialog,
+  .setup-check-dialog,
   .dictionary-dialog,
   .knowledge-dialog,
   .claude-setup-dialog,
   .screenshot-dialog,
+  .palette-panel,
+  .workflow-panel,
+  .native-sessions-panel,
+  .setup-check-panel,
   .dictionary-panel,
   .knowledge-panel,
   .preferences-panel {
     max-height: calc(100dvh - 1rem);
   }
   .preferences-dialog,
+  .palette-dialog,
+  .workflow-dialog,
+  .native-sessions-dialog,
+  .setup-check-dialog,
   .dictionary-dialog,
   .knowledge-dialog,
   .claude-setup-dialog,
@@ -1880,6 +2297,12 @@ body.logs-hidden .term-side {
     width: calc(100vw - 1rem);
   }
   .dictionary-panel {
+    overflow: hidden;
+  }
+  .palette-panel,
+  .workflow-panel,
+  .native-sessions-panel,
+  .setup-check-panel {
     overflow: hidden;
   }
   .knowledge-panel {
@@ -1937,8 +2360,17 @@ body.logs-hidden .term-side {
     flex-wrap: wrap;
   }
   .dictionary-search,
+  .palette-search,
   .dictionary-mapping {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .workflow-editor-actions,
+  .workflow-actions,
+  .native-session-actions,
+  .native-sessions-actions,
+  .setup-actions {
+    display: grid;
+    grid-template-columns: 1fr;
   }
   .dictionary-mapping small {
     grid-column: 1;

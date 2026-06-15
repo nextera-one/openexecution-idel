@@ -5,6 +5,11 @@ import type { AddressInfo } from "node:net";
 import { platform } from "node:os";
 
 import { TerminalService, ServiceError, batchStepSucceeded } from "./service.js";
+import {
+  NativeTerminalError,
+  NativeTerminalManager,
+} from "./native-terminal.js";
+import type { NativeTerminalSignal } from "./native-terminal.js";
 import type {
   RunRequest,
   CompleteRequest,
@@ -24,6 +29,12 @@ import type {
  *   POST /api/learn      {cli,write} → host-specific learned-command preview
  *   POST /api/editor/open {file,cwd} → { file, content, language, outcome }
  *   POST /api/editor/save {file,content,cwd} → RuntimeOutcome
+ *   POST /api/native/start {cwd,shell} → NativeTerminalInfo
+ *   GET  /api/native/:id/stream        → SSE native terminal output
+ *   POST /api/native/:id/input {data}  → write to native terminal stdin
+ *   POST /api/native/:id/resize {cols,rows} → resize native terminal
+ *   POST /api/native/:id/signal {signal} → interrupt/terminate/kill native terminal
+ *   POST /api/native/:id/close         → close native terminal
  *   GET  /api/logs?limit=N           → OpenLogRecord[]   (redacted by the writer)
  *   GET  /api/logs/verify            → VerifyResult
  *   GET  /  (+ static)               → the bundled UI, when `staticDir` is set
@@ -121,12 +132,16 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
   // — is cached by Anthropic across turns). Undefined when the host didn't wire one.
   const agent = opts.agent ? opts.agent(service) : undefined;
   const learn = opts.learn;
+  const nativeTerminals = new NativeTerminalManager({
+    cwd: opts.cwd,
+    disabled: opts.noNative === true,
+  });
   // Coordinates the async approval round-trip: an agent stream that proposes a
   // real run parks here on an id; POST /api/agent/approve resolves it.
   const approvals = new PendingApprovals();
 
   const httpServer = createServer((req, res) => {
-    handle(req, res, service, { cors, staticDir, agent, learn, approvals }).catch((err) => {
+    handle(req, res, service, { cors, staticDir, agent, learn, approvals, nativeTerminals }).catch((err) => {
       // A ServiceError carries the intended HTTP status (e.g. 413 for an
       // oversized body thrown while reading the request stream); honor it here
       // so transport-level failures don't all collapse to 500.
@@ -169,6 +184,7 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
       // Release any parked approvals (deny) so suspended agent loops unwind
       // instead of keeping handles open across shutdown.
       approvals.cancelAll();
+      nativeTerminals.closeAll();
       return new Promise<void>((resolveClose, reject) =>
         httpServer.close((err) => (err ? reject(err) : resolveClose())),
       );
@@ -186,9 +202,10 @@ async function handle(
     agent: AgentRunner | undefined;
     learn: LearnRunner | undefined;
     approvals: PendingApprovals;
+    nativeTerminals: NativeTerminalManager;
   },
 ): Promise<void> {
-  const { cors, staticDir, agent, learn, approvals } = cfg;
+  const { cors, staticDir, agent, learn, approvals, nativeTerminals } = cfg;
   const method = req.method ?? "GET";
   const url = new URL(req.url ?? "/", "http://localhost");
   const path = url.pathname;
@@ -206,7 +223,13 @@ async function handle(
     return sendJson(
       res,
       200,
-      { ok: true, version: VERSION, platform: platform(), agentAvailable: Boolean(agent) },
+      {
+        ok: true,
+        version: VERSION,
+        platform: platform(),
+        agentAvailable: Boolean(agent),
+        nativeAvailable: nativeTerminals.available,
+      },
       cors,
     );
   }
@@ -331,6 +354,56 @@ async function handle(
       return sendJson(res, 404, { error: "no pending approval with that id" }, cors);
     }
     return sendJson(res, 200, { ok: true }, cors);
+  }
+
+  if (path === "/api/native/sessions" && method === "GET") {
+    return sendJson(res, 200, nativeTerminals.list(), cors);
+  }
+
+  if (path === "/api/native/start" && method === "POST") {
+    try {
+      const body = await readJsonBody<{ cwd?: string; shell?: string }>(req);
+      return sendJson(res, 200, nativeTerminals.start(body), cors);
+    } catch (err) {
+      if (err instanceof NativeTerminalError) {
+        return sendJson(res, err.status, { error: err.message }, cors);
+      }
+      throw err;
+    }
+  }
+
+  const nativeRoute = parseNativeRoute(path);
+  if (nativeRoute) {
+    if (nativeRoute.action === "stream" && method === "GET") {
+      return nativeTerminalStream(req, res, nativeTerminals, nativeRoute.id, cors);
+    }
+    if (nativeRoute.action === "input" && method === "POST") {
+      const body = await readJsonBody<{ data?: string }>(req);
+      const ok = nativeTerminals.write(nativeRoute.id, String(body.data ?? ""));
+      return sendJson(res, ok ? 200 : 404, ok ? { ok: true } : { error: "native session not found" }, cors);
+    }
+    if (nativeRoute.action === "resize" && method === "POST") {
+      const body = await readJsonBody<{ cols?: number; rows?: number }>(req);
+      const size = parseTerminalResizeBody(body);
+      if (!size) {
+        return sendJson(res, 400, { error: "resize requires integer cols>=2 and rows>=1" }, cors);
+      }
+      const ok = nativeTerminals.resize(nativeRoute.id, size.cols, size.rows);
+      return sendJson(res, ok ? 200 : 404, ok ? { ok: true } : { error: "native session not found" }, cors);
+    }
+    if (nativeRoute.action === "signal" && method === "POST") {
+      const body = await readJsonBody<{ signal?: string }>(req);
+      const signal = parseNativeSignal(body.signal);
+      if (!signal) {
+        return sendJson(res, 400, { error: "signal must be one of interrupt, terminate, kill, hangup" }, cors);
+      }
+      const ok = nativeTerminals.signal(nativeRoute.id, signal);
+      return sendJson(res, ok ? 200 : 404, ok ? { ok: true } : { error: "native session not found" }, cors);
+    }
+    if (nativeRoute.action === "close" && method === "POST") {
+      const ok = nativeTerminals.close(nativeRoute.id);
+      return sendJson(res, ok ? 200 : 404, ok ? { ok: true } : { error: "native session not found" }, cors);
+    }
   }
 
   if (path === "/api/logs" && method === "GET") {
@@ -520,6 +593,91 @@ async function agentStream(
     writeSse(res, "done", {});
     res.end();
   }
+}
+
+function parseNativeRoute(
+  path: string,
+): { id: string; action: "stream" | "input" | "resize" | "signal" | "close" } | undefined {
+  const match = /^\/api\/native\/([^/]+)\/(stream|input|resize|signal|close)$/.exec(path);
+  if (!match) return undefined;
+  return {
+    id: decodeURIComponent(match[1]!),
+    action: match[2] as "stream" | "input" | "resize" | "signal" | "close",
+  };
+}
+
+function parseTerminalResizeBody(body: { cols?: number; rows?: number }): { cols: number; rows: number } | undefined {
+  const cols = Number(body.cols);
+  const rows = Number(body.rows);
+  if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 2 || rows < 1) return undefined;
+  return { cols: Math.min(cols, 1000), rows: Math.min(rows, 1000) };
+}
+
+function parseNativeSignal(value: unknown): NativeTerminalSignal | undefined {
+  switch (String(value ?? "").trim().toLowerCase()) {
+    case "interrupt":
+    case "ctrl-c":
+    case "ctrlc":
+    case "sigint":
+    case "int":
+      return "interrupt";
+    case "terminate":
+    case "term":
+    case "sigterm":
+      return "terminate";
+    case "kill":
+    case "sigkill":
+      return "kill";
+    case "hangup":
+    case "hup":
+    case "sighup":
+      return "hangup";
+    default:
+      return undefined;
+  }
+}
+
+function nativeTerminalStream(
+  req: IncomingMessage,
+  res: ServerResponse,
+  nativeTerminals: NativeTerminalManager,
+  id: string,
+  cors: boolean,
+): void {
+  const session = nativeTerminals.get(id);
+  if (!session) {
+    sendJson(res, 404, { error: "native session not found" }, cors);
+    return;
+  }
+  if (cors) setCors(res);
+  res.writeHead(200, {
+    "content-type": "text/event-stream",
+    "cache-control": "no-cache",
+    connection: "keep-alive",
+  });
+  writeSse(res, "ready", session.info());
+
+  let ended = false;
+  let unsubscribe: () => void = () => {};
+  const end = () => {
+    if (ended) return;
+    ended = true;
+    unsubscribe();
+    writeSse(res, "done", {});
+    res.end();
+  };
+  unsubscribe = session.subscribe((event) => {
+    if (ended) return;
+    if (event.type === "data") {
+      writeSse(res, "data", { data: event.data });
+      return;
+    }
+    writeSse(res, "exit", { code: event.code, signal: event.signal });
+    end();
+  });
+  req.on("close", () => {
+    if (!ended) unsubscribe();
+  });
 }
 
 function parseAskAiRunCommand(command: string): { isAskAi: boolean; intent: string } {

@@ -59,6 +59,8 @@ if [[ "$needs_build" == true ]]; then
   ( cd "$ROOT" && build_workspace )
 fi
 
+node "$ROOT/scripts/sync-xterm-assets.mjs"
+
 if [[ ! -f "$STATIC/index.html" ]]; then
   echo "run-ui: web assets missing at $STATIC" >&2
   exit 1

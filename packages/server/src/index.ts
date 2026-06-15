@@ -39,4 +39,12 @@ export type {
   RunningServer,
 } from "./server.js";
 
+export { NativeTerminalManager, NativeTerminalError } from "./native-terminal.js";
+export type {
+  NativeTerminalEvent,
+  NativeTerminalInfo,
+  NativeTerminalOptions,
+  StartNativeTerminalRequest,
+} from "./native-terminal.js";
+
 export { complete } from "./complete.js";

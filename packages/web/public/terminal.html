@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>IDEL Terminal</title>
+    <link rel="stylesheet" href="/vendor/xterm/xterm.css" />
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body class="terminal-page">
@@ -32,14 +33,19 @@
         <button class="mode-btn active" id="mode-idel" title="Type IDEL commands">IDEL</button>
         <button class="mode-btn" id="mode-ask" title="Ask Claude in natural language">Ask Claude</button>
       </span>
+      <button class="term-tool-btn" id="palette-open" type="button" title="Open command palette">Palette</button>
+      <button class="term-tool-btn" id="workflow-open" type="button" title="Open saved workflows">Workflows</button>
+      <button class="term-tool-btn" id="native-sessions-open" type="button" title="Manage native shell sessions">Shells</button>
       <button class="term-tool-btn" id="dictionary-open" type="button" title="Open command dictionary">Dictionary</button>
       <button class="term-tool-btn" id="knowledge-open" type="button" title="Open command knowledge base">Knowledge</button>
+      <button class="term-tool-btn" id="setup-open" type="button" title="Open setup checklist">Setup</button>
       <button class="icon-btn preferences-trigger" id="preferences-open" type="button" title="Preferences" aria-label="Open preferences">⚙</button>
     </header>
 
     <main class="term-main">
       <div class="workspace-tabs" id="tabs" role="tablist" aria-label="Workspace tabs">
         <button class="tab-new" id="new-terminal" type="button" title="New terminal">+</button>
+        <button class="tab-new native-new" id="new-native-terminal" type="button" title="New native shell">sh</button>
       </div>
       <section class="term-output" id="output" aria-live="polite">
         <div class="line muted">IDEL web terminal. Type a command like <code>list.folder name=.</code> and press Enter. Every command flows through the same safety → policy → signed-log pipeline as the CLI.</div>
@@ -131,6 +137,19 @@
 
         <section class="preference-row">
           <div class="preference-copy">
+            <span>Effects</span>
+            <small>Optional terminal atmosphere</small>
+          </div>
+          <span class="theme-toggle effect-toggle" role="group" aria-label="Terminal effects preference">
+            <button class="theme-btn active" type="button" data-effect="none" title="No visual effect">Off</button>
+            <button class="theme-btn" type="button" data-effect="matrix" title="Matrix rain effect">Matrix</button>
+            <button class="theme-btn" type="button" data-effect="scanlines" title="CRT scanlines effect">Scanlines</button>
+            <button class="theme-btn" type="button" data-effect="glow" title="Soft terminal glow effect">Glow</button>
+          </span>
+        </section>
+
+        <section class="preference-row">
+          <div class="preference-copy">
             <span>Audit panel</span>
             <small>Recent command log</small>
           </div>
@@ -139,6 +158,88 @@
             <span aria-hidden="true"></span>
           </label>
         </section>
+      </div>
+    </dialog>
+
+    <dialog class="palette-dialog" id="palette-dialog" aria-labelledby="palette-title">
+      <div class="palette-panel">
+        <div class="palette-search">
+          <label class="sr-only" for="palette-search">Search commands, files, workflows, and actions</label>
+          <input
+            id="palette-search"
+            type="search"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="Search commands, workflows, actions..."
+          />
+          <button class="icon-btn" id="palette-close" type="button" title="Close" aria-label="Close command palette">x</button>
+        </div>
+        <div class="palette-results" id="palette-results" role="listbox" aria-labelledby="palette-title"></div>
+        <div class="palette-empty" id="palette-empty" hidden>No matching actions.</div>
+      </div>
+    </dialog>
+
+    <dialog class="workflow-dialog" id="workflow-dialog" aria-labelledby="workflow-title">
+      <div class="workflow-panel">
+        <div class="preferences-head">
+          <div>
+            <h2 id="workflow-title">Workflows</h2>
+            <p>Saved batches for repeated work</p>
+          </div>
+          <button class="icon-btn" id="workflow-close" type="button" title="Close" aria-label="Close workflows">x</button>
+        </div>
+
+        <section class="workflow-editor">
+          <input id="workflow-name" type="text" autocomplete="off" placeholder="workflow name" aria-label="Workflow name" />
+          <textarea id="workflow-command" rows="4" spellcheck="false" placeholder="one IDEL command per line, or a && batch" aria-label="Workflow commands"></textarea>
+          <div class="workflow-editor-actions">
+            <button class="editor-btn" id="workflow-save" type="button">Save</button>
+            <button class="editor-btn" id="workflow-fill-current" type="button">Use Current Input</button>
+          </div>
+        </section>
+
+        <div class="workflow-list" id="workflow-list"></div>
+        <div class="workflow-empty" id="workflow-empty" hidden>No saved workflows.</div>
+      </div>
+    </dialog>
+
+    <dialog class="native-sessions-dialog" id="native-sessions-dialog" aria-labelledby="native-sessions-title">
+      <div class="native-sessions-panel">
+        <div class="preferences-head">
+          <div>
+            <h2 id="native-sessions-title">Shell Sessions</h2>
+            <p>Running native shells in this IDEL server</p>
+          </div>
+          <button class="icon-btn" id="native-sessions-close" type="button" title="Close" aria-label="Close shell sessions">x</button>
+        </div>
+
+        <div class="native-sessions-actions">
+          <button class="editor-btn" id="native-sessions-refresh" type="button">Refresh</button>
+          <button class="editor-btn" id="native-sessions-close-all" type="button">Close All</button>
+        </div>
+
+        <div class="native-sessions-list" id="native-sessions-list"></div>
+        <div class="native-sessions-empty" id="native-sessions-empty" hidden>No running native shell sessions.</div>
+      </div>
+    </dialog>
+
+    <dialog class="setup-check-dialog" id="setup-check-dialog" aria-labelledby="setup-check-title">
+      <div class="setup-check-panel">
+        <div class="preferences-head">
+          <div>
+            <h2 id="setup-check-title">Setup Checklist</h2>
+            <p>Local readiness for a complete IDEL workspace</p>
+          </div>
+          <button class="icon-btn" id="setup-close" type="button" title="Close" aria-label="Close setup checklist">x</button>
+        </div>
+
+        <div class="setup-checks" id="setup-checks"></div>
+        <div class="setup-actions">
+          <button class="editor-btn" id="setup-open-dictionary" type="button">Dictionary</button>
+          <button class="editor-btn" id="setup-open-workflows" type="button">Workflows</button>
+          <button class="editor-btn" id="setup-open-ai" type="button">AI Setup</button>
+          <button class="editor-btn" id="setup-dismiss" type="button">Done</button>
+        </div>
       </div>
     </dialog>
 
@@ -188,13 +289,18 @@
               The quoted form is accepted for convenience. IDEL sends both examples to the shell as
               <code id="knowledge-native-shell-example">sudo apt install git</code>.
             </p>
+            <pre><code id="knowledge-native-tab-example">sudo apt install git</code></pre>
+            <p class="knowledge-note">
+              For interactive commands, open a <code>sh</code> tab. Native shell tabs send Tab, arrows, Ctrl+C, and
+              password prompts directly to the OS shell.
+            </p>
           </article>
 
           <article class="knowledge-section">
             <h3 id="knowledge-package-title">Elevation And Packages</h3>
             <p>
               Package-manager commands should be explicit because search, install, remove, upgrade, and source edits have very
-              different risks. Use <code>!</code> for one-off native work until curated commands exist.
+              different risks. Prefer curated IDEL commands when available; use <code>!</code> for one-off native work.
             </p>
             <pre><code id="knowledge-package-examples">! sudo apt update
 ! sudo apt install git
@@ -354,6 +460,8 @@ scripts/run-ui.sh</code></pre>
       </div>
     </dialog>
 
+    <script src="/vendor/xterm/xterm.js"></script>
+    <script src="/vendor/xterm/addon-fit.js"></script>
     <script src="/terminal.js" type="module"></script>
   </body>
 </html>
