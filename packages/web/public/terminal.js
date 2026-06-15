@@ -21,6 +21,10 @@ const logsEl = $("logs");
 const tabsEl = $("tabs");
 const modeIdelBtn = $("mode-idel");
 const modeAskBtn = $("mode-ask");
+const appearanceMenuOpen = $("appearance-menu-open");
+const appearanceMenuDialog = $("appearance-menu-dialog");
+const actionsMenuOpen = $("actions-menu-open");
+const actionsMenuDialog = $("actions-menu-dialog");
 const newTerminalBtn = $("new-terminal");
 const newNativeTerminalBtn = $("new-native-terminal");
 const paletteDialog = $("palette-dialog");
@@ -137,11 +141,17 @@ let matrixColumns = [];
 let matrixLastFrame = 0;
 let pageReloadConfirmed = false;
 let pendingNativePaste = null;
+const AGENT_PROGRESS_STEPS = [
+  "Reading request",
+  "Preparing context",
+  "Checking safe actions",
+  "Waiting for response",
+];
 
 const THEMES = new Set(["dark", "light"]);
 const PALETTES = new Set(["cyan", "blue", "sky", "teal", "mint", "green", "lime", "amber", "orange", "rose", "red", "fuchsia", "violet", "indigo", "slate", "stone"]);
 const FONT_SIZES = new Set(["small", "normal", "large", "xlarge"]);
-const EFFECTS = new Set(["none", "matrix", "scanlines", "glow", "grid", "pulse", "static"]);
+const EFFECTS = new Set(["none", "matrix", "scanlines", "glow", "pulse"]);
 const PREF_KEYS = {
   theme: "idel.theme",
   palette: "idel.palette",
@@ -255,22 +265,90 @@ function initPreferences() {
 }
 
 function initHeaderMenus() {
-  const menus = Array.from(document.querySelectorAll(".header-menu"));
+  const menus = [
+    { trigger: appearanceMenuOpen, dialog: appearanceMenuDialog, closeOnButton: false },
+    { trigger: actionsMenuOpen, dialog: actionsMenuDialog, closeOnButton: true },
+  ].filter((item) => item.trigger && item.dialog);
+
   for (const menu of menus) {
-    menu.addEventListener("toggle", () => {
-      if (!menu.open) return;
-      for (const other of menus) {
-        if (other !== menu) other.open = false;
-      }
+    menu.trigger.setAttribute("aria-expanded", "false");
+    menu.trigger.addEventListener("click", () => openHeaderMenuDialog(menu, menus));
+    menu.dialog.addEventListener("click", (e) => {
+      if (e.target === menu.dialog) closeHeaderMenuDialog(menu);
     });
+    menu.dialog.addEventListener("close", () => {
+      menu.trigger.setAttribute("aria-expanded", "false");
+      if (menu.restoreFocus !== false) menu.trigger.focus();
+      menu.restoreFocus = true;
+    });
+    if (menu.closeOnButton) {
+      const panel = menu.dialog.querySelector(".header-menu-panel");
+      panel?.addEventListener("click", (e) => {
+        const target = e.target instanceof Element ? e.target.closest("button") : null;
+        if (target && panel.contains(target)) closeHeaderMenuDialog(menu, false);
+      }, { capture: true });
+    }
   }
-  document.querySelector(".actions-menu .header-menu-panel")?.addEventListener("click", (e) => {
-    if (!(e.target instanceof HTMLButtonElement)) return;
-    const menu = e.currentTarget.closest(".header-menu");
-    window.setTimeout(() => {
-      if (menu) menu.open = false;
-    }, 0);
+
+  const repositionOpenMenu = () => {
+    for (const menu of menus) {
+      if (menu.dialog.open) positionHeaderMenuDialog(menu);
+    }
+  };
+  window.addEventListener("resize", repositionOpenMenu);
+  window.addEventListener("scroll", repositionOpenMenu, true);
+}
+
+function openHeaderMenuDialog(menu, menus) {
+  for (const other of menus) {
+    if (other !== menu) closeHeaderMenuDialog(other, false);
+  }
+  if (menu.dialog.open) {
+    positionHeaderMenuDialog(menu);
+    return;
+  }
+  menu.restoreFocus = true;
+  menu.dialog.style.visibility = "hidden";
+  if (typeof menu.dialog.showModal !== "function") {
+    menu.dialog.setAttribute("open", "");
+  } else {
+    try {
+      menu.dialog.showModal();
+    } catch {
+      menu.dialog.style.visibility = "";
+      return;
+    }
+  }
+  menu.trigger.setAttribute("aria-expanded", "true");
+  positionHeaderMenuDialog(menu);
+  menu.dialog.style.visibility = "";
+  window.requestAnimationFrame(() => {
+    if (menu.dialog.open) positionHeaderMenuDialog(menu);
   });
+}
+
+function closeHeaderMenuDialog(menu, restoreFocus = true) {
+  if (!menu.dialog.open) return;
+  menu.restoreFocus = restoreFocus;
+  if (typeof menu.dialog.close === "function") menu.dialog.close();
+  else {
+    menu.dialog.removeAttribute("open");
+    menu.dialog.dispatchEvent(new Event("close"));
+  }
+}
+
+function positionHeaderMenuDialog(menu) {
+  const rect = menu.trigger.getBoundingClientRect();
+  const dialog = menu.dialog;
+  const margin = 8;
+  const panelWidth = dialog.offsetWidth || dialog.querySelector(".header-menu-panel")?.offsetWidth || 240;
+  const maxLeft = Math.max(margin, window.innerWidth - panelWidth - margin);
+  const left = Math.min(Math.max(margin, rect.right - panelWidth), maxLeft);
+  const top = Math.max(margin, rect.bottom + 8);
+  const maxHeight = Math.max(160, window.innerHeight - top - margin);
+  dialog.style.setProperty("--header-menu-top", `${Math.round(top)}px`);
+  dialog.style.setProperty("--header-menu-left", `${Math.round(left)}px`);
+  dialog.style.setProperty("--header-menu-max-height", `${Math.round(maxHeight)}px`);
 }
 
 function initClaudeSetupDialog() {
@@ -2423,10 +2501,328 @@ function line(text, cls = "") {
   return div;
 }
 
+function markdownLine(markdown, cls = "text") {
+  const output = activeOutput();
+  const raw = String(markdown ?? "");
+  const div = document.createElement("div");
+  div.className = `line ${cls} markdown-line`;
+  const body = document.createElement("div");
+  body.className = "line-body markdown-body";
+  renderMarkdown(body, raw);
+  div.appendChild(body);
+  attachLineActions(div, raw, cls);
+  output.appendChild(div);
+  output.scrollTop = output.scrollHeight;
+  return div;
+}
+
+function renderMarkdown(container, markdown) {
+  const lines = String(markdown ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+  let i = 0;
+  while (i < lines.length) {
+    if (!lines[i].trim()) {
+      i++;
+      continue;
+    }
+
+    const fence = lines[i].match(/^\s*(```+|~~~+)\s*([A-Za-z0-9_+.-]*)\s*$/);
+    if (fence) {
+      const marker = fence[1][0];
+      const fenceLength = fence[1].length;
+      const language = fence[2] || "";
+      const codeLines = [];
+      i++;
+      while (i < lines.length && !new RegExp(`^\\s*${escapeRegExp(marker.repeat(fenceLength))}\\s*$`).test(lines[i])) {
+        codeLines.push(lines[i]);
+        i++;
+      }
+      if (i < lines.length) i++;
+      container.appendChild(markdownCodeBlock(codeLines.join("\n"), language));
+      continue;
+    }
+
+    const heading = lines[i].match(/^(#{1,6})\s+(.+)$/);
+    if (heading) {
+      const el = document.createElement(`h${heading[1].length}`);
+      appendInlineMarkdown(el, heading[2].replace(/\s+#+\s*$/, ""));
+      container.appendChild(el);
+      i++;
+      continue;
+    }
+
+    if (/^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/.test(lines[i])) {
+      container.appendChild(document.createElement("hr"));
+      i++;
+      continue;
+    }
+
+    if (isMarkdownTableStart(lines, i)) {
+      const table = document.createElement("table");
+      const thead = document.createElement("thead");
+      const headerRow = document.createElement("tr");
+      for (const cell of splitMarkdownTableRow(lines[i])) {
+        const th = document.createElement("th");
+        appendInlineMarkdown(th, cell.trim());
+        headerRow.appendChild(th);
+      }
+      thead.appendChild(headerRow);
+      table.appendChild(thead);
+      i += 2;
+      const tbody = document.createElement("tbody");
+      while (i < lines.length && /^\s*\|?.+\|.+\|?\s*$/.test(lines[i])) {
+        const tr = document.createElement("tr");
+        for (const cell of splitMarkdownTableRow(lines[i])) {
+          const td = document.createElement("td");
+          appendInlineMarkdown(td, cell.trim());
+          tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+        i++;
+      }
+      table.appendChild(tbody);
+      container.appendChild(table);
+      continue;
+    }
+
+    if (/^\s{0,3}>\s?/.test(lines[i])) {
+      const quote = document.createElement("blockquote");
+      const quoteLines = [];
+      while (i < lines.length && /^\s{0,3}>\s?/.test(lines[i])) {
+        quoteLines.push(lines[i].replace(/^\s{0,3}>\s?/, ""));
+        i++;
+      }
+      renderMarkdown(quote, quoteLines.join("\n"));
+      container.appendChild(quote);
+      continue;
+    }
+
+    const listKind = markdownListKind(lines[i]);
+    if (listKind) {
+      const list = document.createElement(listKind === "ordered" ? "ol" : "ul");
+      while (i < lines.length && markdownListKind(lines[i]) === listKind) {
+        const itemText = lines[i].replace(/^\s*(?:[-*+]|(?:\d+)[.)])\s+/, "");
+        const li = document.createElement("li");
+        appendMarkdownListItem(li, itemText);
+        list.appendChild(li);
+        i++;
+      }
+      container.appendChild(list);
+      continue;
+    }
+
+    const paragraph = [];
+    while (
+      i < lines.length &&
+      lines[i].trim() &&
+      !/^\s*(```+|~~~+)/.test(lines[i]) &&
+      !/^(#{1,6})\s+/.test(lines[i]) &&
+      !/^\s{0,3}>/.test(lines[i]) &&
+      !markdownListKind(lines[i]) &&
+      !isMarkdownTableStart(lines, i) &&
+      !/^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/.test(lines[i])
+    ) {
+      paragraph.push(lines[i]);
+      i++;
+    }
+    const p = document.createElement("p");
+    appendInlineMarkdown(p, paragraph.join(" "));
+    container.appendChild(p);
+  }
+}
+
+function markdownCodeBlock(code, language) {
+  const wrap = document.createElement("div");
+  wrap.className = "md-code-wrap";
+  const pre = document.createElement("pre");
+  const codeEl = document.createElement("code");
+  const normalized = normalizeMarkdownLanguage(language);
+  codeEl.className = normalized ? `language-${normalized}` : "";
+  codeEl.innerHTML = highlightCode(code, normalized || "text");
+  pre.appendChild(codeEl);
+  const copy = document.createElement("button");
+  copy.type = "button";
+  copy.className = "line-action md-code-copy";
+  copy.textContent = "Copy";
+  copy.title = "Copy code";
+  copy.addEventListener("click", () => void copyLineText(code, copy));
+  wrap.append(pre, copy);
+  return wrap;
+}
+
+function appendMarkdownListItem(parent, text) {
+  const task = text.match(/^\[([ xX])]\s+(.*)$/);
+  if (task) {
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.disabled = true;
+    checkbox.checked = task[1].toLowerCase() === "x";
+    parent.appendChild(checkbox);
+    appendInlineMarkdown(parent, task[2]);
+    return;
+  }
+  appendInlineMarkdown(parent, text);
+}
+
+function appendInlineMarkdown(parent, text) {
+  const value = String(text ?? "");
+  let i = 0;
+  while (i < value.length) {
+    const codeStart = value.indexOf("`", i);
+    const linkStart = value.indexOf("[", i);
+    const strongStart = firstInlineIndex(value, ["**", "__"], i);
+    const emStart = firstInlineIndex(value, ["*", "_"], i);
+    const next = [codeStart, linkStart, strongStart, emStart].filter((n) => n >= 0).sort((a, b) => a - b)[0] ?? -1;
+    if (next < 0) {
+      parent.appendChild(document.createTextNode(value.slice(i)));
+      break;
+    }
+    if (next > i) parent.appendChild(document.createTextNode(value.slice(i, next)));
+
+    if (value[next] === "`") {
+      const end = value.indexOf("`", next + 1);
+      if (end < 0) {
+        parent.appendChild(document.createTextNode(value.slice(next)));
+        break;
+      }
+      const code = document.createElement("code");
+      code.textContent = value.slice(next + 1, end);
+      parent.appendChild(code);
+      i = end + 1;
+      continue;
+    }
+
+    if (value[next] === "[") {
+      const close = value.indexOf("](", next);
+      const end = close >= 0 ? value.indexOf(")", close + 2) : -1;
+      if (close < 0 || end < 0) {
+        parent.appendChild(document.createTextNode(value[next]));
+        i = next + 1;
+        continue;
+      }
+      const href = safeMarkdownHref(value.slice(close + 2, end).trim());
+      if (!href) {
+        parent.appendChild(document.createTextNode(value.slice(next, end + 1)));
+        i = end + 1;
+        continue;
+      }
+      const a = document.createElement("a");
+      a.href = href;
+      a.target = "_blank";
+      a.rel = "noreferrer noopener";
+      appendInlineMarkdown(a, value.slice(next + 1, close));
+      parent.appendChild(a);
+      i = end + 1;
+      continue;
+    }
+
+    const marker = value.startsWith("**", next) || value.startsWith("__", next) ? value.slice(next, next + 2) : value[next];
+    const end = value.indexOf(marker, next + marker.length);
+    if (end < 0) {
+      parent.appendChild(document.createTextNode(marker));
+      i = next + marker.length;
+      continue;
+    }
+    const el = document.createElement(marker.length === 2 ? "strong" : "em");
+    appendInlineMarkdown(el, value.slice(next + marker.length, end));
+    parent.appendChild(el);
+    i = end + marker.length;
+  }
+}
+
+function firstInlineIndex(value, markers, from) {
+  return markers
+    .map((marker) => value.indexOf(marker, from))
+    .filter((index) => index >= 0)
+    .sort((a, b) => a - b)[0] ?? -1;
+}
+
+function markdownListKind(lineText) {
+  if (/^\s*(?:\d+)[.)]\s+/.test(lineText)) return "ordered";
+  if (/^\s*[-*+]\s+/.test(lineText)) return "unordered";
+  return "";
+}
+
+function isMarkdownTableStart(lines, index) {
+  if (index + 1 >= lines.length) return false;
+  return /^\s*\|?.+\|.+\|?\s*$/.test(lines[index]) &&
+    /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(lines[index + 1]);
+}
+
+function splitMarkdownTableRow(lineText) {
+  return lineText.trim().replace(/^\|/, "").replace(/\|$/, "").split("|");
+}
+
+function normalizeMarkdownLanguage(language) {
+  const lang = String(language ?? "").trim().toLowerCase();
+  if (lang === "js" || lang === "javascript" || lang === "mjs" || lang === "cjs") return "javascript";
+  if (lang === "ts" || lang === "typescript" || lang === "tsx") return "typescript";
+  if (lang === "sh" || lang === "bash" || lang === "zsh" || lang === "shell") return "shell";
+  if (lang === "md" || lang === "markdown") return "markdown";
+  if (lang === "yml" || lang === "yaml") return "yaml";
+  if (["json", "html", "css"].includes(lang)) return lang;
+  return "";
+}
+
+function safeMarkdownHref(href) {
+  const value = String(href ?? "").trim();
+  if (/^(https?:|mailto:)/i.test(value)) return value;
+  if (/^(#|\/(?!\/)|\.\/|\.\.\/)/.test(value)) return value;
+  return "";
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function html(node) {
   const output = activeOutput();
   output.appendChild(node);
   output.scrollTop = output.scrollHeight;
+}
+
+function startAgentProgress() {
+  const output = activeOutput();
+  const row = document.createElement("div");
+  row.className = "line ai-progress";
+  row.setAttribute("role", "status");
+  row.setAttribute("aria-live", "polite");
+
+  const head = document.createElement("span");
+  head.className = "ai-progress-head";
+  head.textContent = "Asking Claude";
+
+  const dots = document.createElement("span");
+  dots.className = "ai-progress-dots";
+  dots.setAttribute("aria-hidden", "true");
+  dots.textContent = "...";
+
+  const detail = document.createElement("span");
+  detail.className = "ai-progress-detail";
+  detail.textContent = AGENT_PROGRESS_STEPS[0];
+
+  const meter = document.createElement("span");
+  meter.className = "ai-progress-meter";
+  meter.setAttribute("aria-hidden", "true");
+  const fill = document.createElement("span");
+  meter.appendChild(fill);
+
+  row.append(head, dots, detail, meter);
+  output.appendChild(row);
+  output.scrollTop = output.scrollHeight;
+
+  let step = 0;
+  const timer = window.setInterval(() => {
+    step = (step + 1) % AGENT_PROGRESS_STEPS.length;
+    detail.textContent = AGENT_PROGRESS_STEPS[step];
+    output.scrollTop = output.scrollHeight;
+  }, 1400);
+
+  return {
+    stop() {
+      window.clearInterval(timer);
+      row.remove();
+    },
+  };
 }
 
 function terminalLines(output = activeOutput()) {
@@ -3482,7 +3878,8 @@ async function postSse(path, body, onEvent) {
 async function runIdel(command) {
   line("idel> " + command, "cmd");
   await postSse("/api/run/stream", { command, dryRun: false }, (event, data) => {
-    if (event === "outcome") renderOutcome(data);
+    if (event === "text" && data.text?.trim()) markdownLine(data.text.replace(/\n+$/, ""), "text");
+    else if (event === "outcome") renderOutcome(data);
     else if (event === "batch_start") line(`batch: ${data.commands?.length ?? 0} step(s)`, "muted");
     else if (event === "batch_step") line(`batch ${data.index}/${data.total}> ${data.command}`, "muted");
     else if (event === "batch_stop") {
@@ -4395,44 +4792,71 @@ async function runAsk(intent, displayLine) {
   }
   line(displayLine ?? "? " + intent, displayLine ? "cmd" : "ask");
   let sawAgent = false;
+  const progress = startAgentProgress();
+  let progressVisible = true;
+  const finishProgress = () => {
+    if (!progressVisible) return;
+    progressVisible = false;
+    progress.stop();
+  };
   // allowReal:true lets the agent request a REAL run — but each one still pauses
   // here for an explicit human click (the server parks until we POST /approve).
-  await postSse("/api/agent/stream", { intent, allowReal: true }, (event, data) => {
+  try {
+    await postSse("/api/agent/stream", { intent, allowReal: true }, (event, data) => {
+      sawAgent = true;
+      switch (event) {
+        case "text":
+          if (data.text?.trim()) {
+            finishProgress();
+            markdownLine(data.text.replace(/\n+$/, ""), "text");
+          }
+          break;
+        case "proposed":
+          finishProgress();
+          line(data.dryRun ? "↳ proposed (dry-run): " + data.command : "↳ ran: " + data.command, "muted");
+          renderOutcome(data.outcome);
+          break;
+        case "blocked":
+          finishProgress();
+          line("↳ BLOCKED: " + data.command, "err");
+          renderOutcome(data.outcome);
+          break;
+        case "approval_request":
+          finishProgress();
+          // The agent is parked server-side awaiting our decision. Show the
+          // dry-run and Approve/Decline buttons; clicking POSTs the decision and
+          // the same SSE stream resumes with the real outcome (or the dry-run
+          // standing). No second connection, no key in the browser.
+          renderApprovalPrompt(data);
+          break;
+        case "needs_approval":
+          finishProgress();
+          line("↳ declined: " + data.command + " (dry-run result stands)", "muted");
+          break;
+        case "tool_error":
+          finishProgress();
+          line(`↳ tool error (${data.tool}): ${data.message}`, "err");
+          break;
+        case "error":
+          finishProgress();
+          if (String(data.error ?? "").includes("agent not configured")) {
+            setAgentAvailability(false);
+            openClaudeSetupDialog({ switchToAsk: true, message: data.error });
+          }
+          line("Agent error: " + (data.error ?? "unknown"), "err");
+          break;
+        case "done":
+          finishProgress();
+          break;
+      }
+    });
+  } catch (err) {
+    finishProgress();
     sawAgent = true;
-    switch (event) {
-      case "text":
-        if (data.text?.trim()) line(data.text.replace(/\n+$/, ""), "text");
-        break;
-      case "proposed":
-        line(data.dryRun ? "↳ proposed (dry-run): " + data.command : "↳ ran: " + data.command, "muted");
-        renderOutcome(data.outcome);
-        break;
-      case "blocked":
-        line("↳ BLOCKED: " + data.command, "err");
-        renderOutcome(data.outcome);
-        break;
-      case "approval_request":
-        // The agent is parked server-side awaiting our decision. Show the
-        // dry-run and Approve/Decline buttons; clicking POSTs the decision and
-        // the same SSE stream resumes with the real outcome (or the dry-run
-        // standing). No second connection, no key in the browser.
-        renderApprovalPrompt(data);
-        break;
-      case "needs_approval":
-        line("↳ declined: " + data.command + " (dry-run result stands)", "muted");
-        break;
-      case "tool_error":
-        line(`↳ tool error (${data.tool}): ${data.message}`, "err");
-        break;
-      case "error":
-        if (String(data.error ?? "").includes("agent not configured")) {
-          setAgentAvailability(false);
-          openClaudeSetupDialog({ switchToAsk: true, message: data.error });
-        }
-        line("Agent error: " + (data.error ?? "unknown"), "err");
-        break;
-    }
-  });
+    line("Agent error: " + (err instanceof Error ? err.message : "request failed"), "err");
+  } finally {
+    finishProgress();
+  }
   if (!sawAgent) {
     line(
       "(no response — install Claude Code + run `claude login`, or set ANTHROPIC_API_KEY on the server)",
@@ -4482,15 +4906,17 @@ function renderApprovalPrompt(data) {
 }
 
 // ---------------------------------------------------------------------------
-// Completion (IDEL mode only)
+// Completion
 // ---------------------------------------------------------------------------
 
 let completeTimer;
 const COMPLETION_LIMIT = 30;
 async function updateCompletions() {
-  if (mode !== "idel" || activeTab()?.type !== "terminal") return hideCompletions();
-  const value = currentInputSegment().value;
-  if (!value.trim()) return hideCompletions();
+  if (activeTab()?.type !== "terminal") return hideCompletions();
+  const context = currentCompletionContext();
+  if (!context) return hideCompletions();
+  const value = context.value;
+  if (!value.trim() && !context.allowEmpty) return hideCompletions();
   clearTimeout(completeTimer);
   completeTimer = setTimeout(async () => {
     try {
@@ -4566,23 +4992,48 @@ function hideCompletions() {
 
 function applyCompletion(c) {
   // The server returns whole-token suggestions; replace the last token.
-  const segment = currentInputSegment();
-  const value = segment.value;
+  const context = currentCompletionContext();
+  if (!context) return hideCompletions();
+  const segment = context.segment;
+  const value = context.value;
   const bounds = lastTokenBounds(value);
   const replacement =
     value.slice(0, bounds.start) +
     c +
     value.slice(bounds.end) +
     completionSuffix(c, value, bounds);
+  const commandStart = segment.start + context.prefix.length;
   input.value =
-    input.value.slice(0, segment.start) +
+    input.value.slice(0, commandStart) +
     replacement +
     input.value.slice(segment.end);
-  const cursor = segment.start + replacement.length;
+  const cursor = commandStart + replacement.length;
   input.setSelectionRange?.(cursor, cursor);
   hideCompletions();
   resizeCommandInput();
   input.focus();
+}
+
+function currentCompletionContext() {
+  const segment = currentInputSegment();
+  if (mode === "idel") return { segment, prefix: "", value: segment.value, allowEmpty: false };
+  if (mode !== "ask") return null;
+  const prefixed = idelPromptSegment(segment);
+  if (!prefixed) return null;
+  return { ...prefixed, allowEmpty: true };
+}
+
+function idelPromptSegment(segment) {
+  const match = segment.value.match(/^(\s*idel>\s*)/i);
+  if (!match) return null;
+  const prefix = match[1];
+  return { segment, prefix, value: segment.value.slice(prefix.length) };
+}
+
+function idelPromptCommandValue(value) {
+  const match = String(value ?? "").match(/^\s*idel>\s*/i);
+  if (!match) return null;
+  return String(value ?? "").slice(match[0].length).trim();
 }
 
 function completionSuffix(c, value, bounds) {
@@ -4715,12 +5166,17 @@ function scheduleRiskPreview() {
     setRiskIndicator("empty", "direct", "Native shell input is direct and is not risk-scanned per command.");
     return;
   }
+  let commandValue = currentInputSegment().value;
   if (mode !== "idel") {
-    setRiskIndicator("empty", "agent", "Ask Claude proposals are risk-scanned before the runtime runs them.");
-    return;
+    const prefixed = mode === "ask" ? idelPromptSegment(currentInputSegment()) : null;
+    if (!prefixed) {
+      setRiskIndicator("empty", "agent", "Ask Claude proposals are risk-scanned before the runtime runs them.");
+      return;
+    }
+    commandValue = prefixed.value;
   }
 
-  const command = currentInputSegment().value.trim();
+  const command = commandValue.trim();
   if (!command) {
     setRiskIndicator("empty", "risk", "Command risk preview");
     return;
@@ -4876,7 +5332,7 @@ function syncInputPlaceholder() {
   }
   input.placeholder =
     mode === "ask"
-      ? compact ? "ask what to do" : "describe what you want — e.g. delete the dist folder"
+      ? compact ? "ask, or idel>" : "describe what you want, or type idel> for command autocomplete"
       : multilineBatch
         ? compact ? "batch lines (Ctrl+Enter)" : "one command per line   (Ctrl+Enter to run, Tab completes current line)"
         : compact ? "command (Tab, ↑/↓)" : "verb.scope param=value   (Tab to complete, ↑/↓ history)";
@@ -5113,24 +5569,34 @@ async function submitCommandInputAsync() {
   commandBusy = true;
   syncCommandArea();
   try {
-    if (mode === "ask") await runAsk(value);
-    else if (multilineBatch && multilineCommands(value).length > 1) await runMultilineBatch(value);
-    else if (isSingleLocalClearCommand(value)) clearTerminalLines(value);
-    else if (isWorkflowCommand(value)) await handleWorkflowCommand(value);
-    else if (isBatchLine(value)) await runIdel(value);
-    else if (parseLearnCommand(value)) await runLearnCommand(value);
-    else if (isAskAiCommand(value)) {
-      const intent = askAiIntent(value);
-      if (intent) await runAsk(intent, "idel> " + value);
-      else line('Usage: ask.ai prompt="what you want to do"', "err");
+    if (mode === "ask") {
+      const idelCommand = idelPromptCommandValue(value);
+      if (idelCommand === null) await runAsk(value);
+      else if (idelCommand) await runIdelInput(idelCommand);
+      else line("Usage: idel> verb.scope param=value", "err");
+    } else {
+      await runIdelInput(value);
     }
-    else if (isEditorCommand(value)) await runEditorCommand(value);
-    else await runIdel(value);
   } finally {
     commandBusy = false;
     syncCommandArea();
     focusActiveInput();
   }
+}
+
+async function runIdelInput(value) {
+  if (multilineBatch && multilineCommands(value).length > 1) await runMultilineBatch(value);
+  else if (isSingleLocalClearCommand(value)) clearTerminalLines(value);
+  else if (isWorkflowCommand(value)) await handleWorkflowCommand(value);
+  else if (isBatchLine(value)) await runIdel(value);
+  else if (parseLearnCommand(value)) await runLearnCommand(value);
+  else if (isAskAiCommand(value)) {
+    const intent = askAiIntent(value);
+    if (intent) await runAsk(intent, "idel> " + value);
+    else line('Usage: ask.ai prompt="what you want to do"', "err");
+  }
+  else if (isEditorCommand(value)) await runEditorCommand(value);
+  else await runIdel(value);
 }
 
 // ---------------------------------------------------------------------------

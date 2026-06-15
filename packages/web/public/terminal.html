@@ -15,55 +15,71 @@
         <button class="mode-btn active" id="mode-idel" title="Type IDEL commands">IDEL</button>
         <button class="mode-btn" id="mode-ask" title="Ask Claude in natural language">Ask Claude</button>
       </span>
-      <details class="header-menu appearance-menu">
-        <summary class="term-tool-btn color-summary" title="Terminal appearance">
-          <span class="selected-palette-swatch palette-cyan" id="palette-selected-swatch" aria-hidden="true"></span>
-          <span id="palette-selected">Cyan</span>
-        </summary>
-        <div class="header-menu-panel appearance-panel">
-          <section>
-            <span class="header-menu-label">Theme</span>
-            <span class="theme-toggle" role="group" aria-label="Theme">
-              <button class="theme-btn active" type="button" data-theme="dark" title="Dark theme">Dark</button>
-              <button class="theme-btn" type="button" data-theme="light" title="Light theme">Light</button>
-            </span>
-          </section>
-          <section>
-            <span class="header-menu-label">Accent</span>
-            <span class="palette-controls" role="group" aria-label="Accent palette">
-              <button class="palette-btn palette-cyan active" type="button" data-palette="cyan" title="Cyan palette" aria-label="Cyan palette"></button>
-              <button class="palette-btn palette-blue" type="button" data-palette="blue" title="Blue palette" aria-label="Blue palette"></button>
-              <button class="palette-btn palette-sky" type="button" data-palette="sky" title="Sky palette" aria-label="Sky palette"></button>
-              <button class="palette-btn palette-teal" type="button" data-palette="teal" title="Teal palette" aria-label="Teal palette"></button>
-              <button class="palette-btn palette-mint" type="button" data-palette="mint" title="Mint palette" aria-label="Mint palette"></button>
-              <button class="palette-btn palette-green" type="button" data-palette="green" title="Green palette" aria-label="Green palette"></button>
-              <button class="palette-btn palette-lime" type="button" data-palette="lime" title="Lime palette" aria-label="Lime palette"></button>
-              <button class="palette-btn palette-amber" type="button" data-palette="amber" title="Amber palette" aria-label="Amber palette"></button>
-              <button class="palette-btn palette-orange" type="button" data-palette="orange" title="Orange palette" aria-label="Orange palette"></button>
-              <button class="palette-btn palette-rose" type="button" data-palette="rose" title="Rose palette" aria-label="Rose palette"></button>
-              <button class="palette-btn palette-red" type="button" data-palette="red" title="Red palette" aria-label="Red palette"></button>
-              <button class="palette-btn palette-fuchsia" type="button" data-palette="fuchsia" title="Fuchsia palette" aria-label="Fuchsia palette"></button>
-              <button class="palette-btn palette-violet" type="button" data-palette="violet" title="Violet palette" aria-label="Violet palette"></button>
-              <button class="palette-btn palette-indigo" type="button" data-palette="indigo" title="Indigo palette" aria-label="Indigo palette"></button>
-              <button class="palette-btn palette-slate" type="button" data-palette="slate" title="Slate palette" aria-label="Slate palette"></button>
-              <button class="palette-btn palette-stone" type="button" data-palette="stone" title="Stone palette" aria-label="Stone palette"></button>
-            </span>
-          </section>
-        </div>
-      </details>
-      <details class="header-menu actions-menu">
-        <summary class="term-tool-btn" title="Open menu">Menu</summary>
-        <div class="header-menu-panel actions-panel">
-          <button class="term-tool-btn" id="palette-open" type="button" title="Open command palette">Palette</button>
-          <button class="term-tool-btn" id="workflow-open" type="button" title="Open saved workflows">Workflows</button>
-          <button class="term-tool-btn" id="native-sessions-open" type="button" title="Manage native shell sessions">Shells</button>
-          <button class="term-tool-btn" id="dictionary-open" type="button" title="Open command dictionary">Dictionary</button>
-          <button class="term-tool-btn" id="knowledge-open" type="button" title="Open command knowledge base">Knowledge</button>
-          <button class="term-tool-btn" id="setup-open" type="button" title="Open setup checklist">Setup</button>
-          <button class="term-tool-btn" id="preferences-open" type="button" title="Preferences">Preferences</button>
-        </div>
-      </details>
+      <button
+        class="term-tool-btn header-menu-trigger color-summary"
+        id="appearance-menu-open"
+        type="button"
+        title="Terminal appearance"
+        aria-haspopup="dialog"
+        aria-controls="appearance-menu-dialog"
+      >
+        <span class="selected-palette-swatch palette-cyan" id="palette-selected-swatch" aria-hidden="true"></span>
+        <span id="palette-selected">Cyan</span>
+      </button>
+      <button
+        class="term-tool-btn header-menu-trigger"
+        id="actions-menu-open"
+        type="button"
+        title="Open menu"
+        aria-haspopup="dialog"
+        aria-controls="actions-menu-dialog"
+      >Menu</button>
     </header>
+
+    <dialog class="header-menu-dialog appearance-menu-dialog" id="appearance-menu-dialog" aria-label="Terminal appearance">
+      <div class="header-menu-panel appearance-panel">
+        <section>
+          <span class="header-menu-label">Theme</span>
+          <span class="theme-toggle" role="group" aria-label="Theme">
+            <button class="theme-btn active" type="button" data-theme="dark" title="Dark theme">Dark</button>
+            <button class="theme-btn" type="button" data-theme="light" title="Light theme">Light</button>
+          </span>
+        </section>
+        <section>
+          <span class="header-menu-label">Accent</span>
+          <span class="palette-controls" role="group" aria-label="Accent palette">
+            <button class="palette-btn palette-cyan active" type="button" data-palette="cyan" title="Cyan palette" aria-label="Cyan palette"></button>
+            <button class="palette-btn palette-blue" type="button" data-palette="blue" title="Blue palette" aria-label="Blue palette"></button>
+            <button class="palette-btn palette-sky" type="button" data-palette="sky" title="Sky palette" aria-label="Sky palette"></button>
+            <button class="palette-btn palette-teal" type="button" data-palette="teal" title="Teal palette" aria-label="Teal palette"></button>
+            <button class="palette-btn palette-mint" type="button" data-palette="mint" title="Mint palette" aria-label="Mint palette"></button>
+            <button class="palette-btn palette-green" type="button" data-palette="green" title="Green palette" aria-label="Green palette"></button>
+            <button class="palette-btn palette-lime" type="button" data-palette="lime" title="Lime palette" aria-label="Lime palette"></button>
+            <button class="palette-btn palette-amber" type="button" data-palette="amber" title="Amber palette" aria-label="Amber palette"></button>
+            <button class="palette-btn palette-orange" type="button" data-palette="orange" title="Orange palette" aria-label="Orange palette"></button>
+            <button class="palette-btn palette-rose" type="button" data-palette="rose" title="Rose palette" aria-label="Rose palette"></button>
+            <button class="palette-btn palette-red" type="button" data-palette="red" title="Red palette" aria-label="Red palette"></button>
+            <button class="palette-btn palette-fuchsia" type="button" data-palette="fuchsia" title="Fuchsia palette" aria-label="Fuchsia palette"></button>
+            <button class="palette-btn palette-violet" type="button" data-palette="violet" title="Violet palette" aria-label="Violet palette"></button>
+            <button class="palette-btn palette-indigo" type="button" data-palette="indigo" title="Indigo palette" aria-label="Indigo palette"></button>
+            <button class="palette-btn palette-slate" type="button" data-palette="slate" title="Slate palette" aria-label="Slate palette"></button>
+            <button class="palette-btn palette-stone" type="button" data-palette="stone" title="Stone palette" aria-label="Stone palette"></button>
+          </span>
+        </section>
+      </div>
+    </dialog>
+
+    <dialog class="header-menu-dialog actions-menu-dialog" id="actions-menu-dialog" aria-label="Menu">
+      <div class="header-menu-panel actions-panel">
+        <button class="term-tool-btn" id="palette-open" type="button" title="Open command palette">Palette</button>
+        <button class="term-tool-btn" id="workflow-open" type="button" title="Open saved workflows">Workflows</button>
+        <button class="term-tool-btn" id="native-sessions-open" type="button" title="Manage native shell sessions">Shells</button>
+        <button class="term-tool-btn" id="dictionary-open" type="button" title="Open command dictionary">Dictionary</button>
+        <button class="term-tool-btn" id="knowledge-open" type="button" title="Open command knowledge base">Knowledge</button>
+        <button class="term-tool-btn" id="setup-open" type="button" title="Open setup checklist">Setup</button>
+        <button class="term-tool-btn" id="preferences-open" type="button" title="Preferences">Preferences</button>
+      </div>
+    </dialog>
 
     <main class="term-main">
       <div class="workspace-tabs" id="tabs" role="tablist" aria-label="Workspace tabs">
@@ -184,9 +200,7 @@
             <button class="theme-btn" type="button" data-effect="matrix" title="Matrix rain effect">Matrix</button>
             <button class="theme-btn" type="button" data-effect="scanlines" title="CRT scanlines effect">Scanlines</button>
             <button class="theme-btn" type="button" data-effect="glow" title="Soft terminal glow effect">Glow</button>
-            <button class="theme-btn" type="button" data-effect="grid" title="Animated grid effect">Grid</button>
             <button class="theme-btn" type="button" data-effect="pulse" title="Terminal pulse effect">Pulse</button>
-            <button class="theme-btn" type="button" data-effect="static" title="Subtle signal static effect">Static</button>
           </span>
         </section>
 
