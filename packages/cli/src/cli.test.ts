@@ -103,12 +103,14 @@ describe("parseArgv", () => {
       "--static",
       "./www",
       "--open",
+      "--enable-native-terminal",
     ]);
     expect(inv.mode).toBe("serve");
     expect(inv.flags.port).toBe(9090);
     expect(inv.flags.host).toBe("0.0.0.0");
     expect(inv.flags.staticDir).toBe("./www");
     expect(inv.flags.open).toBe(true);
+    expect(inv.flags.enableNativeTerminal).toBe(true);
   });
 
   it("rejects an invalid --port", () => {

@@ -220,36 +220,38 @@ export class Runtime {
     }
     const typedAst: CommandAst = { ...ast, params: coerced.params };
 
-    // 3) Safety — AST phase (cheap, string-level).
-    const astRisk = assessAst(typedAst, resolved.def);
+    // 3) Safety — assess the winning definition, plus the core definition when
+    //    this command shadows a core command. Registry resolution is custom-first
+    //    for behavior, but safety floors are core-first and non-overridable.
+    const coreDef = this.registry.coreDef(ast.command);
+    const safetyDefs = coreDef && coreDef !== resolved.def
+      ? [resolved.def, coreDef]
+      : [resolved.def];
+    const assessments: RiskAssessment[] = [];
 
-    // 4) Safety — resolved phase (real fs paths) for anything that can touch
-    //    the filesystem destructively. We always run it for destructive defs;
-    //    for non-destructive defs we still run it when a target param exists so
-    //    symlink/escape cases are caught, but failures there are non-fatal.
-    //
-    //    Short-circuit: if the AST phase is already CRITICAL, skip the resolved
-    //    pass entirely. CRITICAL is terminal (the resolved phase can only
-    //    escalate, and there is nothing above CRITICAL), and skipping avoids the
-    //    affected-path walk — we must NOT walk `/` just to estimate a count for a
-    //    command we are about to block. The block decision must not depend on a
-    //    filesystem traversal of the very target we refuse to touch.
-    let resolvedRisk: RiskAssessment | undefined;
-    if (astRisk.level !== "CRITICAL") {
-      try {
-        resolvedRisk = await assessResolved(typedAst, resolved.def);
-      } catch {
-        // The resolved pass best-effort. If the path can't be stat'd (e.g. it
-        // doesn't exist yet for a create), we fall back to the AST assessment.
-        resolvedRisk = undefined;
+    for (const def of safetyDefs) {
+      const astRisk = assessAst(typedAst, def);
+      assessments.push(astRisk);
+
+      // 4) Safety — resolved phase (real fs paths). Short-circuit each def at
+      //    CRITICAL so we never walk a target that is already terminally blocked.
+      if (astRisk.level !== "CRITICAL") {
+        try {
+          assessments.push(await assessResolved(typedAst, def));
+        } catch {
+          // The resolved pass is best-effort. If the path can't be stat'd (e.g.
+          // it doesn't exist yet for a create), fall back to AST classification.
+        }
       }
     }
 
-    let effectiveRisk: RiskLevel = resolvedRisk
-      ? maxRisk(astRisk, resolvedRisk)
-      : astRisk.level;
-    const findings = mergeFindings(astRisk, resolvedRisk);
-    const affected = resolvedRisk?.affectedPathsEstimate;
+    let effectiveRisk: RiskLevel = maxRisk(...assessments);
+    const findings = mergeFindings(...assessments);
+    const affected = maxAffectedEstimate(assessments);
+    const assessmentForBytes = assessmentWithBytes(assessments);
+    const requiresAffectedEstimate = safetyDefs.some(
+      (def) => def.safety?.requiresAffectedPathEstimate === true,
+    );
 
     // 4b) Enforce requiresAffectedPathEstimate (fail-closed). A command that
     //     declares it needs a blast-radius estimate but for which we could not
@@ -259,7 +261,7 @@ export class Runtime {
     //     gets to gate it (warn/dry-run/approval/block per its rules). The CRITICAL
     //     short-circuit above already handles the worst case, so we never lower it.
     if (
-      resolved.def.safety?.requiresAffectedPathEstimate === true &&
+      requiresAffectedEstimate &&
       affected === undefined &&
       effectiveRisk !== "CRITICAL"
     ) {
@@ -294,7 +296,7 @@ export class Runtime {
     return this.enforceAndExecute({
       ast: typedAst,
       ctx,
-      risk: { level: effectiveRisk, findings, affected, assessment: resolvedRisk ?? astRisk },
+      risk: { level: effectiveRisk, findings, affected, assessment: assessmentForBytes },
       decision,
       adapter,
       plan,
@@ -658,18 +660,38 @@ export class Runtime {
 // ---------------------------------------------------------------------------
 
 function mergeFindings(
-  astRisk: RiskAssessment,
-  resolvedRisk: RiskAssessment | undefined,
+  ...assessments: (RiskAssessment | undefined)[]
 ): RiskFinding[] {
   const seen = new Set<string>();
   const out: RiskFinding[] = [];
-  for (const f of [...astRisk.findings, ...(resolvedRisk?.findings ?? [])]) {
-    const key = `${f.code}:${f.message}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(f);
+  for (const assessment of assessments) {
+    if (!assessment) continue;
+    for (const f of assessment.findings) {
+      const key = `${f.code}:${f.message}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(f);
+    }
   }
   return out;
+}
+
+function maxAffectedEstimate(assessments: readonly RiskAssessment[]): number | undefined {
+  let max: number | undefined;
+  for (const assessment of assessments) {
+    const estimate = assessment.affectedPathsEstimate;
+    if (estimate === undefined) continue;
+    max = max === undefined ? estimate : Math.max(max, estimate);
+  }
+  return max;
+}
+
+function assessmentWithBytes(assessments: readonly RiskAssessment[]): RiskAssessment | undefined {
+  for (let i = assessments.length - 1; i >= 0; i -= 1) {
+    const assessment = assessments[i];
+    if (assessment?.affectedBytesEstimate !== undefined) return assessment;
+  }
+  return assessments[assessments.length - 1];
 }
 
 /** Flatten a native AST into the minimal loggable shape the pipeline expects. */

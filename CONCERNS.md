@@ -88,14 +88,15 @@ is ever required.)
 
 `~/.idel/keys/openlogs.key.json` is generated on first use, `0600`. There is:
 - **no rotation** (one key forever),
-- **no trust registry** (the writer signs with its own key; `verify()` checks
-  integrity + signature presence, but full *trust* verification — actor binding
-  to a known key — is not wired into `list.logs` / `show.logs` yet), and
+- **only local trust pinning** (`verify()` now requires signatures, `kid`,
+  actor binding, and the generated local trusted key; there is still no team/CI
+  trust registry or out-of-band key distribution), and
 - **no protection** beyond file permissions (no OS keychain / HSM).
 
 This is fine for the local V1 story but is the seam where the team/CI story (a
-managed `KeyRegistry`, signed policies) will need real design. The SDK supports
-`trustedKeys` / `KeyRegistry`; we just don't use them yet.
+managed `KeyRegistry`, signed policies, key rotation, and published public-key
+pins) will need real design. The SDK supports those pieces; the current writer
+uses only the local pinned key.
 
 ## 6. TPS records use a placeholder location (`L:-`)
 
@@ -144,10 +145,9 @@ over-flagging, so no change:
 - **Windows/UNC normalization** — `paths.ts` now resolves Windows-rooted targets
   with `path.win32` semantics regardless of host, strips `\\?\`/`\\.\` prefixes, and
   trims NTFS trailing dots/spaces, so `C:\`, `\\?\C:\`, UNC shares, and drive-relative
-  `C:foo` are classified instead of joined under cwd. (Caveat: the IDEL parser treats
-  an unquoted `\` as a shell escape, so Windows paths must be **quoted** —
-  `name="C:\Windows"` — to reach the classifier with backslashes intact; the server
-  API and GUI pass quoted strings, so this is covered there.)
+  `C:foo` are classified instead of joined under cwd. Quoted Windows paths are still
+  the recommended human CLI form (`name="C:\Windows"`), but the parser preserves
+  quoted backslashes and the server/API path passes them through directly.
 - **Glob blast-radius** — a wildcard target walks its static prefix for a lower-bound
   `affectedPathsEstimate` (`glob-estimate`) or emits `glob-unbounded`.
 - **`requiresAffectedPathEstimate` enforcement** — the formerly-dead flag now fails
@@ -224,19 +224,26 @@ adapter argv, e.g. `remove.file … force=true` → `rm -f x`; the `@node` adapt
 uses its `describe`). `idel terminal` classifies a command as a dry run first to
 build the preview, then: blocks stay blocked; `require_dry_run` (the HIGH
 default) is shown as dry-run-only and never silently promoted; allow/
-approval_required sensitive commands are previewed and held for a y/N confirm
-before a real run. Also fixed a pre-existing REPL hazard the preview exposed: the
+approval_required commands are previewed before any real run. `approval_required`
+uses the runtime's interactive approval prompt in `idel terminal`, while
+non-policy-sensitive commands use a single y/N confirm. Also fixed a pre-existing
+REPL hazard the preview exposed: the
 readline `line` handler now drains a queue serially (so a confirm answer can't
 race the in-flight command) and distinguishes `exit` from stdin-EOF (so piped
 input fully drains and no `ERR_USE_AFTER_CLOSE` fires). The web terminal shows
 the same "translates to" line.
+
+Done: **Native terminal lifecycle audit** — raw web `sh` tabs remain direct shell
+sessions and are not parsed command-by-command, but enabling them now requires
+`--enable-native-terminal` and writes signed OpenLogs lifecycle records for
+`native.terminal.start`, `native.terminal.close`, `native.terminal.signal`, and
+`native.terminal.exit`. Raw stdin is intentionally not logged because it can
+contain passwords, prompts, and terminal control streams.
 
 Deferred (next):
 - **Phase 3 (rest)** — promote a learned draft to the `official` layer behind
   review/signing; let `idel learn` propose `powershell` adapters too.
 - Multi-turn web conversations (today each `ask` is a fresh turn); persisting the
   agent message history across SSE connections behind the approval coordinator.
-- Wire the runtime's `onApproval` to an interactive prompt in `idel terminal` so
-  `approval_required` commands prompt in the REPL (today they fall to `--yes`).
 - Stream the CLI provider's tokens live (`stream-json`) instead of awaiting the
   full `claude -p` result, for snappier REPL/web output.

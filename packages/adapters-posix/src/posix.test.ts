@@ -115,6 +115,15 @@ describe("renderArgv", () => {
     expect(argv.every((a) => a.length > 0)).toBe(true);
   });
 
+  it("can insert an end-of-options marker before the first positional value", () => {
+    const argv = renderArgv(
+      removeFolderSpec,
+      { recursive: true, force: true, path: "--preserve-root=all" },
+      { endOfOptionsBeforeValues: true },
+    );
+    expect(argv).toEqual(["-r", "-f", "--", "--preserve-root=all"]);
+  });
+
   it("renders remove.folder without flags as just [dist] (no empty strings)", () => {
     const argv = renderArgv(removeFolderSpec, {
       recursive: false,
@@ -180,6 +189,20 @@ describe("PosixAdapter", () => {
     expect(plan.command).toBe("rm");
     expect(plan.argv).toEqual(["-r", "-f", "dist"]);
     expect(plan.describe).toBe("rm -r -f dist");
+  });
+
+  it("plan() inserts -- for destructive POSIX targets that start with dashes", () => {
+    const d = resolved({
+      ...def("remove.folder", { posix: removeFolderSpec }),
+      riskDefault: "HIGH",
+      safety: { destructive: true, targetParam: "path" },
+    });
+    const plan = adapter.plan(
+      d,
+      ast("remove.folder", { recursive: true, force: true, path: "--preserve-root=all" }, "/tmp"),
+    );
+    expect(plan.argv).toEqual(["-r", "-f", "--", "--preserve-root=all"]);
+    expect(plan.describe).toBe("rm -r -f -- --preserve-root=all");
   });
 
   it("execute() dryRun returns a simulated result and does NOT spawn", async () => {

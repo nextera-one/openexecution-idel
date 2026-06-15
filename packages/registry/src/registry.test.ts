@@ -301,6 +301,39 @@ describe("resolve — custom > official > core", () => {
     expect(reg.has("list.demo.items")).toBe(true);
     expect(reg.has("create.file")).toBe(true);
   });
+
+  it("validates in-memory addLayer defs fail-closed", () => {
+    const reg = new Registry();
+    expect(() =>
+      reg.addLayer("custom", [
+        def("show.demo.status", "custom", "1.0.0"),
+        { ...def("bad.demo.command", "custom", "1.0.0"), riskDefault: "SUPER" as never },
+      ]),
+    ).toThrow(RegistryError);
+    expect(reg.has("show.demo.status")).toBe(false);
+    expect(reg.has("bad.demo.command")).toBe(false);
+  });
+
+  it("validates in-memory replaceLayer defs before clearing the old layer", () => {
+    const reg = new Registry();
+    reg.addLayer("custom", [def("show.demo.status", "custom", "1.0.0")]);
+    expect(() =>
+      reg.replaceLayer("custom", [
+        { ...def("bad.demo.command", "custom", "1.0.0"), adapters: {} },
+      ]),
+    ).toThrow(RegistryError);
+    expect(reg.has("show.demo.status")).toBe(true);
+    expect(reg.has("bad.demo.command")).toBe(false);
+  });
+
+  it("can return the core def even when custom shadows it", () => {
+    const reg = new Registry();
+    reg.addLayer("core", [def("read.file", "core", "1.0.0")]);
+    reg.addLayer("custom", [def("read.file", "custom", "2.0.0")]);
+    expect(reg.resolve("read.file")?.source).toBe("custom");
+    expect(reg.coreDef("read.file")?.version).toBe("1.0.0");
+    expect(reg.layerDef("custom", "read.file")?.version).toBe("2.0.0");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -341,6 +374,20 @@ describe("coerceParams", () => {
     expect(coerceParams(numDef, { limit: "50" }, {}).params.limit).toBe(50);
     const bad = coerceParams(numDef, { limit: "abc" }, {});
     expect(bad.errors.join("")).toMatch(/number/);
+  });
+
+  it("rejects partial numeric strings", () => {
+    const numDef: CommandDef = {
+      id: "list.logs",
+      version: "1.0.0",
+      summary: "x",
+      category: "meta",
+      riskDefault: "LOW",
+      params: { limit: { type: "number", default: 20 } },
+      adapters: {},
+    };
+    expect(coerceParams(numDef, { limit: "10abc" }, {}).errors.join("")).toMatch(/number/);
+    expect(coerceParams(numDef, { limit: "" }, {}).errors.join("")).toMatch(/number/);
   });
 
   it("validates octal mode and keeps it a string", () => {

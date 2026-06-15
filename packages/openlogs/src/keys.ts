@@ -83,8 +83,19 @@ export async function loadOrCreateKeypair(
   const kid = `key:openlogs:${publicKeyHex.slice(0, 16)}`;
   const stored: StoredKeypair = { kid, publicKeyHex, privateKeyHex };
 
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, JSON.stringify(stored, null, 2) + "\n", "utf8");
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  try {
+    await writeFile(path, JSON.stringify(stored, null, 2) + "\n", {
+      encoding: "utf8",
+      mode: 0o600,
+      flag: "wx",
+    });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "EEXIST") {
+      return loadOrCreateKeypair(keyPath);
+    }
+    throw err;
+  }
   // Best-effort lock-down of the private key; chmod is a no-op semantics-wise
   // on Windows but harmless.
   try {

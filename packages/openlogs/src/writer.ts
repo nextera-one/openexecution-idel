@@ -16,7 +16,7 @@
  * redaction order right matters more here than it did for plain JSONL.
  */
 
-import { mkdir, appendFile, readFile } from "node:fs/promises";
+import { mkdir, appendFile, readFile, open, unlink } from "node:fs/promises";
 import { dirname, join, isAbsolute } from "node:path";
 import { homedir } from "node:os";
 
@@ -25,6 +25,7 @@ import {
   signV2Record,
   verifyV2Chain,
   type OpenLogsV2Record,
+  type OpenLogsTrustedKey,
   type VerifyResult,
 } from "@nextera.one/openlogs-sdk";
 import { TPS } from "@nextera.one/tps-standard";
@@ -130,6 +131,9 @@ export class OpenLogWriter {
    */
   private prevHash: string | null | undefined = undefined;
 
+  /** Serializes appends inside this process; the lock file handles other processes. */
+  private appendQueue: Promise<void> = Promise.resolve();
+
   constructor(options: OpenLogWriterOptions = {}) {
     this.path = resolveLogPath(options.path);
     this.keyPath = options.keyPath;
@@ -179,31 +183,72 @@ export class OpenLogWriter {
    * other. Blocks are evidence, not errors.
    */
   async append(record: OpenLogRecord): Promise<void> {
+    const queued = this.appendQueue.then(() => this.appendLocked(record));
+    this.appendQueue = queued.catch(() => undefined);
+    return queued;
+  }
+
+  private async appendLocked(record: OpenLogRecord): Promise<void> {
     await this.ensureDir();
-    const keypair = await this.ensureKeypair();
-    const prevHash = await this.resolvePrevHash();
+    await this.withAppendLock(async () => {
+      // Another process may have appended while we waited; reread the tail.
+      this.prevHash = undefined;
+      const keypair = await this.ensureKeypair();
+      const prevHash = await this.resolvePrevHash();
 
-    // Redact BEFORE the data enters the signed (immutable) payload.
-    const safe = redact(record);
+      // Redact BEFORE the data enters the signed (immutable) payload.
+      const safe = redact(record);
 
-    const unsigned = createV2Record(
-      {
-        actor: actorOf(safe),
-        tps: tpsOf(safe),
-        event: safe.command,
-        data: toEnvelopeData(safe),
-      },
-      prevHash,
-    );
-    const signed = await signV2Record(unsigned, {
-      privateKey: keypair.privateKey,
-      publicKey: keypair.publicKey,
-      kid: keypair.kid,
+      const unsigned = createV2Record(
+        {
+          actor: actorOf(safe),
+          tps: tpsOf(safe),
+          event: safe.command,
+          data: toEnvelopeData(safe),
+        },
+        prevHash,
+      );
+      const signed = await signV2Record(unsigned, {
+        privateKey: keypair.privateKey,
+        publicKey: keypair.publicKey,
+        kid: keypair.kid,
+      });
+
+      await appendFile(this.path, JSON.stringify(signed) + "\n", "utf8");
+      // Advance the chain head so the next append links to this record.
+      this.prevHash = signed.hash;
     });
+  }
 
-    await appendFile(this.path, JSON.stringify(signed) + "\n", "utf8");
-    // Advance the chain head so the next append links to this record.
-    this.prevHash = signed.hash;
+  private async withAppendLock<T>(fn: () => Promise<T>): Promise<T> {
+    const lockPath = `${this.path}.lock`;
+    let handle: Awaited<ReturnType<typeof open>> | undefined;
+    const deadline = Date.now() + 10_000;
+    while (!handle) {
+      try {
+        handle = await open(lockPath, "wx", 0o600);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "EEXIST" || Date.now() >= deadline) {
+          throw err;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+    }
+    try {
+      return await fn();
+    } finally {
+      await handle.close().catch(() => undefined);
+      await unlink(lockPath).catch(() => undefined);
+    }
+  }
+
+  private trustedKeyFor(keypair: OpenLogKeypair): OpenLogsTrustedKey {
+    return {
+      kid: keypair.kid,
+      publicKeyHex: keypair.publicKeyHex,
+      actorPrefixes: ["user:"],
+      description: "Local IDEL OpenLogs signing key",
+    };
   }
 
   /**
@@ -267,13 +312,18 @@ export class OpenLogWriter {
   /**
    * Verify the integrity and signatures of the whole on-disk chain. Returns the
    * SDK's structured {@link VerifyResult}: `integrity` proves no link was broken
-   * or reordered, `signatures` proves each record was signed by the held key.
-   * Trust (actor-binding to a known key) is reported but not required here —
-   * the writer signs with its own key, which a caller can pin if they want full
-   * trust verification.
+   * or reordered, `signatures` proves each record was signed, and `trust` proves
+   * each signature chains to the local pinned key and user actor namespace.
    */
   async verify(): Promise<VerifyResult> {
     const signed = await this.readSigned(Number.MAX_SAFE_INTEGER);
-    return verifyV2Chain(signed, { requireSignature: true });
+    const keypair = await this.ensureKeypair();
+    return verifyV2Chain(signed, {
+      requireSignature: true,
+      requireKid: true,
+      requireTrustedKey: true,
+      requireActorBinding: true,
+      trustedKeys: [this.trustedKeyFor(keypair)],
+    });
   }
 }

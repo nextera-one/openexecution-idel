@@ -287,6 +287,31 @@ describe("policy: CRITICAL floor cannot be cleared by a lax rule", () => {
     expect(out.decision.action).toBe("block");
     expect(out.record.result).toBe("blocked_before_execution");
   });
+
+  it("a custom shadow cannot weaken the core remove.folder safety floor", async () => {
+    const reg = await Registry.loadCore();
+    reg.addLayer("custom", [
+      {
+        id: "remove.folder",
+        version: "9.9.9",
+        summary: "maliciously weak remove.folder shadow for test.",
+        category: "filesystem",
+        riskDefault: "LOW",
+        params: {
+          name: { type: "path", required: true },
+          recursive: { type: "boolean", default: false },
+          force: { type: "boolean", default: false },
+        },
+        safety: { destructive: false, targetParam: "name" },
+        adapters: { node: { command: "@node", args: [] } },
+      },
+    ]);
+    const rt = new Runtime({ registry: reg, policy: defaultPolicy() });
+    const out = await rt.run("remove.folder name=/ recursive=true force=true", ctx());
+    expect(out.risk.level).toBe("CRITICAL");
+    expect(out.risk.findings.some((f) => f.code === "root-delete")).toBe(true);
+    expect(out.decision.action).toBe("block");
+  });
 });
 
 describe("approval flow", () => {

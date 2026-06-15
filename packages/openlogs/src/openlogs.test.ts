@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -123,12 +123,42 @@ describe("redact() by value shape", () => {
     expect(out.ast.params.b).toBe(REDACTED);
   });
 
+  it("redacts modern provider tokens under innocent keys", () => {
+    const out = redact(
+      makeRecord({
+        gh: "ghs_" + "A".repeat(36),
+        anthropic: "sk-ant-api03-" + "b".repeat(40),
+        stripe: "sk_live_" + "c".repeat(32),
+        npm: "npm_" + "d".repeat(32),
+        slack: "xoxb-" + "1".repeat(12) + "-" + "2".repeat(12) + "-" + "3".repeat(24),
+      }),
+    );
+    expect(Object.values(out.ast.params)).toEqual([
+      REDACTED,
+      REDACTED,
+      REDACTED,
+      REDACTED,
+      REDACTED,
+    ]);
+  });
+
   it("passes through short, non-secret values untouched", () => {
     const out = redact(makeRecord({ path: "/etc/hosts", count: 3, force: true, name: "abc" }));
     expect(out.ast.params.path).toBe("/etc/hosts");
     expect(out.ast.params.count).toBe(3);
     expect(out.ast.params.force).toBe(true);
     expect(out.ast.params.name).toBe("abc");
+  });
+
+  it("does not mistake dotted IDEL command names for JWTs", () => {
+    expect(redactString("native.terminal.start")).toBe("native.terminal.start");
+    expect(redactString("remove.folder")).toBe("remove.folder");
+  });
+
+  it("does not redact ordinary long paths as generic secrets", () => {
+    const path = "/home/mohammed/Work/openexecution-idel/packages/web/public/terminal.html";
+    const out = redact(makeRecord({ path }));
+    expect(out.ast.params.path).toBe(path);
   });
 
   it("is pure — does not mutate the input record", () => {
@@ -172,6 +202,19 @@ describe("redactString()", () => {
   it("leaves a command with no secrets untouched", () => {
     const cmd = "ls -la /tmp --color=auto";
     expect(redactString(cmd)).toBe(cmd);
+  });
+
+  it("redacts multi-line private key PEM blocks", () => {
+    const pem = [
+      "-----BEGIN PRIVATE KEY-----",
+      "abc123",
+      "def456",
+      "-----END PRIVATE KEY-----",
+    ].join("\n");
+    const out = redactString(`write.file content="${pem}"`);
+    expect(out).not.toContain("abc123");
+    expect(out).not.toContain("def456");
+    expect(out).toContain(REDACTED);
   });
 
   // --- Phase 2: targeted high-confidence bypass shapes -------------------
@@ -333,6 +376,9 @@ describe("OpenLogWriter signed chain", () => {
     expect(v.ok).toBe(true);
     expect(v.integrity.ok).toBe(true);
     expect(v.signatures.ok).toBe(true);
+    expect(v.trust.ok).toBe(true);
+    expect(v.trust.trusted).toBe(4);
+    expect(v.policy.ok).toBe(true);
   });
 
   it("verify() FAILS when a record's payload is tampered with", async () => {
@@ -383,6 +429,20 @@ describe("OpenLogWriter signed chain", () => {
     expect(v.integrity.ok).toBe(true);
   });
 
+  it("serializes concurrent appends without forking the chain", async () => {
+    const { path, keyPath } = freshPaths();
+    const writer = new OpenLogWriter({ path, keyPath });
+    await Promise.all(
+      Array.from({ length: 10 }, (_, i) => writer.append(makeRecord({ i }, `cmd-${i}`))),
+    );
+
+    const lines = readFileSync(path, "utf8").trimEnd().split("\n");
+    expect(lines).toHaveLength(10);
+    const v = await new OpenLogWriter({ path, keyPath }).verify();
+    expect(v.records).toBe(10);
+    expect(v.ok).toBe(true);
+  });
+
   it("redacts secrets before they enter the signed payload", async () => {
     const { path, keyPath } = freshPaths();
     const writer = new OpenLogWriter({ path, keyPath });
@@ -395,5 +455,13 @@ describe("OpenLogWriter signed chain", () => {
     expect(onDisk).toContain(REDACTED);
     const v = await writer.verify();
     expect(v.ok).toBe(true);
+  });
+
+  it("creates the key file with owner-only permissions on POSIX", async () => {
+    const { path, keyPath } = freshPaths();
+    const writer = new OpenLogWriter({ path, keyPath });
+    await writer.append(makeRecord({ i: 1 }, "first"));
+    if (process.platform === "win32") return;
+    expect(statSync(keyPath).mode & 0o777).toBe(0o600);
   });
 });

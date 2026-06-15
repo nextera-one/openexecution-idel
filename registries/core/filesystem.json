@@ -211,6 +211,11 @@
     },
     "safety": { "destructive": true, "targetParam": "to", "requiresAffectedPathEstimate": false },
     "adapters": {
+      "node": {
+        "command": "@node",
+        "args": [],
+        "semanticNotes": "Handled in-process by the @node fs adapter so path values are never interpreted as CLI flags."
+      },
       "posix": {
         "command": "cp",
         "args": [
@@ -244,6 +249,11 @@
     },
     "safety": { "destructive": true, "targetParam": "to" },
     "adapters": {
+      "node": {
+        "command": "@node",
+        "args": [],
+        "semanticNotes": "Handled in-process by the @node fs adapter so path values are never interpreted as CLI flags."
+      },
       "posix": {
         "command": "mv",
         "args": [
@@ -275,6 +285,11 @@
     },
     "safety": { "destructive": true, "targetParam": "to" },
     "adapters": {
+      "node": {
+        "command": "@node",
+        "args": [],
+        "semanticNotes": "Handled in-process by the @node fs adapter so path values are never interpreted as CLI flags."
+      },
       "posix": {
         "command": "mv",
         "args": [
@@ -313,6 +328,11 @@
       "requiresAffectedPathEstimate": true
     },
     "adapters": {
+      "node": {
+        "command": "@node",
+        "args": [],
+        "semanticNotes": "Handled in-process by the @node fs adapter so path values are never interpreted as CLI flags."
+      },
       "posix": {
         "command": "rm",
         "args": [
@@ -354,6 +374,11 @@
       "requiresAffectedPathEstimate": true
     },
     "adapters": {
+      "node": {
+        "command": "@node",
+        "args": [],
+        "semanticNotes": "Handled in-process by the @node fs adapter so path values are never interpreted as CLI flags."
+      },
       "posix": {
         "command": "rm",
         "args": [

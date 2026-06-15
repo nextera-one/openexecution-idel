@@ -295,19 +295,27 @@ async function runWithPreview(
   }
 
   // allow / approval_required → a real run is possible. For a still-sensitive
-  // command, show the translated command and confirm before executing.
+  // command, show the translated command and confirm before executing. Policy
+  // approval has its own runtime prompt, so avoid asking twice.
   const sensitive = level === "HIGH" || level === "CRITICAL";
-  if (sensitive) {
+  const needsPolicyApproval = action === "approval_required";
+  if (sensitive || needsPolicyApproval) {
     process.stdout.write(
-      color.yellow("⚠ sensitive command — review before running:\n") + render(preview) + "\n",
+      color.yellow(
+        needsPolicyApproval
+          ? "⚠ policy approval required — review before running:\n"
+          : "⚠ sensitive command — review before running:\n",
+      ) + render(preview) + "\n",
     );
-    const ok = await promptYesNo(rl, `Run for real${translated ? `: ${translated}` : ""}?`);
-    if (!ok) {
-      process.stdout.write(color.gray("Skipped. Nothing was changed.\n"));
-      return undefined;
+    if (!needsPolicyApproval) {
+      const ok = await promptYesNo(rl, `Run for real${translated ? `: ${translated}` : ""}?`);
+      if (!ok) {
+        process.stdout.write(color.gray("Skipped. Nothing was changed.\n"));
+        return undefined;
+      }
     }
   }
-  // approval_required will additionally fire the runtime's onApproval gate.
+  // approval_required fires the runtime's onApproval gate here.
   const outcome = await runtime.run(line, ctx);
   process.stdout.write(render(outcome) + "\n");
   return outcome;

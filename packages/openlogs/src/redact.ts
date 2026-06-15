@@ -44,15 +44,22 @@ const SENSITIVE_KEY_PATTERNS: readonly RegExp[] = [
  */
 const SECRET_VALUE_PATTERNS: readonly RegExp[] = [
   // JWT: three base64url segments separated by dots (header.payload.signature).
-  /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/,
+  /^[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}$/,
   // AWS access key id: AKIA/ASIA + 16 alphanumeric chars (case-insensitive so a
   // lowercased transcription still redacts).
   /^(?:AKIA|ASIA)[A-Z0-9]{16}$/i,
   // GitHub classic PAT and fine-grained PAT.
   /^ghp_[A-Za-z0-9]{20,}$/,
+  /^gh[osru]_[A-Za-z0-9]{20,}$/,
   /^github_pat_[A-Za-z0-9_]{20,}$/,
-  // OpenAI-style keys: sk-… (incl. sk-proj-…).
+  // OpenAI/Anthropic-style keys.
   /^sk-[A-Za-z0-9_-]{16,}$/,
+  /^sk-ant-[A-Za-z0-9_-]{16,}$/,
+  // Stripe live/test keys and npm automation tokens.
+  /^sk_(?:live|test)_[A-Za-z0-9]{16,}$/,
+  /^npm_[A-Za-z0-9_-]{20,}$/,
+  // Slack tokens.
+  /^xox[baprs]-[A-Za-z0-9-]{20,}$/,
   // Generic long hex/base64-ish blob — kept LAST so the more specific
   // patterns above win first. ≥24 chars of [A-Za-z0-9+/=_-].
   /^[A-Za-z0-9+/=_-]{24,}$/,
@@ -65,7 +72,19 @@ export function isSensitiveKey(key: string): boolean {
 
 /** True if a string value, on its own, looks like a secret. */
 export function looksLikeSecretValue(value: string): boolean {
+  if (isLikelyNonSecretPath(value)) return false;
   return SECRET_VALUE_PATTERNS.some((re) => re.test(value));
+}
+
+function isLikelyNonSecretPath(value: string): boolean {
+  if (/^[A-Za-z]:[\\/]/.test(value)) return true;
+  if (value.startsWith("/") || value.startsWith("./") || value.startsWith("../") || value.startsWith("~/")) {
+    return true;
+  }
+  if ((value.includes("/") || value.includes("\\")) && !/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(value)) {
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -96,10 +115,17 @@ const SENSITIVE_QUERY_KEYS =
 export function redactString(s: string): string {
   if (!s) return s;
 
+  // Pass 0: private-key PEM blocks can span many lines; remove the entire block
+  // before whitespace-token passes split it apart.
+  let out0 = s.replace(
+    /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g,
+    REDACTED,
+  );
+
   // Pass 0a: URL userinfo — `scheme://user:pass@host` leaks the password (and
   // arguably the user) into the log. Redact the credentials, keep the host so
   // the audit line stays useful. Handles http(s), ftp, redis, postgres, etc.
-  let out0 = s.replace(
+  out0 = out0.replace(
     /([A-Za-z][A-Za-z0-9+.-]*:\/\/)([^/\s:@]+)(?::([^/\s@]+))?@/g,
     (_m, scheme: string, user: string, pass: string | undefined) =>
       pass !== undefined ? `${scheme}${user}:${REDACTED}@` : `${scheme}${REDACTED}@`,

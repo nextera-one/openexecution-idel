@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { randomUUID } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import type { AddressInfo } from "node:net";
@@ -9,7 +10,11 @@ import {
   NativeTerminalError,
   NativeTerminalManager,
 } from "./native-terminal.js";
-import type { NativeTerminalSignal } from "./native-terminal.js";
+import type {
+  NativeTerminalInfo,
+  NativeTerminalSignal,
+} from "./native-terminal.js";
+import type { ParamValue } from "@openexecution/types";
 import type {
   RunRequest,
   CompleteRequest,
@@ -66,6 +71,8 @@ export interface ServerOptions extends ServiceOptions {
   staticDir?: string;
   /** Allow cross-origin browser requests (dev). Default true for loopback dev. */
   cors?: boolean;
+  /** Enable raw native shell sessions and native API passthrough. Default false. */
+  allowNativeTerminal?: boolean;
   /**
    * Factory for the embedded Claude agent, given the server's TerminalService.
    * Injected (not imported) so the dependency-free server core never pulls in
@@ -124,8 +131,15 @@ export interface RunningServer {
 }
 
 export async function startServer(opts: ServerOptions): Promise<RunningServer> {
-  const service = new TerminalService(opts);
   const host = opts.host ?? "127.0.0.1";
+  if (!isLoopbackBindHost(host)) {
+    throw new ServiceError(
+      `refusing to bind non-loopback host "${host}"; IDEL serve is local-only`,
+      403,
+    );
+  }
+  const nativeEnabled = opts.allowNativeTerminal === true && opts.noNative !== true;
+  const service = new TerminalService({ ...opts, noNative: !nativeEnabled });
   const cors = opts.cors ?? true;
   const staticDir = opts.staticDir ? resolve(opts.staticDir) : undefined;
   // Build the agent once and share it (its system prompt — the registry catalog
@@ -134,7 +148,7 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
   const learn = opts.learn;
   const nativeTerminals = new NativeTerminalManager({
     cwd: opts.cwd,
-    disabled: opts.noNative === true,
+    disabled: !nativeEnabled,
   });
   // Coordinates the async approval round-trip: an agent stream that proposes a
   // real run parks here on an id; POST /api/agent/approve resolves it.
@@ -209,10 +223,15 @@ async function handle(
   const method = req.method ?? "GET";
   const url = new URL(req.url ?? "/", "http://localhost");
   const path = url.pathname;
+  const boundary = validateRequestBoundary(req);
+  if (!boundary.ok) {
+    return sendJson(res, 403, { error: boundary.error }, false);
+  }
+  if (cors && boundary.origin) setCors(res, boundary.origin);
 
   // Preflight.
   if (method === "OPTIONS") {
-    if (cors) setCors(res);
+    if (cors) setCors(res, boundary.origin);
     res.writeHead(204);
     res.end();
     return;
@@ -363,7 +382,25 @@ async function handle(
   if (path === "/api/native/start" && method === "POST") {
     try {
       const body = await readJsonBody<{ cwd?: string; shell?: string }>(req);
-      return sendJson(res, 200, nativeTerminals.start(body), cors);
+      const info = nativeTerminals.start(body);
+      void service.auditNativeTerminal("native.terminal.start", nativeTerminalParams(info));
+      const session = nativeTerminals.get(info.id);
+      session?.subscribe((event) => {
+        if (event.type !== "exit") return;
+        const exitCode = event.code ?? undefined;
+        void service.auditNativeTerminal(
+          "native.terminal.exit",
+          nativeTerminalParams(info, {
+            ...(exitCode !== undefined ? { exitCode } : {}),
+            ...(event.signal ? { signal: event.signal } : {}),
+          }),
+          {
+            result: event.code === 0 ? "success" : "failed",
+            ...(exitCode !== undefined ? { exitCode } : {}),
+          },
+        );
+      });
+      return sendJson(res, 200, info, cors);
     } catch (err) {
       if (err instanceof NativeTerminalError) {
         return sendJson(res, err.status, { error: err.message }, cors);
@@ -397,11 +434,23 @@ async function handle(
       if (!signal) {
         return sendJson(res, 400, { error: "signal must be one of interrupt, terminate, kill, hangup" }, cors);
       }
+      const info = nativeTerminals.get(nativeRoute.id)?.info();
       const ok = nativeTerminals.signal(nativeRoute.id, signal);
+      void service.auditNativeTerminal(
+        "native.terminal.signal",
+        nativeTerminalParams(info, { id: nativeRoute.id, signal }),
+        { result: ok ? "success" : "failed" },
+      );
       return sendJson(res, ok ? 200 : 404, ok ? { ok: true } : { error: "native session not found" }, cors);
     }
     if (nativeRoute.action === "close" && method === "POST") {
+      const info = nativeTerminals.get(nativeRoute.id)?.info();
       const ok = nativeTerminals.close(nativeRoute.id);
+      void service.auditNativeTerminal(
+        "native.terminal.close",
+        nativeTerminalParams(info, { id: nativeRoute.id }),
+        { result: ok ? "success" : "failed" },
+      );
       return sendJson(res, ok ? 200 : 404, ok ? { ok: true } : { error: "native session not found" }, cors);
     }
   }
@@ -765,14 +814,13 @@ function tokenizeIdelCommand(value: string): string[] {
  * a forgotten approval defaults to DENY rather than leaking a parked agent loop.
  */
 class PendingApprovals {
-  private seq = 0;
   private readonly pending = new Map<string, (approved: boolean) => void>();
   /** How long a parked approval waits before auto-denying. */
   private static readonly TIMEOUT_MS = 5 * 60_000;
 
   /** Mint an approval id and the promise the agent gate awaits. */
   create(): { id: string; decision: Promise<boolean> } {
-    const id = `appr_${++this.seq}`;
+    const id = `appr_${randomUUID()}`;
     const decision = new Promise<boolean>((resolveDecision) => {
       const timer = setTimeout(() => {
         if (this.pending.delete(id)) resolveDecision(false); // fail-closed
@@ -806,6 +854,87 @@ class PendingApprovals {
 }
 
 // --- helpers ---------------------------------------------------------------
+
+function validateRequestBoundary(req: IncomingMessage): { ok: true; origin?: string } | { ok: false; error: string } {
+  const host = req.headers.host;
+  if (host && !isLoopbackHostHeader(host)) {
+    return { ok: false, error: `host is not allowed: ${host}` };
+  }
+
+  const origin = req.headers.origin;
+  if (origin === undefined) return { ok: true };
+  const allowedOrigin = normalizeAllowedOrigin(origin);
+  if (!allowedOrigin) {
+    return { ok: false, error: `origin is not allowed: ${origin}` };
+  }
+  return { ok: true, origin: allowedOrigin };
+}
+
+function normalizeAllowedOrigin(origin: string): string | undefined {
+  try {
+    const url = new URL(origin);
+    if ((url.protocol === "http:" || url.protocol === "https:") && isLoopbackHost(url.hostname)) {
+      return url.origin;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+function isLoopbackBindHost(host: string): boolean {
+  const value = stripIpv6Brackets(host.trim().toLowerCase());
+  return value === "localhost" ||
+    value === "127.0.0.1" ||
+    value === "::1";
+}
+
+function isLoopbackHostHeader(hostHeader: string): boolean {
+  const host = stripHostPort(hostHeader);
+  return isLoopbackHost(host);
+}
+
+function isLoopbackHost(host: string): boolean {
+  const value = stripIpv6Brackets(host.trim().toLowerCase());
+  return value === "localhost" ||
+    value === "127.0.0.1" ||
+    value === "::1" ||
+    value.startsWith("127.");
+}
+
+function stripHostPort(hostHeader: string): string {
+  const value = hostHeader.trim();
+  if (value.startsWith("[")) {
+    const end = value.indexOf("]");
+    return end === -1 ? value : value.slice(1, end);
+  }
+  const colon = value.lastIndexOf(":");
+  if (colon > -1 && value.indexOf(":") === colon) return value.slice(0, colon);
+  return value;
+}
+
+function stripIpv6Brackets(value: string): string {
+  return value.startsWith("[") && value.endsWith("]") ? value.slice(1, -1) : value;
+}
+
+function nativeTerminalParams(
+  info: NativeTerminalInfo | undefined,
+  extra: Record<string, ParamValue> = {},
+): Record<string, ParamValue> {
+  const params: Record<string, ParamValue> = { ...extra };
+  if (!info) return params;
+  params["id"] = info.id;
+  params["cwd"] = info.cwd;
+  params["shell"] = info.shell;
+  params["pty"] = info.pty;
+  params["cols"] = info.cols;
+  params["rows"] = info.rows;
+  params["startedAt"] = info.startedAt;
+  params["exited"] = info.exited;
+  if (info.pid !== undefined) params["pid"] = info.pid;
+  if (typeof info.exitCode === "number") params["exitCode"] = info.exitCode;
+  return params;
+}
 
 function clampLimit(raw: string | null): number {
   const n = raw ? Number.parseInt(raw, 10) : 50;
@@ -852,8 +981,9 @@ function writeSse(res: ServerResponse, event: string, data: unknown): void {
   res.write(`data: ${JSON.stringify(data)}\n\n`);
 }
 
-function setCors(res: ServerResponse): void {
-  res.setHeader("access-control-allow-origin", "*");
+function setCors(res: ServerResponse, origin?: string): void {
+  if (origin) res.setHeader("access-control-allow-origin", origin);
+  res.setHeader("vary", "Origin");
   res.setHeader("access-control-allow-methods", "GET, POST, OPTIONS");
   res.setHeader("access-control-allow-headers", "content-type");
 }

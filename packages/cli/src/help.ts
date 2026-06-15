@@ -54,6 +54,8 @@ SERVE FLAGS (idel serve)
   --port <n>       HTTP port (default 7878)
   --host <addr>    bind address (default 127.0.0.1, loopback only)
   --static <dir>   serve a built terminal UI from this directory at /
+  --enable-native-terminal
+                   enable native shell sessions and web native passthrough
 
 SAFETY
   Every command is risk-classified (LOW/MEDIUM/HIGH/CRITICAL) and policy-checked

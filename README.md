@@ -184,12 +184,12 @@ A ready-made, dependency-free web terminal + landing page ships in `packages/web
 
 ```bash
 pnpm ui            # builds if needed, then serves the terminal at http://127.0.0.1:7878
-# (equivalently: idel serve --static packages/web/public)
+# (equivalently: idel serve --static packages/web/public --enable-native-terminal)
 ```
 
 The page at `/` explains the runtime; `/terminal.html` is a live terminal with an **IDEL** mode (registry completion, history, a live audit-log panel), an **Ask Claude** mode that drives the embedded console over `/api/agent/stream`, and optional `sh` tabs for a native OS shell. The Claude console lights up when Claude is reachable on the `idel serve` process (see [Using your Claude subscription](#using-your-claude-subscription)) — the credential never reaches the browser.
 
-Use IDEL tabs for the audited policy pipeline. Use a native `sh` tab only when you need interactive OS behavior such as `sudo apt install git`, package prompts, shell autocomplete, Ctrl+C, arrows, or full-screen terminal tools. Native shell tabs are backed by xterm.js and are intentionally direct shell sessions, so commands typed there are not converted into IDEL commands or written as OpenLogs records. `--no-native` disables both `!` passthrough and native shell tabs.
+Use IDEL tabs for the audited policy pipeline. Use a native `sh` tab only when you need interactive OS behavior such as `sudo apt install git`, package prompts, shell autocomplete, Ctrl+C, arrows, or full-screen terminal tools. Native shell tabs are backed by xterm.js and are intentionally direct shell sessions, so commands typed there are not converted into IDEL commands or risk-scanned command-by-command. When native tabs are explicitly enabled with `--enable-native-terminal`, their session start/close/signal/exit lifecycle events are still written to signed OpenLogs. Without that flag, `idel serve` leaves native shell tabs disabled by default.
 
 Every command rendered in the terminal — typed or AI-proposed — shows what it **translates to**: the real adapter invocation (e.g. `remove.file name=x force=true` → `rm -f x`, `list.folder` → `ls`), so the mapping from intent to execution is visible at the call site. In the interactive `idel terminal`, a sensitive (HIGH/CRITICAL) command is previewed with its translation and risk and held for confirmation before any real run (and a `require_dry_run`-policy command is shown as dry-run-only, never silently promoted).
 
@@ -421,7 +421,7 @@ These let CI fail closed: a blocked or approval-required command never returns `
 ## Testing
 
 ```bash
-pnpm test           # vitest run — 300 tests across 15 test files
+pnpm test           # vitest run — 373+ tests across 17 test files
 pnpm typecheck      # tsc --build --dry
 ```
 

@@ -8,7 +8,10 @@ import type {
   AdapterSpec,
   CommandDef,
   CommandOrigin,
+  ExecutionOutcome,
   OpenLogRecord,
+  ParamValue,
+  RiskLevel,
   RuntimeContext,
   RuntimeOutcome,
 } from "@openexecution/types";
@@ -129,6 +132,7 @@ export class TerminalService {
   private readonly baseCwd: string;
   private readonly environment: string | undefined;
   private readonly noNative: boolean;
+  private auditFailureWarned = false;
 
   constructor(opts: ServiceOptions) {
     this.runtime = opts.runtime;
@@ -254,6 +258,51 @@ export class TerminalService {
     const writer = this.runtime.logWriter;
     if (!writer) return { ok: true, records: 0, reason: "no log writer" };
     return await writer.verify();
+  }
+
+  /** Record native terminal lifecycle events that bypass the IDEL command parser. */
+  async auditNativeTerminal(
+    command: "native.terminal.start" | "native.terminal.close" | "native.terminal.signal" | "native.terminal.exit",
+    params: Record<string, ParamValue>,
+    opts: { result?: ExecutionOutcome; risk?: RiskLevel; exitCode?: number } = {},
+  ): Promise<void> {
+    const writer = this.runtime.logWriter;
+    if (!writer) return;
+    const ui = safeUserInfo();
+    const cwd = typeof params["cwd"] === "string" ? params["cwd"] : this.baseCwd;
+    const record: OpenLogRecord = {
+      timestamp: new Date().toISOString(),
+      sessionId: `srv_${process.pid}`,
+      user: ui.username,
+      host: hostname(),
+      os: platform(),
+      cwd,
+      source: "api",
+      command,
+      ast: { command, params },
+      risk: opts.risk ?? "HIGH",
+      riskFindings: [
+        {
+          code: "native-terminal",
+          level: opts.risk ?? "HIGH",
+          message:
+            "Native terminal session bypasses IDEL command parsing; lifecycle event audited.",
+        },
+      ],
+      policyDecision: "allow",
+      policyReason: "native terminal explicitly enabled on this server",
+      dryRun: false,
+      ...(opts.exitCode !== undefined ? { exitCode: opts.exitCode } : {}),
+      result: opts.result ?? "success",
+    };
+    await writer.append(record).catch((err: unknown) => {
+      if (this.auditFailureWarned) return;
+      this.auditFailureWarned = true;
+      const detail = (err as Error)?.message ?? String(err);
+      process.stderr.write(
+        `openlogs: failed to record native terminal event — audit trail may be incomplete (${detail})\n`,
+      );
+    });
   }
 
   private makeContext(

@@ -240,6 +240,7 @@ async function serve(runtime: Runtime, flags: CliFlags): Promise<number> {
     staticDir: flags.staticDir,
     environment: flags.environment,
     noNative: flags.noNative,
+    allowNativeTerminal: flags.enableNativeTerminal,
     agent: agentFactory,
     learn: async (req) => {
       const result = await learnForHost(req.cli ?? "", { write: req.write === true });

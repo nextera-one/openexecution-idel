@@ -22,6 +22,7 @@ export interface CliFlags {
   dryRun: boolean;
   ci: boolean;
   noNative: boolean;
+  enableNativeTerminal: boolean;
   yes: boolean;
   json: boolean;
   policyPath?: string;
@@ -42,6 +43,8 @@ const RUNTIME_FLAGS = new Set([
   "--dry-run",
   "--ci",
   "--no-native",
+  "--enable-native-terminal",
+  "--native-terminal",
   "--yes",
   "--json",
   "--open",
@@ -60,6 +63,7 @@ export function parseArgv(argv: string[]): CliInvocation {
     dryRun: false,
     ci: false,
     noNative: false,
+    enableNativeTerminal: false,
     yes: false,
     json: false,
   };
@@ -72,6 +76,9 @@ export function parseArgv(argv: string[]): CliInvocation {
       if (arg === "--dry-run") flags.dryRun = true;
       else if (arg === "--ci") flags.ci = true;
       else if (arg === "--no-native") flags.noNative = true;
+      else if (arg === "--enable-native-terminal" || arg === "--native-terminal") {
+        flags.enableNativeTerminal = true;
+      }
       else if (arg === "--yes") flags.yes = true;
       else if (arg === "--json") flags.json = true;
       else if (arg === "--open") flags.open = true;

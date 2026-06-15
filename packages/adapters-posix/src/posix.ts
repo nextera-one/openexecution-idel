@@ -21,6 +21,9 @@ import { renderArgv } from "./render.js";
 /** Commands whose `command` is a runtime sentinel handled elsewhere. */
 const NON_SPAWN_COMMANDS = new Set<string>(["@node", "@runtime"]);
 
+/** POSIX tools used by destructive defs that accept `--` before target values. */
+const END_OF_OPTIONS_COMMANDS = new Set<string>(["rm", "cp", "mv", "chmod", "chown"]);
+
 /** Resolves a command id to its def so capability checks can inspect adapters. */
 export type ResolveFn = (commandId: string) => ResolvedCommand | undefined;
 
@@ -63,7 +66,9 @@ export class PosixAdapter implements Adapter {
         `PosixAdapter cannot plan "${resolved.def.id}": no posix adapter spec`,
       );
     }
-    const argv = renderArgv(spec, ast.params);
+    const argv = renderArgv(spec, ast.params, {
+      endOfOptionsBeforeValues: shouldInsertEndOfOptions(resolved),
+    });
     const describe = argv.length > 0
       ? `${spec.command} ${argv.join(" ")}`
       : spec.command;
@@ -120,6 +125,13 @@ export class PosixAdapter implements Adapter {
       });
     });
   }
+}
+
+function shouldInsertEndOfOptions(resolved: ResolvedCommand): boolean {
+  const spec = resolved.def.adapters.posix;
+  if (!spec || !END_OF_OPTIONS_COMMANDS.has(spec.command)) return false;
+  if (resolved.def.safety?.destructive !== true) return false;
+  return spec.args.some((arg) => arg.kind === "value");
 }
 
 /** Convenience singleton; the runtime may also instantiate its own. */

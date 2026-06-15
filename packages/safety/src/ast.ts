@@ -20,6 +20,7 @@ import type {
 import { isNativeAst } from "@openexecution/types";
 
 import { scanNative } from "./native.js";
+import { SAFETY_FLOORS } from "./floors.js";
 import {
   hasGlob,
   hasParentTraversal,
@@ -321,6 +322,7 @@ export function finalize(
   findings: RiskFinding[],
   def?: CommandDef,
 ): RiskAssessment {
+  applySafetyFloors(findings);
   let level = levelOfFindings(findings);
   if (def?.riskDefault && riskRank(def.riskDefault) > riskRank(level)) {
     // riskDefault is a floor, not a ceiling. Keep it as a real finding when it
@@ -333,4 +335,14 @@ export function finalize(
     level = def.riskDefault;
   }
   return { phase, level, findings };
+}
+
+function applySafetyFloors(findings: RiskFinding[]): void {
+  for (const finding of findings) {
+    const floor = SAFETY_FLOORS.find((f) => f.code === finding.code);
+    if (floor && riskRank(floor.level) > riskRank(finding.level)) {
+      finding.level = floor.level;
+      finding.message = `${finding.message} Safety floor: ${floor.description}`;
+    }
+  }
 }

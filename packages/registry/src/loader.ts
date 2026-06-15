@@ -204,20 +204,37 @@ export class Registry {
     this.replaceLayer(source, defs);
   }
 
-  /** Add already-validated defs to a layer (in-memory layers, tests, plugins). */
+  private prepareLayerDefs(source: CommandSource, defs: CommandDef[]): CommandDef[] {
+    const prepared: CommandDef[] = [];
+    for (const [i, def] of defs.entries()) {
+      const candidate = { ...def, source };
+      const { ok, errors } = checkCommandDef(candidate);
+      if (!ok) {
+        throw new RegistryError(
+          `registry layer "${source}" in-memory def[${i}] failed schema validation (fail closed):\n` +
+            `  - ${errors.join("\n  - ")}`,
+        );
+      }
+      prepared.push(candidate);
+    }
+    return prepared;
+  }
+
+  /** Add defs to a layer after schema validation (in-memory layers, tests, plugins). */
   addLayer(source: CommandSource, defs: CommandDef[]): void {
     const index = this.layers.get(source)!;
-    for (const def of defs) {
-      index.set(def.id, { ...def, source });
+    for (const def of this.prepareLayerDefs(source, defs)) {
+      index.set(def.id, def);
     }
   }
 
-  /** Replace a layer with already-validated defs, used when reloading from disk. */
+  /** Replace a layer with schema-validated defs, used when reloading from disk. */
   replaceLayer(source: CommandSource, defs: CommandDef[]): void {
     const index = this.layers.get(source)!;
+    const prepared = this.prepareLayerDefs(source, defs);
     index.clear();
-    for (const def of defs) {
-      index.set(def.id, { ...def, source });
+    for (const def of prepared) {
+      index.set(def.id, def);
     }
   }
 
@@ -253,6 +270,16 @@ export class Registry {
   /** True if any layer defines this id. */
   has(commandId: string): boolean {
     return LAYER_ORDER.some((s) => this.layers.get(s)!.has(commandId));
+  }
+
+  /** Return a command definition from one exact layer, bypassing precedence. */
+  layerDef(source: CommandSource, commandId: string): CommandDef | undefined {
+    return this.layers.get(source)!.get(commandId);
+  }
+
+  /** Return the core definition for a command, even when a higher layer shadows it. */
+  coreDef(commandId: string): CommandDef | undefined {
+    return this.layerDef("core", commandId);
   }
 
   /**

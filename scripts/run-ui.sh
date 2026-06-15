@@ -4,7 +4,7 @@
 #
 # This is the one-liner for "show me the UI." It:
 #   1. builds the TypeScript packages if `idel` isn't built yet,
-#   2. starts `idel serve` bound to loopback, serving packages/web/public,
+#   2. starts `idel serve` bound to loopback with native terminal explicitly enabled,
 #   3. prints the URL (and opens it when --open is passed).
 #
 # The Claude console in the UI lights up automatically when ANTHROPIC_API_KEY is
@@ -73,4 +73,4 @@ elif [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
 fi
 
 echo "run-ui: serving the IDEL web terminal from $STATIC"
-exec node "$IDEL" serve --static "$STATIC" "$@"
+exec node "$IDEL" serve --static "$STATIC" --enable-native-terminal "$@"

@@ -79,6 +79,35 @@ describe("TerminalService.registry", () => {
   });
 });
 
+describe("TerminalService native terminal audit", () => {
+  it("records native terminal lifecycle events to OpenLogs", async () => {
+    const dir = await sandbox();
+    const writer = new OpenLogWriter({
+      path: join(dir, "openlogs.jsonl"),
+      keyPath: join(dir, "openlogs.key.json"),
+    });
+    const runtime = new Runtime({ registry, policy: defaultPolicy(), logWriter: writer });
+    const svc = new TerminalService({ runtime, cwd: dir });
+
+    await svc.auditNativeTerminal("native.terminal.start", {
+      id: "native_test",
+      cwd: dir,
+      shell: "/bin/sh",
+      pty: true,
+      cols: 80,
+      rows: 24,
+    });
+
+    const [record] = await writer.read();
+    expect(record?.command).toBe("native.terminal.start");
+    expect(record?.source).toBe("api");
+    expect(record?.risk).toBe("HIGH");
+    expect(record?.ast.params.shell).toBe("/bin/sh");
+    expect(record?.riskFindings.some((f) => f.code === "native-terminal")).toBe(true);
+    expect((await writer.verify()).ok).toBe(true);
+  });
+});
+
 describe("TerminalService.complete", () => {
   it("completes command names", async () => {
     const svc = makeService(await sandbox());
@@ -366,13 +395,37 @@ describe("startServer (HTTP)", () => {
     expect(body.ok).toBe(true);
     expect(typeof body.platform).toBe("string");
     expect(body.agentAvailable).toBe(false);
-    expect(body.nativeAvailable).toBe(true);
+    expect(body.nativeAvailable).toBe(false);
+  });
+
+  it("does not send wildcard CORS and rejects non-loopback browser origins", async () => {
+    const allowed = await fetch(`${base}/api/health`, {
+      headers: { origin: "http://localhost:3000" },
+    });
+    expect(allowed.status).toBe(200);
+    expect(allowed.headers.get("access-control-allow-origin")).toBe("http://localhost:3000");
+
+    const rejected = await fetch(`${base}/api/health`, {
+      headers: { origin: "https://example.com" },
+    });
+    expect(rejected.status).toBe(403);
   });
 
   it("GET /api/native/sessions → active native terminal list", async () => {
     const res = await fetch(`${base}/api/native/sessions`);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual([]);
+  });
+
+  it("POST /api/native/start is disabled unless serve explicitly opts in", async () => {
+    const res = await fetch(`${base}/api/native/start`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toMatch(/disabled/i);
   });
 
   it("POST /api/native/:id/input → 404 for an unknown native terminal", async () => {

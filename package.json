@@ -16,7 +16,7 @@
     "publish:dry-run": "pnpm -r publish --dry-run --no-git-checks",
     "install:local": "bash scripts/install-local.sh",
     "serve": "node scripts/sync-xterm-assets.mjs && node packages/cli/bin/idel.js serve --static packages/web/public",
-    "ui": "node scripts/sync-xterm-assets.mjs && node packages/cli/bin/idel.js serve --static packages/web/public --open",
+    "ui": "node scripts/sync-xterm-assets.mjs && node packages/cli/bin/idel.js serve --static packages/web/public --enable-native-terminal --open",
     "ui:dev": "bash scripts/run-ui.sh"
   },
   "engines": {
