@@ -240,9 +240,40 @@ sessions and are not parsed command-by-command, but enabling them now requires
 `native.terminal.exit`. Raw stdin is intentionally not logged because it can
 contain passwords, prompts, and terminal control streams.
 
+Done: **Phase 3 — promote a learned draft to the signed `official` layer**
+(`idel promote <cli>`). Promotion is the deliberate, gated step from the
+lowest-trust *custom* draft layer to the trusted *official* layer:
+- **Re-verify, don't trust the past** — every draft is re-validated against the
+  schema AND its declared `tests[]` are REPLAYED through a real runtime at
+  promote time (not relying on the earlier learn run). A def that no longer
+  validates or misclassifies is rejected, never promoted (fail-closed).
+- **Explicit review gate** — the eligible set is shown with its risk and gated
+  behind an interactive y/N (`--yes` for CI; a non-interactive JSON promote
+  without `--yes` is refused). Nothing is signed without confirmation.
+- **Ed25519 signing** — each confirmed def is signed over its *canonical* bytes
+  (sorted keys, `source` stripped, so a reformat keeps the signature but any
+  semantic edit breaks it) with the same machine-local OpenLogs key. Defs go to
+  `~/.idel/registries/official/promoted-<cli>.json` + a detached
+  `promoted-<cli>.sig.json` manifest; the promoted ids are pruned from the
+  custom draft so a command lives in one writable layer.
+- **`idel registry verify`** checks every official signature and **fails closed**
+  on any tampered (sha-mismatch / bad-signature) or *unsigned* official def.
+- **Load-time gate** — the CLI verifies the official layer before trusting it;
+  if ANY def fails, the WHOLE official layer is dropped (not partially honored)
+  with a stderr warning, so a bad def can't be smuggled in beside good ones.
+- Promotion raises *trust/provenance*, never *privilege*: a promoted destructive
+  command is re-classified by the same two-phase safety engine on every run.
+- Honest scope: the signing key is machine-local (CONCERNS §5) — this proves
+  integrity-since-promotion on this machine, not multi-party trust. A managed
+  team key registry / out-of-band public-key distribution remains the seam for
+  the team/CI story. Covered by `registry/src/signing.test.ts` (crypto + tamper
+  vectors) and `cli/src/promote.test.ts` (E2E promote → verify, incl. tamper and
+  unsigned-official detection).
+
 Deferred (next):
-- **Phase 3 (rest)** — promote a learned draft to the `official` layer behind
-  review/signing; let `idel learn` propose `powershell` adapters too.
+- **Phase 3 (rest)** — a managed team/CI key registry + signed-policy
+  distribution so a promoted `official` def is trusted across machines (not just
+  the promoting one); let `idel learn` propose `powershell` adapters too.
 - Multi-turn web conversations (today each `ask` is a fresh turn); persisting the
   agent message history across SSE connections behind the approval coordinator.
 - Stream the CLI provider's tokens live (`stream-json`) instead of awaiting the

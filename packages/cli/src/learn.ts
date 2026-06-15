@@ -196,7 +196,7 @@ function renderResult(result: LearnResult): void {
  * Returns one {@link TestVerification} per def id. A def with no tests reports
  * `{ ran: 0 }` and is accepted (the model just didn't assert anything to check).
  */
-async function verifyDefs(
+export async function verifyDefs(
   defs: CommandDef[],
 ): Promise<Record<string, TestVerification>> {
   const registry = await Registry.loadCore();

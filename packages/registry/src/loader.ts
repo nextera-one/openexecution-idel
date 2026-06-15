@@ -101,7 +101,13 @@ export async function loadLayerFromDir(
 ): Promise<LoadLayerResult> {
   let entries: string[];
   try {
-    entries = (await readdir(dir)).filter((f) => f.endsWith(".json")).sort();
+    entries = (await readdir(dir))
+      .filter((f) => f.endsWith(".json"))
+      // `*.sig.json` files are detached signature manifests written alongside a
+      // promoted official def (see signing.ts / `idel promote`). They are
+      // registry metadata, not command defs — skip them so the layer loads.
+      .filter((f) => !f.endsWith(".sig.json"))
+      .sort();
   } catch (err) {
     throw new RegistryError(
       `cannot read registry layer "${source}" at ${dir}: ${(err as Error).message}`,

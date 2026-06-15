@@ -435,7 +435,7 @@ Coverage spans the parser (quoting/booleans/paths), registry schema validation, 
 
 **Explicitly deferred to V2 (not built):**
 
-- **AI translation** (`native.convert`) — draft-only, behind review/tests/signing. (Note: **CLI learning** now ships as `idel learn <cli>` — see above. Promoting a learned draft to the signed `official` layer is the remaining V2 piece.)
+- **AI translation** (`native.convert`) — draft-only, behind review/tests/signing. (Note: **CLI learning** ships as `idel learn <cli>`, and **promotion** of a learned draft to the **signed `official` layer** now ships as `idel promote <cli>` — re-verifies schema + replays `tests[]` through the runtime, gates on an explicit y/N, then Ed25519-signs each def; `idel registry verify` checks the signatures and fails closed on tamper. What remains is the *cross-machine* trust story: a managed team/CI key registry so a promoted def is trusted beyond the machine that signed it.)
 - Full **Git / Docker / Kubernetes** registries (many of those commands are already readable — or learnable via `idel learn`).
 - A **registry marketplace** (needs signing, trust, review, versioning, reputation).
 - **Remote / cloud execution** (comes after local safety and logs are proven).

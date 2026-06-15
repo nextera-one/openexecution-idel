@@ -17,6 +17,8 @@ import { startTerminal } from "./terminal.js";
 import { ask } from "./ask.js";
 import { ASK_AI_USAGE, askAiIntent, isAskAiCommand } from "./ask-ai.js";
 import { learn, learnForHost } from "./learn.js";
+import { promote } from "./promote.js";
+import { verifyRegistry, verifyOfficialLayer } from "./registry-verify.js";
 import { parseLearnCommand } from "./learn-command.js";
 import { HELP_TEXT, VERSION } from "./help.js";
 
@@ -49,6 +51,28 @@ export async function main(argv: string[]): Promise<number> {
     });
   }
 
+  // `idel promote <cli>` moves reviewed learned drafts up to the signed official
+  // layer. Like learn, it builds its own ephemeral runtime for re-verification
+  // and writes the registry layers directly — no shared runtime/policy needed.
+  if (inv.mode === "promote") {
+    return promote(inv.command, {
+      yes: inv.flags.yes,
+      json: inv.flags.json,
+    });
+  }
+
+  // `idel registry <subcommand>` — registry-layer maintenance.
+  if (inv.mode === "registry") {
+    const sub = inv.command.split(/\s+/)[0] ?? "";
+    if (sub === "verify") {
+      return verifyRegistry({ json: inv.flags.json });
+    }
+    process.stderr.write(
+      color.gray(`Usage: idel registry verify   (check signed official-layer commands)\n`),
+    );
+    return 2;
+  }
+
   let policy: PolicyConfig;
   try {
     policy = await resolvePolicy(inv.flags);
@@ -58,10 +82,16 @@ export async function main(argv: string[]): Promise<number> {
     return 2;
   }
   // Auto-discover user registry layers (spec §15). custom > official > core.
+  // The official layer is the trusted one, so it is signature-checked before it
+  // is loaded: a tampered or unsigned official def causes the WHOLE official
+  // layer to be dropped (fail-closed) with a stderr warning, rather than letting
+  // an untrusted "trusted" def in. The custom (draft) layer is not signed by
+  // design and loads as-is.
   const registryDirs = userRegistryDirs();
+  const officialDir = await trustedOfficialDir(registryDirs.official);
   const runtime = await Runtime.withCore({
     policy,
-    officialDir: registryDirs.official,
+    officialDir,
     customDir: registryDirs.custom,
     logWriter: new OpenLogWriter({}),
     // Interactive approval only when not in CI and the user passed --yes is NOT
@@ -289,6 +319,40 @@ function userRegistryDirs(): { official: string; custom: string } {
     official: join(idelHome, "official"),
     custom: join(idelHome, "custom"),
   };
+}
+
+/**
+ * Verify the signed official layer before it is trusted at load time. Returns
+ * the dir to load if everything verifies (or the layer is empty/absent), or
+ * `undefined` to skip loading the official layer entirely when ANY def fails —
+ * a tampered "trusted" layer is dropped wholesale (fail-closed), not partially
+ * honored. Verification failures are surfaced on stderr; `idel registry verify`
+ * gives the full report.
+ */
+async function trustedOfficialDir(dir: string): Promise<string | undefined> {
+  let report;
+  try {
+    report = await verifyOfficialLayer(dir);
+  } catch {
+    // A verification error (unreadable manifest, malformed file) is itself a
+    // reason not to trust the layer.
+    process.stderr.write(
+      color.yellow(
+        `warning: could not verify the official registry layer at ${dir}; ` +
+          `skipping it. Run \`idel registry verify\` for details.\n`,
+      ),
+    );
+    return undefined;
+  }
+  if (report.checked === 0) return dir; // nothing signed to distrust
+  if (report.ok) return dir;
+  process.stderr.write(
+    color.yellow(
+      `warning: ${report.failures} official command(s) failed signature verification — ` +
+        `the official layer is NOT loaded. Run \`idel registry verify\` for details.\n`,
+    ),
+  );
+  return undefined;
 }
 
 function makeContext(flags: CliFlags): RuntimeContext {

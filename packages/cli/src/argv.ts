@@ -9,9 +9,22 @@
  */
 
 export interface CliInvocation {
-  /** Top-level subcommand: "run" (default), "ask", "learn", "terminal", "serve", "completion", "help", "version". */
-  mode: "run" | "ask" | "learn" | "terminal" | "serve" | "completion" | "help" | "version";
-  /** The reassembled IDEL command string (run mode), NL intent (ask), or CLI name (learn). */
+  /** Top-level subcommand: "run" (default), "ask", "learn", "promote", "registry", "terminal", "serve", "completion", "help", "version". */
+  mode:
+    | "run"
+    | "ask"
+    | "learn"
+    | "promote"
+    | "registry"
+    | "terminal"
+    | "serve"
+    | "completion"
+    | "help"
+    | "version";
+  /**
+   * The reassembled IDEL command string (run mode), NL intent (ask), CLI name
+   * (learn/promote), or registry subcommand (registry, e.g. "verify").
+   */
   command: string;
   /** Whether the command is a native passthrough (leading `!`). */
   native: boolean;
@@ -134,6 +147,24 @@ export function parseArgv(argv: string[]): CliInvocation {
     // `idel learn <cli>` — introspect an installed CLI and draft IDEL defs.
     return {
       mode: "learn",
+      command: rest.slice(1).join(" ").trim(),
+      native: false,
+      flags,
+    };
+  }
+  if (first === "promote") {
+    // `idel promote <cli>` — promote learned drafts to the signed official layer.
+    return {
+      mode: "promote",
+      command: rest.slice(1).join(" ").trim(),
+      native: false,
+      flags,
+    };
+  }
+  if (first === "registry") {
+    // `idel registry <subcommand>` — registry-layer maintenance (e.g. verify).
+    return {
+      mode: "registry",
       command: rest.slice(1).join(" ").trim(),
       native: false,
       flags,

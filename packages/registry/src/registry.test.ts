@@ -232,6 +232,36 @@ describe("loader — core registry", () => {
     const resolved = reg.resolve("remove.folder");
     expect(resolved?.source).toBe("core");
   });
+
+  it("skips *.sig.json signature manifests when loading a layer", async () => {
+    // `idel promote` writes promoted-<cli>.json (defs) alongside
+    // promoted-<cli>.sig.json (a signature manifest). The manifest is NOT a
+    // CommandDef array; the loader must skip it, not fail the whole layer.
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const dir = await mkdtemp(join(tmpdir(), "idel-sig-"));
+    try {
+      const def = {
+        id: "show.demo.status",
+        version: "0.1.0",
+        summary: "Demo.",
+        category: "demo",
+        riskDefault: "LOW",
+        params: {},
+        adapters: { posix: { command: "demo", args: [{ kind: "literal", value: "status" }] } },
+      };
+      await writeFile(join(dir, "promoted-demo.json"), JSON.stringify([def]));
+      await writeFile(
+        join(dir, "promoted-demo.sig.json"),
+        JSON.stringify({ manifestVersion: 1, entries: [] }),
+      );
+      const { defs, problems } = await loadLayerFromDir(dir, "official");
+      expect(problems).toEqual([]);
+      expect(defs.map((d) => d.id)).toEqual(["show.demo.status"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

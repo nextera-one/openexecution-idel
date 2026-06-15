@@ -10,6 +10,8 @@ USAGE
   idel ask.ai prompt="<request>"       IDEL-shaped alias for the AI console
   idel learn <cli> [--write]           teach IDEL an installed CLI (drafts IDEL commands from its --help)
   learn <cli>                          same command inside \`idel terminal\`
+  idel promote <cli> [--yes]           promote learned drafts to the signed official layer (re-verify + sign)
+  idel registry verify                 check signatures on the official registry layer (fail-closed)
   idel editor <file>                   open a file in your local editor (TTY only)
   idel terminal                        interactive IDEL terminal (readline REPL; \`? <ask>\` for Claude)
   idel serve [--port N] [--static D]   start the local web/desktop terminal server
@@ -34,6 +36,8 @@ EXAMPLES
   idel ask.ai prompt="delete the dist folder"
   idel learn gh --write                      (drafts IDEL commands for the gh CLI into the custom layer)
   learn.cli cli=git
+  idel promote gh                            (review + sign gh drafts into the official layer)
+  idel registry verify                       (verify every signed official command)
 
 CLAUDE
   The Claude console (ask.ai, idel ask, \`?\` in terminal, the web "Ask Claude") reaches

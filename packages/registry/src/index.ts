@@ -39,3 +39,20 @@ export type {
 // Coercion
 export { coerceParams } from "./coerce.js";
 export type { CoerceResult } from "./coerce.js";
+
+// Signing (promoted "official" layer integrity)
+export {
+  canonicalizeDef,
+  sha256Hex,
+  signDef,
+  verifyDef,
+  REGISTRY_MANIFEST_VERSION,
+} from "./signing.js";
+export type {
+  SignedRegistryEntry,
+  SignedRegistryManifest,
+  SigningKey,
+  DefSignature,
+  VerifyDefResult,
+  VerifyDefFailure,
+} from "./signing.js";
