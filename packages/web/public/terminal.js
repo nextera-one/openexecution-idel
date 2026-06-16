@@ -27,6 +27,16 @@ const actionsMenuOpen = $("actions-menu-open");
 const actionsMenuDialog = $("actions-menu-dialog");
 const newTerminalBtn = $("new-terminal");
 const newNativeTerminalBtn = $("new-native-terminal");
+const searchDialog = $("search-dialog");
+const searchOpen = $("search-open");
+const searchClose = $("search-close");
+const searchInput = $("search-input");
+const searchCase = $("search-case");
+const searchRegex = $("search-regex");
+const searchScopeButtons = Array.from(document.querySelectorAll("[data-search-scope]"));
+const searchResultsEl = $("search-results");
+const searchEmpty = $("search-empty");
+const searchCount = $("search-count");
 const paletteDialog = $("palette-dialog");
 const paletteOpen = $("palette-open");
 const paletteClose = $("palette-close");
@@ -82,6 +92,9 @@ const blockCopyInput = $("pref-block-copy");
 const askContextModeButtons = Array.from(document.querySelectorAll("[data-ask-context-mode]"));
 const askContextPick = $("ask-context-pick");
 const askContextCount = $("ask-context-count");
+const autoApproveInput = $("pref-auto-approve");
+const autoApprovePatternInput = $("pref-auto-approve-patterns");
+const autoApproveRiskButtons = Array.from(document.querySelectorAll("[data-auto-approve-risk]"));
 const askContextDialog = $("ask-context-dialog");
 const askContextClose = $("ask-context-close");
 const askContextSelectAll = $("ask-context-select-all");
@@ -176,6 +189,9 @@ const PREF_KEYS = {
 const ASK_CONTEXT_MODE_KEY = "idel.ask.contextMode";
 const ASK_CONTEXT_SELECTED_KEY = "idel.ask.contextSelected";
 const ASK_TRANSCRIPT_KEY = "idel.ask.transcript";
+const AUTO_APPROVE_ENABLED_KEY = "idel.autoApprove.enabled";
+const AUTO_APPROVE_PATTERNS_KEY = "idel.autoApprove.patterns";
+const AUTO_APPROVE_RISK_KEY = "idel.autoApprove.maxRisk";
 const WORKFLOW_KEY = "idel.workflows";
 const SETUP_DISMISSED_KEY = "idel.setup.dismissed";
 const PAGE_EXIT_MESSAGE =
@@ -189,13 +205,68 @@ const DEFAULT_PREFERENCES = {
   blockPaste: false,
   blockCopy: false,
 };
-const ASK_CONTEXT_MODES = new Set(["none", "all", "selected"]);
+const ASK_CONTEXT_MODES = new Set(["none", "auto", "all", "selected"]);
 const ASK_CONTEXT_LIMIT = 20;
 const ASK_CONTEXT_MAX_CHARS = 24000;
 const ASK_TURN_MAX_CHARS = 5000;
+const ASK_AUTO_CONTEXT_LIMIT = 8;
+const ASK_AUTO_CONTEXT_STOP_WORDS = new Set([
+  "about",
+  "after",
+  "again",
+  "also",
+  "and",
+  "answer",
+  "because",
+  "before",
+  "continue",
+  "could",
+  "from",
+  "have",
+  "into",
+  "last",
+  "make",
+  "more",
+  "need",
+  "please",
+  "prev",
+  "previous",
+  "question",
+  "that",
+  "the",
+  "then",
+  "there",
+  "this",
+  "use",
+  "what",
+  "when",
+  "with",
+  "would",
+  "write",
+  "you",
+]);
+const AUTO_APPROVE_RISKS = new Set(["LOW", "MEDIUM"]);
+const AUTO_APPROVE_RISK_ORDER = new Map([
+  ["LOW", 1],
+  ["MEDIUM", 2],
+  ["HIGH", 3],
+  ["CRITICAL", 4],
+]);
+const DEFAULT_AUTO_APPROVE_PATTERNS = ["list.*", "show.*", "explain.*", "check.*"].join("\n");
+const SEARCH_SCOPES = new Set(["all", "ai-prompt", "ai-answer", "idel-command", "idel-reply"]);
+const SEARCH_RESULT_LIMIT = 200;
 let askContextMode = "none";
 let askContextSelected = new Set();
 let askTranscript = [];
+let autoApproveEnabled = false;
+let autoApprovePatterns = DEFAULT_AUTO_APPROVE_PATTERNS;
+let autoApproveMaxRisk = "LOW";
+let searchScope = "all";
+let searchCaseSensitive = false;
+let searchUseRegex = false;
+let searchResults = [];
+let searchFocusedLine = null;
+let searchFocusTimer = 0;
 
 function setServerPlatform(platformName) {
   const next = String(platformName ?? "").toLowerCase();
@@ -232,6 +303,7 @@ function serverPlatformKind() {
 function initPreferences() {
   applyPreferences(readPreferences(), false);
   loadAskContextState();
+  loadAutoApproveState();
   initHeaderMenus();
   for (const btn of themeButtons) {
     btn.addEventListener("click", () => {
@@ -267,6 +339,15 @@ function initPreferences() {
       setAskContextMode(btn.dataset.askContextMode);
       if (btn.dataset.askContextMode === "selected") openAskContextDialog();
     });
+  }
+  autoApproveInput?.addEventListener("change", () => {
+    setAutoApproveEnabled(autoApproveInput.checked);
+  });
+  autoApprovePatternInput?.addEventListener("input", () => {
+    setAutoApprovePatterns(autoApprovePatternInput.value);
+  });
+  for (const btn of autoApproveRiskButtons) {
+    btn.addEventListener("click", () => setAutoApproveMaxRisk(btn.dataset.autoApproveRisk));
   }
   askContextPick?.addEventListener("click", openAskContextDialog);
   askContextClose?.addEventListener("click", closeAskContextDialog);
@@ -493,11 +574,402 @@ function closeCommandPalette() {
   focusActiveInput();
 }
 
+function initAdvancedSearch() {
+  searchOpen?.addEventListener("click", openAdvancedSearch);
+  searchClose?.addEventListener("click", closeAdvancedSearch);
+  searchInput?.addEventListener("input", renderAdvancedSearch);
+  searchInput?.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeAdvancedSearch();
+      return;
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const firstLive = searchResults.find((result) => result.node);
+      if (firstLive) goToSearchResult(firstLive);
+    }
+  });
+  searchCase?.addEventListener("click", () => {
+    searchCaseSensitive = !searchCaseSensitive;
+    renderAdvancedSearch();
+  });
+  searchRegex?.addEventListener("click", () => {
+    searchUseRegex = !searchUseRegex;
+    renderAdvancedSearch();
+  });
+  for (const btn of searchScopeButtons) {
+    btn.addEventListener("click", () => {
+      setSearchScope(btn.dataset.searchScope);
+      renderAdvancedSearch();
+    });
+  }
+  searchDialog?.addEventListener("cancel", (e) => {
+    e.preventDefault();
+    closeAdvancedSearch();
+  });
+  searchDialog?.addEventListener("click", (e) => {
+    if (e.target === searchDialog) closeAdvancedSearch();
+  });
+  window.addEventListener("keydown", (e) => {
+    const key = e.key.toLowerCase();
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && key === "f") {
+      e.preventDefault();
+      openAdvancedSearch();
+    }
+  });
+  syncSearchControls();
+}
+
+function openAdvancedSearch() {
+  if (!searchDialog) return;
+  if (typeof searchDialog.showModal === "function") searchDialog.showModal();
+  else searchDialog.setAttribute("open", "");
+  renderAdvancedSearch();
+  searchInput?.focus();
+  searchInput?.select?.();
+}
+
+function closeAdvancedSearch(options = {}) {
+  if (!searchDialog) return;
+  if (typeof searchDialog.close === "function" && searchDialog.open) searchDialog.close();
+  else searchDialog.removeAttribute("open");
+  if (options.focus !== false) focusActiveInput();
+}
+
+function setSearchScope(scope) {
+  searchScope = SEARCH_SCOPES.has(scope) ? scope : "all";
+}
+
+function syncSearchControls() {
+  for (const btn of searchScopeButtons) {
+    const active = btn.dataset.searchScope === searchScope;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-pressed", String(active));
+  }
+  searchCase?.classList.toggle("active", searchCaseSensitive);
+  searchCase?.setAttribute("aria-pressed", String(searchCaseSensitive));
+  searchRegex?.classList.toggle("active", searchUseRegex);
+  searchRegex?.setAttribute("aria-pressed", String(searchUseRegex));
+}
+
+function renderAdvancedSearch() {
+  if (!searchResultsEl) return;
+  syncSearchControls();
+  searchResultsEl.replaceChildren();
+  const query = searchInput?.value ?? "";
+  const matcher = createSearchMatcher(query);
+  if (searchCount) searchCount.textContent = "0 results";
+
+  if (!query.trim()) {
+    searchResults = [];
+    setSearchEmpty("Type to search.");
+    return;
+  }
+  if (matcher.error) {
+    searchResults = [];
+    setSearchEmpty(matcher.error);
+    return;
+  }
+
+  const records = collectSearchRecords();
+  const matches = [];
+  let total = 0;
+  for (const record of records) {
+    const match = matcher.find(record.text);
+    if (!match) continue;
+    total += 1;
+    if (matches.length < SEARCH_RESULT_LIMIT) matches.push({ ...record, match });
+  }
+  searchResults = matches;
+  if (searchCount) {
+    searchCount.textContent = `${total}${total > SEARCH_RESULT_LIMIT ? "+" : ""} result${total === 1 ? "" : "s"}`;
+  }
+  if (!matches.length) {
+    setSearchEmpty("No matches.");
+    return;
+  }
+  if (searchEmpty) searchEmpty.hidden = true;
+  for (const result of matches) searchResultsEl.appendChild(renderSearchResult(result, matcher));
+}
+
+function setSearchEmpty(text) {
+  if (!searchEmpty) return;
+  searchEmpty.textContent = text;
+  searchEmpty.hidden = false;
+}
+
+function createSearchMatcher(query) {
+  const raw = String(query ?? "");
+  if (searchUseRegex) {
+    try {
+      const flags = searchCaseSensitive ? "m" : "im";
+      new RegExp(raw, flags);
+      return {
+        regex: true,
+        find(text) {
+          const re = new RegExp(raw, flags);
+          const match = re.exec(String(text ?? ""));
+          if (!match) return null;
+          return { index: match.index, length: Math.max(1, match[0].length) };
+        },
+        globalRegex() {
+          return new RegExp(raw, `${flags}g`);
+        },
+      };
+    } catch (err) {
+      return { error: `Invalid regex: ${err?.message ?? "could not parse pattern"}` };
+    }
+  }
+
+  const needle = searchCaseSensitive ? raw : raw.toLowerCase();
+  return {
+    regex: false,
+    needle,
+    find(text) {
+      const haystack = searchCaseSensitive ? String(text ?? "") : String(text ?? "").toLowerCase();
+      const index = haystack.indexOf(needle);
+      return index >= 0 ? { index, length: needle.length } : null;
+    },
+  };
+}
+
+function collectSearchRecords() {
+  return [
+    ...collectTerminalSearchRecords(),
+    ...collectAskTranscriptSearchRecords(),
+  ].filter((record) => searchScope === "all" || record.source === searchScope);
+}
+
+function collectAskTranscriptSearchRecords() {
+  const records = [];
+  for (const turn of askTranscript.slice().reverse()) {
+    const detail = formatAskTurnTime(turn) || "saved AI memory";
+    if (turn.question) {
+      records.push({
+        source: "ai-prompt",
+        title: "AI prompt",
+        detail,
+        text: turn.question,
+      });
+    }
+    if (turn.answer) {
+      records.push({
+        source: "ai-answer",
+        title: "AI answer",
+        detail,
+        text: turn.answer,
+      });
+    }
+  }
+  return records;
+}
+
+function collectTerminalSearchRecords() {
+  const records = [];
+  for (const tab of tabs) {
+    if (tab.type !== "terminal") continue;
+    const lines = terminalLines(tab.pane);
+    let segment = "";
+    for (let i = 0; i < lines.length; i++) {
+      const node = lines[i];
+      const text = searchableLineText(node).trim();
+      if (!text) continue;
+      const classes = node.classList;
+
+      if (classes.contains("cmd")) {
+        const command = commandFromLineText(text);
+        const isAiCommand = text.startsWith("?") || isAskCommandText(command);
+        if (!text.startsWith("?")) {
+          records.push(searchRecord("idel-command", text, tab, node, i));
+        }
+        segment = isAiCommand ? "ai" : "idel";
+        continue;
+      }
+
+      const batchCommand = batchCommandFromLineText(text);
+      if (batchCommand) {
+        records.push(searchRecord("idel-command", text, tab, node, i));
+        segment = "idel";
+        continue;
+      }
+
+      if (classes.contains("ask")) {
+        segment = "ai";
+        continue;
+      }
+      if (classes.contains("ai-progress") || classes.contains("approval")) {
+        continue;
+      }
+      if (segment === "idel") records.push(searchRecord("idel-reply", text, tab, node, i));
+    }
+  }
+  return records;
+}
+
+function searchRecord(source, text, tab, node, index) {
+  return {
+    source,
+    title: searchSourceLabel(source),
+    detail: `${tab.title} · line ${index + 1}`,
+    text,
+    tabId: tab.id,
+    node,
+  };
+}
+
+function searchableLineText(node) {
+  const body = Array.from(node.children ?? []).find((child) => child.classList?.contains("line-body"));
+  return String(body?.innerText || body?.textContent || node.innerText || node.textContent || "");
+}
+
+function isAskCommandText(command) {
+  if (!command) return false;
+  try {
+    return parseIdelLine(command).command === "ask.ai";
+  } catch {
+    return String(command).trim().startsWith("ask.ai");
+  }
+}
+
+function batchCommandFromLineText(text) {
+  return String(text ?? "").match(/^(?:nested\s+)?batch\s+\d+\/\d+>\s+(.+)$/i)?.[1]?.trim() ?? "";
+}
+
+function searchSourceLabel(source) {
+  switch (source) {
+    case "ai-prompt":
+      return "AI prompt";
+    case "ai-answer":
+      return "AI answer";
+    case "idel-command":
+      return "IDEL command";
+    case "idel-reply":
+      return "IDEL reply";
+    default:
+      return "Search result";
+  }
+}
+
+function renderSearchResult(result, matcher) {
+  const item = document.createElement("article");
+  item.className = `search-result search-result-${result.source}`;
+
+  const head = document.createElement("div");
+  head.className = "search-result-head";
+  const title = document.createElement("span");
+  title.textContent = result.title;
+  const detail = document.createElement("small");
+  detail.textContent = result.detail;
+  head.append(title, detail);
+
+  const snippet = document.createElement("button");
+  snippet.type = "button";
+  snippet.className = "search-result-snippet";
+  snippet.disabled = !result.node;
+  appendHighlightedSearchText(snippet, searchSnippet(result.text, result.match), matcher);
+  snippet.addEventListener("click", () => {
+    if (result.node) goToSearchResult(result);
+  });
+
+  const actions = document.createElement("div");
+  actions.className = "search-result-actions";
+  if (result.node) {
+    const go = document.createElement("button");
+    go.type = "button";
+    go.className = "editor-btn";
+    go.textContent = "Go";
+    go.addEventListener("click", () => goToSearchResult(result));
+    actions.appendChild(go);
+  }
+  const copy = document.createElement("button");
+  copy.type = "button";
+  copy.className = "editor-btn";
+  copy.textContent = "Copy";
+  copy.addEventListener("click", () => void copyLineText(result.text, copy));
+  actions.appendChild(copy);
+
+  item.append(head, snippet, actions);
+  return item;
+}
+
+function searchSnippet(text, match) {
+  const value = String(text ?? "");
+  const index = Math.max(0, match?.index ?? 0);
+  const length = Math.max(1, match?.length ?? 1);
+  const start = Math.max(0, index - 90);
+  const end = Math.min(value.length, index + length + 140);
+  const prefix = start > 0 ? "... " : "";
+  const suffix = end < value.length ? " ..." : "";
+  return `${prefix}${value.slice(start, end).replace(/\s+/g, " ").trim()}${suffix}`;
+}
+
+function appendHighlightedSearchText(parent, text, matcher) {
+  const value = String(text ?? "");
+  if (!value) return;
+  if (matcher.regex) {
+    const re = matcher.globalRegex();
+    let last = 0;
+    let match;
+    while ((match = re.exec(value))) {
+      const length = Math.max(1, match[0].length);
+      if (match.index > last) parent.appendChild(document.createTextNode(value.slice(last, match.index)));
+      const mark = document.createElement("mark");
+      mark.textContent = value.slice(match.index, match.index + length);
+      parent.appendChild(mark);
+      last = match.index + length;
+      if (match[0].length === 0) re.lastIndex += 1;
+    }
+    if (last < value.length) parent.appendChild(document.createTextNode(value.slice(last)));
+    return;
+  }
+
+  const needle = matcher.needle;
+  if (!needle) {
+    parent.appendChild(document.createTextNode(value));
+    return;
+  }
+  const haystack = searchCaseSensitive ? value : value.toLowerCase();
+  let index = 0;
+  for (;;) {
+    const found = haystack.indexOf(needle, index);
+    if (found < 0) break;
+    if (found > index) parent.appendChild(document.createTextNode(value.slice(index, found)));
+    const mark = document.createElement("mark");
+    mark.textContent = value.slice(found, found + needle.length);
+    parent.appendChild(mark);
+    index = found + needle.length;
+  }
+  if (index < value.length) parent.appendChild(document.createTextNode(value.slice(index)));
+}
+
+function goToSearchResult(result) {
+  if (!result?.node || !result.node.isConnected) return;
+  closeAdvancedSearch({ focus: false });
+  switchTab(result.tabId);
+  window.setTimeout(() => {
+    result.node.scrollIntoView({ block: "center", behavior: "smooth" });
+    focusSearchLine(result.node);
+  }, 40);
+}
+
+function focusSearchLine(node) {
+  if (searchFocusedLine) searchFocusedLine.classList.remove("search-focus");
+  window.clearTimeout(searchFocusTimer);
+  searchFocusedLine = node;
+  node.classList.add("search-focus");
+  searchFocusTimer = window.setTimeout(() => {
+    node.classList.remove("search-focus");
+    if (searchFocusedLine === node) searchFocusedLine = null;
+  }, 1800);
+}
+
 function buildPaletteItems(query) {
   const active = activeTab();
   const actions = [
     paletteAction("New terminal", "Workspace", "Open a new terminal tab", () => createTerminalTab(true)),
     paletteAction("New native shell", "Workspace", "Open a direct OS shell tab", () => createNativeTerminalTab(true)),
+    paletteAction("Search terminal history", "Search", "Prompts, answers, commands, and replies", openAdvancedSearch),
     paletteAction("Open shell sessions", "Workspace", "Attach, focus, or close native shell sessions", () => void openNativeSessionsDialog()),
     paletteAction("Open dictionary", "Reference", "Search IDEL to OS mappings", () => void openDictionary()),
     paletteAction("Open knowledge base", "Reference", "Batch, native, sudo, and package examples", openKnowledgeBase),
@@ -1927,6 +2399,46 @@ function clipAskText(value, limit = ASK_TURN_MAX_CHARS) {
   return `${text.slice(0, limit - 80).trimEnd()}\n... clipped ${text.length - limit + 80} character(s)`;
 }
 
+function loadAutoApproveState() {
+  autoApproveEnabled = storageGet(AUTO_APPROVE_ENABLED_KEY) === "true";
+  const storedPatterns = storageGet(AUTO_APPROVE_PATTERNS_KEY);
+  autoApprovePatterns = storedPatterns === null ? DEFAULT_AUTO_APPROVE_PATTERNS : String(storedPatterns);
+  const storedRisk = String(storageGet(AUTO_APPROVE_RISK_KEY) || "").toUpperCase();
+  autoApproveMaxRisk = AUTO_APPROVE_RISKS.has(storedRisk) ? storedRisk : "LOW";
+  syncAutoApproveUi();
+}
+
+function setAutoApproveEnabled(enabled, persist = true) {
+  autoApproveEnabled = enabled === true;
+  if (persist) storageSet(AUTO_APPROVE_ENABLED_KEY, String(autoApproveEnabled));
+  syncAutoApproveUi();
+}
+
+function setAutoApprovePatterns(patterns, persist = true) {
+  autoApprovePatterns = String(patterns ?? "");
+  if (persist) storageSet(AUTO_APPROVE_PATTERNS_KEY, autoApprovePatterns);
+  syncAutoApproveUi();
+}
+
+function setAutoApproveMaxRisk(risk, persist = true) {
+  const next = String(risk || "").toUpperCase();
+  autoApproveMaxRisk = AUTO_APPROVE_RISKS.has(next) ? next : "LOW";
+  if (persist) storageSet(AUTO_APPROVE_RISK_KEY, autoApproveMaxRisk);
+  syncAutoApproveUi();
+}
+
+function syncAutoApproveUi() {
+  if (autoApproveInput) autoApproveInput.checked = autoApproveEnabled;
+  if (autoApprovePatternInput && autoApprovePatternInput.value !== autoApprovePatterns) {
+    autoApprovePatternInput.value = autoApprovePatterns;
+  }
+  for (const btn of autoApproveRiskButtons) {
+    const active = btn.dataset.autoApproveRisk === autoApproveMaxRisk;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-pressed", String(active));
+  }
+}
+
 function loadAskContextState() {
   const modeValue = storageGet(ASK_CONTEXT_MODE_KEY);
   askContextMode = ASK_CONTEXT_MODES.has(modeValue) ? modeValue : "none";
@@ -1992,6 +2504,8 @@ function syncAskContextUi() {
     askContextCount.textContent =
       askContextMode === "all"
         ? `${savedCount} saved`
+        : askContextMode === "auto"
+          ? `${savedCount} saved`
         : askContextMode === "selected"
           ? `${selectedCount} picked`
           : `${savedCount} saved`;
@@ -2027,8 +2541,9 @@ function appendAskTurnEvent(turn, text) {
   saveAskTranscript();
 }
 
-function askContextTurnsForRequest() {
+function askContextTurnsForRequest(intent = "") {
   if (askContextMode === "none") return [];
+  if (askContextMode === "auto") return autoAskContextTurns(intent);
   if (askContextMode === "all") return askTranscript.slice(-ASK_CONTEXT_LIMIT);
   if (askContextMode === "selected") {
     return askTranscript.filter((turn) => askContextSelected.has(turn.id)).slice(-ASK_CONTEXT_LIMIT);
@@ -2036,8 +2551,48 @@ function askContextTurnsForRequest() {
   return [];
 }
 
-function buildAskIntentWithContext(intent) {
-  const turns = askContextTurnsForRequest();
+function autoAskContextTurns(intent) {
+  const turns = askTranscript.slice(-ASK_CONTEXT_LIMIT);
+  if (!turns.length) return [];
+  const queryKeywords = askContextKeywords(intent);
+  const continuationHint = /\b(continue|again|previous|prior|last|same|that|this|it|answer|above|ontiue)\b/i.test(intent);
+  if (!queryKeywords.size && continuationHint) return turns.slice(-Math.min(4, ASK_AUTO_CONTEXT_LIMIT));
+  if (!queryKeywords.size) return [];
+
+  const now = Date.now();
+  const scored = turns
+    .map((turn, index) => {
+      const haystack = askContextKeywords([turn.question, turn.answer, ...(turn.events ?? [])].join("\n"));
+      let overlap = 0;
+      for (const keyword of queryKeywords) {
+        if (haystack.has(keyword)) overlap += 1;
+      }
+      const ageHours = Math.max(0, (now - Number(turn.createdAt || now)) / 36e5);
+      const recency = Math.max(0, 1 - ageHours / 168);
+      const score = overlap * 10 + recency + index / 1000;
+      return { turn, overlap, score };
+    })
+    .filter((item) => item.overlap > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, ASK_AUTO_CONTEXT_LIMIT)
+    .map((item) => item.turn);
+
+  if (!scored.length && continuationHint) return turns.slice(-Math.min(4, ASK_AUTO_CONTEXT_LIMIT));
+  return scored.sort((a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0));
+}
+
+function askContextKeywords(value) {
+  const words = String(value ?? "").toLowerCase().match(/[a-z0-9_.-]{3,}/g) ?? [];
+  const keywords = new Set();
+  for (const word of words) {
+    const normalized = word.replace(/^[_.-]+|[_.-]+$/g, "");
+    if (!normalized || ASK_AUTO_CONTEXT_STOP_WORDS.has(normalized)) continue;
+    keywords.add(normalized);
+  }
+  return keywords;
+}
+
+function buildAskIntentWithContext(intent, turns = askContextTurnsForRequest(intent)) {
   if (!turns.length) return intent;
   const blocks = [];
   let total = 0;
@@ -2065,6 +2620,120 @@ function formatAskTurnForContext(turn) {
   if (turn.answer) parts.push(`Assistant: ${clipAskText(turn.answer, ASK_TURN_MAX_CHARS)}`);
   if (turn.events?.length) parts.push(`Runtime events:\n${turn.events.map((item) => `- ${item}`).join("\n")}`);
   return parts.join("\n");
+}
+
+function autoApproveDecision(data) {
+  if (!autoApproveEnabled) return { approve: false, reason: "disabled" };
+  const command = String(data?.command ?? "").trim();
+  if (!data?.approvalId || !command) return { approve: false, reason: "missing approval request" };
+  const outcome = data.outcome;
+  const action = String(outcome?.decision?.action ?? "").toLowerCase();
+  const result = String(outcome?.record?.result ?? "").toLowerCase();
+  if (action === "block" || result === "blocked_before_execution") {
+    return { approve: false, reason: "blocked by policy" };
+  }
+  if (result !== "dry_run") {
+    return { approve: false, reason: `not auto-approved because result is ${result || "unknown"}` };
+  }
+  const risk = String(outcome?.risk?.level ?? "").toUpperCase();
+  const riskValue = autoApproveRiskValue(risk);
+  if (!risk || riskValue > autoApproveRiskValue(autoApproveMaxRisk)) {
+    return { approve: false, reason: `risk ${risk || "unknown"} is above ${autoApproveMaxRisk}` };
+  }
+  const pattern = matchingAutoApprovePattern(command);
+  if (!pattern) return { approve: false, reason: "command does not match auto-approve rules" };
+  return { approve: true, reason: `${pattern}, ${risk}` };
+}
+
+function maybeAutoApproveAgentRequest(data, askTurn) {
+  const decision = autoApproveDecision(data);
+  if (!decision.approve) return false;
+  const command = String(data.command ?? "").trim();
+  line("↳ wants to run for REAL: " + command, "ask");
+  if (data.outcome) renderOutcome(data.outcome);
+  line(`↳ auto-approved: ${command} (${decision.reason})`, "ok");
+  appendAskTurnEvent(askTurn, `Auto-approved: ${command} (${decision.reason})`);
+  void sendAgentApproval(data, true).catch(() => {
+    line("(auto approval failed — choose manually)", "err");
+    appendAskTurnEvent(askTurn, "Auto approval failed: " + command);
+    renderApprovalPrompt(data);
+  });
+  return true;
+}
+
+function autoApproveRuleDecision(data) {
+  const command = String(data?.command ?? "").replace(/\s+/g, " ").trim();
+  if (!data?.approvalId || !command) return { allowed: false, reason: "missing approval request" };
+  const outcome = data.outcome;
+  const action = String(outcome?.decision?.action ?? "").toLowerCase();
+  const result = String(outcome?.record?.result ?? "").toLowerCase();
+  if (action === "block" || result === "blocked_before_execution") {
+    return { allowed: false, reason: "blocked by policy" };
+  }
+  if (result !== "dry_run") {
+    return { allowed: false, reason: "needs a clean dry-run first" };
+  }
+  const risk = String(outcome?.risk?.level ?? "").toUpperCase();
+  if (!risk || autoApproveRiskValue(risk) > autoApproveRiskValue("LOW")) {
+    return { allowed: false, reason: `only LOW risk commands can be added here; this is ${risk || "unknown"}` };
+  }
+  return { allowed: true, command, pattern: command, risk };
+}
+
+function appendAutoApproveRule(pattern) {
+  const nextPattern = String(pattern ?? "").replace(/\s+/g, " ").trim();
+  if (!nextPattern) return { added: false, pattern: "" };
+  const exists = autoApprovePatternList().some((item) => item.toLowerCase() === nextPattern.toLowerCase());
+  if (!exists) {
+    const current = String(autoApprovePatterns ?? "").trimEnd();
+    setAutoApprovePatterns(current ? `${current}\n${nextPattern}` : nextPattern);
+  }
+  setAutoApproveEnabled(true);
+  return { added: !exists, pattern: nextPattern };
+}
+
+function autoApproveRiskValue(risk) {
+  return AUTO_APPROVE_RISK_ORDER.get(String(risk || "").toUpperCase()) ?? Number.POSITIVE_INFINITY;
+}
+
+function autoApprovePatternList() {
+  return String(autoApprovePatterns ?? "")
+    .split(/[\n,]+/)
+    .map((item) => item.trim())
+    .filter((item) => item && !item.startsWith("#"));
+}
+
+function matchingAutoApprovePattern(command) {
+  const commandId = autoApproveCommandId(command);
+  return autoApprovePatternList().find((pattern) => {
+    const re = globPatternRegex(pattern);
+    return re.test(commandId) || re.test(command);
+  }) ?? "";
+}
+
+function autoApproveCommandId(command) {
+  const text = String(command ?? "").trim().replace(/^idel>\s*/i, "");
+  return text.split(/\s+/, 1)[0] ?? "";
+}
+
+function globPatternRegex(pattern) {
+  let body = "";
+  for (const ch of String(pattern ?? "")) {
+    if (ch === "*") body += ".*";
+    else if (ch === "?") body += ".";
+    else if ("\\^$+?.()|{}[]".includes(ch)) body += `\\${ch}`;
+    else body += ch;
+  }
+  return new RegExp(`^${body}$`, "i");
+}
+
+async function sendAgentApproval(data, approve) {
+  const res = await fetch("/api/agent/approve", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ approvalId: data.approvalId, approve }),
+  });
+  if (!res.ok) throw new Error(`approval failed with HTTP ${res.status}`);
 }
 
 function askTurnSummary(turn) {
@@ -5073,8 +5742,8 @@ async function runAsk(intent, displayLine) {
     openClaudeSetupDialog({ switchToAsk: true });
     return;
   }
-  const contextTurns = askContextTurnsForRequest();
-  const requestIntent = buildAskIntentWithContext(userIntent);
+  const contextTurns = askContextTurnsForRequest(userIntent);
+  const requestIntent = buildAskIntentWithContext(userIntent, contextTurns);
   const askTurn = beginAskTranscriptTurn(userIntent);
   line(displayLine ?? "? " + userIntent, displayLine ? "cmd" : "ask");
   if (contextTurns.length) {
@@ -5089,8 +5758,9 @@ async function runAsk(intent, displayLine) {
     progressVisible = false;
     progress.stop();
   };
-  // allowReal:true lets the agent request a REAL run — but each one still pauses
-  // here for an explicit human click (the server parks until we POST /approve).
+  // allowReal:true lets the agent request a REAL run. Each request still parks
+  // server-side until this client posts either a manual or user-configured
+  // automatic approval decision.
   try {
     await postSse("/api/agent/stream", { intent: requestIntent, allowReal: true }, (event, data) => {
       sawAgent = true;
@@ -5117,11 +5787,11 @@ async function runAsk(intent, displayLine) {
           break;
         case "approval_request":
           finishProgress();
-          // The agent is parked server-side awaiting our decision. Show the
-          // dry-run and Approve/Decline buttons; clicking POSTs the decision and
-          // the same SSE stream resumes with the real outcome (or the dry-run
-          // standing). No second connection, no key in the browser.
-          renderApprovalPrompt(data);
+          // The agent is parked server-side awaiting our decision. Auto-approval
+          // can resolve the parked request only after the dry-run matches the
+          // user's local rules; otherwise the manual buttons remain the gate.
+          if (maybeAutoApproveAgentRequest(data, askTurn)) break;
+          renderApprovalPrompt(data, askTurn);
           appendAskTurnEvent(askTurn, "Approval requested: " + data.command);
           break;
         case "needs_approval":
@@ -5166,8 +5836,8 @@ async function runAsk(intent, displayLine) {
   refreshLogs();
 }
 
-/** Render a real-run approval card with Approve / Decline buttons. */
-function renderApprovalPrompt(data) {
+/** Render a real-run approval card with Approve / Auto approve / Decline buttons. */
+function renderApprovalPrompt(data, askTurn = null) {
   line("↳ wants to run for REAL: " + data.command, "ask");
   if (data.outcome) renderOutcome(data.outcome);
 
@@ -5178,30 +5848,43 @@ function renderApprovalPrompt(data) {
   const yes = document.createElement("button");
   yes.className = "appr-btn yes";
   yes.textContent = "Approve";
+  const auto = document.createElement("button");
+  const autoRule = autoApproveRuleDecision(data);
+  auto.className = "appr-btn auto";
+  auto.textContent = "Auto approve";
+  auto.title = autoRule.allowed
+    ? "Approve this run and add this exact command to auto approve rules"
+    : `Auto approve unavailable: ${autoRule.reason}`;
+  auto.disabled = !autoRule.allowed;
   const no = document.createElement("button");
   no.className = "appr-btn no";
   no.textContent = "Decline";
 
   let settled = false;
-  const decide = async (approve) => {
+  const decide = async (approve, options = {}) => {
     if (settled) return;
     settled = true;
-    yes.disabled = no.disabled = true;
+    yes.disabled = auto.disabled = no.disabled = true;
     card.classList.add("decided");
-    q.textContent = approve ? "Approved — running… " : "Declined. ";
+    if (options.autoApproveRule && autoRule.allowed) {
+      const saved = appendAutoApproveRule(autoRule.pattern);
+      const verb = saved.added ? "saved" : "already saved";
+      q.textContent = `Auto-approved — ${verb}; running… `;
+      line(`↳ auto-approve rule ${verb}: ${saved.pattern}`, "ok");
+      appendAskTurnEvent(askTurn, `Auto-approve rule ${verb}: ${saved.pattern}`);
+    } else {
+      q.textContent = approve ? "Approved — running… " : "Declined. ";
+    }
     try {
-      await fetch("/api/agent/approve", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ approvalId: data.approvalId, approve }),
-      });
+      await sendAgentApproval(data, approve);
     } catch {
       line("(failed to send approval — the agent may have timed out)", "err");
     }
   };
   yes.addEventListener("click", () => decide(true));
+  auto.addEventListener("click", () => decide(true, { autoApproveRule: true }));
   no.addEventListener("click", () => decide(false));
-  card.append(q, yes, no);
+  card.append(q, yes, auto, no);
   html(card);
 }
 
@@ -5940,6 +6623,7 @@ initPreferences();
 initClaudeSetupDialog();
 initDictionary();
 initKnowledgeBase();
+initAdvancedSearch();
 initCommandPalette();
 initWorkflowDialog();
 initNativeSessionsDialog();

@@ -309,6 +309,7 @@ a:hover {
 .setup-checks,
 .dictionary-results,
 .knowledge-body,
+.preferences-dialog .preferences-panel,
 .completions,
 .logs,
 .workspace-tabs,
@@ -327,6 +328,7 @@ a:hover {
 .setup-checks:hover,
 .dictionary-results:hover,
 .knowledge-body:hover,
+.preferences-dialog .preferences-panel:hover,
 .completions:hover,
 .logs:hover,
 .workspace-tabs:hover,
@@ -343,6 +345,7 @@ a:hover {
 .setup-checks::-webkit-scrollbar,
 .dictionary-results::-webkit-scrollbar,
 .knowledge-body::-webkit-scrollbar,
+.preferences-dialog .preferences-panel::-webkit-scrollbar,
 .completions::-webkit-scrollbar,
 .logs::-webkit-scrollbar,
 .workspace-tabs::-webkit-scrollbar,
@@ -360,6 +363,7 @@ a:hover {
 .setup-checks::-webkit-scrollbar-track,
 .dictionary-results::-webkit-scrollbar-track,
 .knowledge-body::-webkit-scrollbar-track,
+.preferences-dialog .preferences-panel::-webkit-scrollbar-track,
 .completions::-webkit-scrollbar-track,
 .logs::-webkit-scrollbar-track,
 .workspace-tabs::-webkit-scrollbar-track,
@@ -376,6 +380,7 @@ a:hover {
 .setup-checks::-webkit-scrollbar-thumb,
 .dictionary-results::-webkit-scrollbar-thumb,
 .knowledge-body::-webkit-scrollbar-thumb,
+.preferences-dialog .preferences-panel::-webkit-scrollbar-thumb,
 .completions::-webkit-scrollbar-thumb,
 .logs::-webkit-scrollbar-thumb,
 .workspace-tabs::-webkit-scrollbar-thumb,
@@ -396,6 +401,7 @@ a:hover {
 .setup-checks::-webkit-scrollbar-thumb:hover,
 .dictionary-results::-webkit-scrollbar-thumb:hover,
 .knowledge-body::-webkit-scrollbar-thumb:hover,
+.preferences-dialog .preferences-panel::-webkit-scrollbar-thumb:hover,
 .completions::-webkit-scrollbar-thumb:hover,
 .logs::-webkit-scrollbar-thumb:hover,
 .workspace-tabs::-webkit-scrollbar-thumb:hover,
@@ -413,6 +419,7 @@ a:hover {
 .setup-checks::-webkit-scrollbar-thumb:active,
 .dictionary-results::-webkit-scrollbar-thumb:active,
 .knowledge-body::-webkit-scrollbar-thumb:active,
+.preferences-dialog .preferences-panel::-webkit-scrollbar-thumb:active,
 .completions::-webkit-scrollbar-thumb:active,
 .logs::-webkit-scrollbar-thumb:active,
 .workspace-tabs::-webkit-scrollbar-thumb:active,
@@ -429,6 +436,7 @@ a:hover {
 .setup-checks::-webkit-scrollbar-corner,
 .dictionary-results::-webkit-scrollbar-corner,
 .knowledge-body::-webkit-scrollbar-corner,
+.preferences-dialog .preferences-panel::-webkit-scrollbar-corner,
 .completions::-webkit-scrollbar-corner,
 .logs::-webkit-scrollbar-corner,
 .workspace-tabs::-webkit-scrollbar-corner,
@@ -1531,6 +1539,11 @@ h1 {
   color: var(--approval-yes-fg);
   border-color: transparent;
 }
+.appr-btn.auto {
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
+}
 .appr-btn.no {
   background: var(--panel);
   color: var(--fg-dim);
@@ -1960,6 +1973,7 @@ body.logs-hidden .term-side {
 .screenshot-dialog,
 .page-reload-dialog,
 .paste-confirm-dialog,
+.search-dialog,
 .ask-context-dialog {
   width: min(92vw, 30rem);
   max-height: calc(100dvh - 1.5rem);
@@ -1979,6 +1993,7 @@ body.logs-hidden .term-side {
 .screenshot-dialog::backdrop,
 .page-reload-dialog::backdrop,
 .paste-confirm-dialog::backdrop,
+.search-dialog::backdrop,
 .ask-context-dialog::backdrop {
   background: var(--overlay-bg);
   backdrop-filter: blur(3px);
@@ -1991,6 +2006,14 @@ body.logs-hidden .term-side {
   background: var(--panel);
   box-shadow: 0 24px 80px var(--shadow-soft);
 }
+.preferences-dialog .preferences-panel {
+  overflow-y: auto;
+}
+.preferences-dialog .preferences-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
 .dictionary-dialog {
   width: min(94vw, 64rem);
 }
@@ -2000,6 +2023,7 @@ body.logs-hidden .term-side {
 .workflow-dialog,
 .native-sessions-dialog,
 .setup-check-dialog,
+.search-dialog,
 .ask-context-dialog {
   width: min(94vw, 46rem);
 }
@@ -2011,6 +2035,7 @@ body.logs-hidden .term-side {
 .native-sessions-panel,
 .setup-check-panel,
 .dictionary-panel,
+.search-panel,
 .ask-context-panel {
   display: flex;
   flex-direction: column;
@@ -2030,7 +2055,38 @@ body.logs-hidden .term-side {
   border-bottom: 1px solid var(--border);
   background: var(--editor-head-bg);
 }
+.search-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.65rem;
+  align-items: center;
+  padding: 0.75rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--editor-head-bg);
+}
+.search-options,
+.search-scopes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+.search-scopes {
+  padding: 0.65rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-alt);
+}
+.search-meta {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0.45rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  color: var(--fg-dim);
+  font-family: var(--mono);
+  font-size: 0.74rem;
+}
 .palette-search input,
+.search-bar input,
 .workflow-editor input,
 .workflow-editor textarea {
   width: 100%;
@@ -2045,6 +2101,7 @@ body.logs-hidden .term-side {
   padding: 0.55rem 0.65rem;
 }
 .palette-search input:focus,
+.search-bar input:focus,
 .workflow-editor input:focus,
 .workflow-editor textarea:focus {
   border-color: var(--accent);
@@ -2054,6 +2111,7 @@ body.logs-hidden .term-side {
   line-height: 1.45;
 }
 .palette-results,
+.search-results,
 .workflow-list,
 .native-sessions-list,
 .setup-checks {
@@ -2078,6 +2136,66 @@ body.logs-hidden .term-side {
   width: 100%;
   cursor: pointer;
   text-align: left;
+}
+.search-result {
+  display: grid;
+  gap: 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-alt);
+  padding: 0.7rem 0.75rem;
+}
+.search-result-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.search-result-head span {
+  color: var(--fg);
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+.search-result-head small {
+  color: var(--fg-dim);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  text-align: right;
+}
+.search-result-snippet {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  padding: 0;
+  text-align: left;
+}
+.search-result-snippet:disabled {
+  cursor: default;
+}
+.search-result-snippet mark {
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--yellow) 42%, transparent);
+  color: var(--fg);
+  padding: 0 0.12rem;
+}
+.search-result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+.line.search-focus {
+  border-radius: 6px;
+  outline: 2px solid color-mix(in srgb, var(--accent) 72%, transparent);
+  outline-offset: 3px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 .palette-item:hover,
 .palette-item.sel {
@@ -2134,6 +2252,7 @@ body.logs-hidden .term-side {
 }
 .workflow-empty,
 .palette-empty,
+.search-empty,
 .native-sessions-empty {
   padding: 1.2rem 0.75rem;
   color: var(--fg-dim);
@@ -2223,6 +2342,10 @@ body.logs-hidden .term-side {
 .ask-context-row {
   align-items: flex-start;
 }
+.auto-approve-row,
+.auto-approve-rules {
+  align-items: flex-start;
+}
 .ask-context-controls {
   display: flex;
   flex: 0 0 auto;
@@ -2244,6 +2367,34 @@ body.logs-hidden .term-side {
   font-family: var(--mono);
   font-size: 0.72rem;
   white-space: nowrap;
+}
+.auto-approve-controls {
+  display: grid;
+  flex: 0 1 18rem;
+  justify-items: end;
+  gap: 0.5rem;
+  min-width: min(18rem, 100%);
+}
+.auto-approve-risk-toggle {
+  justify-content: flex-end;
+}
+.auto-approve-patterns {
+  width: 100%;
+  min-height: 5.9rem;
+  resize: vertical;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  outline: none;
+  background: var(--field-bg);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+.auto-approve-patterns:focus {
+  border-color: color-mix(in srgb, var(--accent) 70%, var(--border));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .preference-row .palette-controls {
   flex-wrap: wrap;
@@ -2790,6 +2941,16 @@ body.logs-hidden .term-side {
     justify-content: flex-start;
     max-width: 100%;
   }
+  .ask-context-controls,
+  .auto-approve-controls {
+    justify-content: flex-start;
+    justify-items: start;
+    max-width: 100%;
+    width: 100%;
+  }
+  .auto-approve-risk-toggle {
+    justify-content: flex-start;
+  }
   .nav-links a:not(.cta-link) {
     display: none;
   }
@@ -2899,12 +3060,14 @@ body.logs-hidden .term-side {
   .screenshot-dialog,
   .page-reload-dialog,
   .paste-confirm-dialog,
+  .search-dialog,
   .palette-panel,
   .workflow-panel,
   .native-sessions-panel,
   .setup-check-panel,
   .dictionary-panel,
   .knowledge-panel,
+  .search-panel,
   .preferences-panel {
     max-height: calc(100dvh - 1rem);
   }
@@ -2918,7 +3081,8 @@ body.logs-hidden .term-side {
   .claude-setup-dialog,
   .screenshot-dialog,
   .page-reload-dialog,
-  .paste-confirm-dialog {
+  .paste-confirm-dialog,
+  .search-dialog {
     width: calc(100vw - 1rem);
   }
   .dictionary-panel {
@@ -2927,7 +3091,8 @@ body.logs-hidden .term-side {
   .palette-panel,
   .workflow-panel,
   .native-sessions-panel,
-  .setup-check-panel {
+  .setup-check-panel,
+  .search-panel {
     overflow: hidden;
   }
   .knowledge-panel {
@@ -2992,6 +3157,7 @@ body.logs-hidden .term-side {
   }
   .dictionary-search,
   .palette-search,
+  .search-bar,
   .dictionary-mapping {
     grid-template-columns: minmax(0, 1fr);
   }
