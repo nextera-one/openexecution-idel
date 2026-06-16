@@ -226,6 +226,22 @@
           </label>
         </section>
 
+        <section class="preference-row ask-context-row">
+          <div class="preference-copy">
+            <span>Ask Claude context</span>
+            <small>Send previous Q/A so Claude can continue the conversation</small>
+          </div>
+          <span class="ask-context-controls">
+            <span class="theme-toggle ask-context-toggle" role="group" aria-label="Ask Claude context preference">
+              <button class="theme-btn active" type="button" data-ask-context-mode="none" title="Start each Ask Claude request fresh">Off</button>
+              <button class="theme-btn" type="button" data-ask-context-mode="all" title="Send recent Ask Claude turns">All</button>
+              <button class="theme-btn" type="button" data-ask-context-mode="selected" title="Send only picked Ask Claude turns">Pick</button>
+            </span>
+            <button class="editor-btn ask-context-pick" id="ask-context-pick" type="button">Choose</button>
+            <span class="ask-context-count" id="ask-context-count">0 saved</span>
+          </span>
+        </section>
+
         <section class="preference-row">
           <div class="preference-copy">
             <span>Audit panel</span>
@@ -236,6 +252,30 @@
             <span aria-hidden="true"></span>
           </label>
         </section>
+      </div>
+    </dialog>
+
+    <dialog class="ask-context-dialog" id="ask-context-dialog" aria-labelledby="ask-context-title">
+      <div class="ask-context-panel">
+        <div class="preferences-head">
+          <div>
+            <h2 id="ask-context-title">Ask Claude Context</h2>
+            <p>Pick prior questions and answers to send with the next request</p>
+          </div>
+          <button class="icon-btn" id="ask-context-close" type="button" title="Close" aria-label="Close Ask Claude context">x</button>
+        </div>
+
+        <div class="ask-context-toolbar">
+          <button class="editor-btn" id="ask-context-select-all" type="button">Select All</button>
+          <button class="editor-btn" id="ask-context-clear" type="button">Clear</button>
+          <button class="editor-btn" id="ask-context-clear-memory" type="button">Delete Saved</button>
+        </div>
+        <div class="ask-context-list" id="ask-context-list"></div>
+        <div class="ask-context-empty" id="ask-context-empty" hidden>No Ask Claude conversation saved yet.</div>
+        <div class="ask-context-actions">
+          <span id="ask-context-dialog-count">0 selected</span>
+          <button class="editor-btn" id="ask-context-apply" type="button">Done</button>
+        </div>
       </div>
     </dialog>
 

@@ -79,6 +79,18 @@ const claudeSetupStatus = $("claude-setup-status");
 const showLogsInput = $("pref-show-logs");
 const blockPasteInput = $("pref-block-paste");
 const blockCopyInput = $("pref-block-copy");
+const askContextModeButtons = Array.from(document.querySelectorAll("[data-ask-context-mode]"));
+const askContextPick = $("ask-context-pick");
+const askContextCount = $("ask-context-count");
+const askContextDialog = $("ask-context-dialog");
+const askContextClose = $("ask-context-close");
+const askContextSelectAll = $("ask-context-select-all");
+const askContextClear = $("ask-context-clear");
+const askContextClearMemory = $("ask-context-clear-memory");
+const askContextApply = $("ask-context-apply");
+const askContextList = $("ask-context-list");
+const askContextEmpty = $("ask-context-empty");
+const askContextDialogCount = $("ask-context-dialog-count");
 const themeButtons = Array.from(document.querySelectorAll("[data-theme]"));
 const paletteButtons = Array.from(document.querySelectorAll("[data-palette]"));
 const fontSizeButtons = Array.from(document.querySelectorAll("[data-font-size]"));
@@ -161,6 +173,9 @@ const PREF_KEYS = {
   blockPaste: "idel.blockPaste",
   blockCopy: "idel.blockCopy",
 };
+const ASK_CONTEXT_MODE_KEY = "idel.ask.contextMode";
+const ASK_CONTEXT_SELECTED_KEY = "idel.ask.contextSelected";
+const ASK_TRANSCRIPT_KEY = "idel.ask.transcript";
 const WORKFLOW_KEY = "idel.workflows";
 const SETUP_DISMISSED_KEY = "idel.setup.dismissed";
 const PAGE_EXIT_MESSAGE =
@@ -174,6 +189,13 @@ const DEFAULT_PREFERENCES = {
   blockPaste: false,
   blockCopy: false,
 };
+const ASK_CONTEXT_MODES = new Set(["none", "all", "selected"]);
+const ASK_CONTEXT_LIMIT = 20;
+const ASK_CONTEXT_MAX_CHARS = 24000;
+const ASK_TURN_MAX_CHARS = 5000;
+let askContextMode = "none";
+let askContextSelected = new Set();
+let askTranscript = [];
 
 function setServerPlatform(platformName) {
   const next = String(platformName ?? "").toLowerCase();
@@ -209,6 +231,7 @@ function serverPlatformKind() {
 
 function initPreferences() {
   applyPreferences(readPreferences(), false);
+  loadAskContextState();
   initHeaderMenus();
   for (const btn of themeButtons) {
     btn.addEventListener("click", () => {
@@ -238,6 +261,25 @@ function initPreferences() {
   });
   blockCopyInput?.addEventListener("change", () => {
     applyPreferences({ ...currentPreferences(), blockCopy: blockCopyInput.checked });
+  });
+  for (const btn of askContextModeButtons) {
+    btn.addEventListener("click", () => {
+      setAskContextMode(btn.dataset.askContextMode);
+      if (btn.dataset.askContextMode === "selected") openAskContextDialog();
+    });
+  }
+  askContextPick?.addEventListener("click", openAskContextDialog);
+  askContextClose?.addEventListener("click", closeAskContextDialog);
+  askContextApply?.addEventListener("click", closeAskContextDialog);
+  askContextSelectAll?.addEventListener("click", selectAllAskContext);
+  askContextClear?.addEventListener("click", clearAskContextSelection);
+  askContextClearMemory?.addEventListener("click", clearAskContextMemory);
+  askContextDialog?.addEventListener("cancel", (e) => {
+    e.preventDefault();
+    closeAskContextDialog();
+  });
+  askContextDialog?.addEventListener("click", (e) => {
+    if (e.target === askContextDialog) closeAskContextDialog();
   });
   document.addEventListener("copy", (e) => {
     if (!clipboardCopyBlocked() || !isTerminalCopyTarget(e.target)) return;
@@ -1869,6 +1911,246 @@ function storageSet(key, value) {
   } catch {
     /* preferences are best-effort */
   }
+}
+
+function storageRemove(key) {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    /* preferences are best-effort */
+  }
+}
+
+function clipAskText(value, limit = ASK_TURN_MAX_CHARS) {
+  const text = String(value ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit - 80).trimEnd()}\n... clipped ${text.length - limit + 80} character(s)`;
+}
+
+function loadAskContextState() {
+  const modeValue = storageGet(ASK_CONTEXT_MODE_KEY);
+  askContextMode = ASK_CONTEXT_MODES.has(modeValue) ? modeValue : "none";
+  try {
+    const ids = JSON.parse(storageGet(ASK_CONTEXT_SELECTED_KEY) || "[]");
+    askContextSelected = new Set(Array.isArray(ids) ? ids.map(String) : []);
+  } catch {
+    askContextSelected = new Set();
+  }
+  try {
+    const raw = JSON.parse(storageGet(ASK_TRANSCRIPT_KEY) || "[]");
+    askTranscript = Array.isArray(raw) ? raw.map(normalizeAskTurn).filter(Boolean).slice(-ASK_CONTEXT_LIMIT) : [];
+  } catch {
+    askTranscript = [];
+  }
+  pruneAskContextSelection();
+  syncAskContextUi();
+}
+
+function normalizeAskTurn(turn) {
+  if (!turn || typeof turn !== "object") return null;
+  const id = String(turn.id || "");
+  const question = clipAskText(turn.question || "", 1600);
+  if (!id || !question) return null;
+  return {
+    id,
+    createdAt: Number(turn.createdAt || Date.now()),
+    question,
+    answer: clipAskText(turn.answer || "", ASK_TURN_MAX_CHARS),
+    events: Array.isArray(turn.events) ? turn.events.map((item) => clipAskText(item, 900)).filter(Boolean).slice(-10) : [],
+  };
+}
+
+function saveAskTranscript() {
+  askTranscript = askTranscript.map(normalizeAskTurn).filter(Boolean).slice(-ASK_CONTEXT_LIMIT);
+  pruneAskContextSelection();
+  storageSet(ASK_TRANSCRIPT_KEY, JSON.stringify(askTranscript));
+  storageSet(ASK_CONTEXT_SELECTED_KEY, JSON.stringify([...askContextSelected]));
+  syncAskContextUi();
+}
+
+function pruneAskContextSelection() {
+  const known = new Set(askTranscript.map((turn) => turn.id));
+  askContextSelected = new Set([...askContextSelected].filter((id) => known.has(id)));
+}
+
+function setAskContextMode(next, persist = true) {
+  askContextMode = ASK_CONTEXT_MODES.has(next) ? next : "none";
+  if (persist) storageSet(ASK_CONTEXT_MODE_KEY, askContextMode);
+  syncAskContextUi();
+}
+
+function syncAskContextUi() {
+  for (const btn of askContextModeButtons) {
+    const active = btn.dataset.askContextMode === askContextMode;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-pressed", String(active));
+  }
+  const selectedCount = askContextSelected.size;
+  const savedCount = askTranscript.length;
+  if (askContextPick) askContextPick.disabled = savedCount === 0;
+  if (askContextCount) {
+    askContextCount.textContent =
+      askContextMode === "all"
+        ? `${savedCount} saved`
+        : askContextMode === "selected"
+          ? `${selectedCount} picked`
+          : `${savedCount} saved`;
+  }
+  renderAskContextDialog();
+}
+
+function beginAskTranscriptTurn(question) {
+  const turn = {
+    id: `ask-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+    createdAt: Date.now(),
+    question: clipAskText(question, 1600),
+    answer: "",
+    events: [],
+  };
+  askTranscript.push(turn);
+  saveAskTranscript();
+  return turn;
+}
+
+function appendAskTurnAnswer(turn, text) {
+  if (!turn || !text) return;
+  const target = askTranscript.find((item) => item.id === turn.id) ?? turn;
+  target.answer = clipAskText([target.answer, String(text).trim()].filter(Boolean).join("\n\n"));
+  saveAskTranscript();
+}
+
+function appendAskTurnEvent(turn, text) {
+  if (!turn || !text) return;
+  const target = askTranscript.find((item) => item.id === turn.id) ?? turn;
+  target.events.push(clipAskText(text, 900));
+  target.events = target.events.slice(-10);
+  saveAskTranscript();
+}
+
+function askContextTurnsForRequest() {
+  if (askContextMode === "none") return [];
+  if (askContextMode === "all") return askTranscript.slice(-ASK_CONTEXT_LIMIT);
+  if (askContextMode === "selected") {
+    return askTranscript.filter((turn) => askContextSelected.has(turn.id)).slice(-ASK_CONTEXT_LIMIT);
+  }
+  return [];
+}
+
+function buildAskIntentWithContext(intent) {
+  const turns = askContextTurnsForRequest();
+  if (!turns.length) return intent;
+  const blocks = [];
+  let total = 0;
+  for (const turn of turns.slice().reverse()) {
+    const block = formatAskTurnForContext(turn);
+    if (!block) continue;
+    if (total + block.length > ASK_CONTEXT_MAX_CHARS) break;
+    blocks.unshift(block);
+    total += block.length;
+  }
+  if (!blocks.length) return intent;
+  return [
+    "You are continuing an Ask Claude conversation in the IDEL web terminal.",
+    "Use the prior conversation only when it is relevant. The latest user request appears after END PRIOR CONVERSATION.",
+    "PRIOR CONVERSATION",
+    blocks.join("\n\n"),
+    "END PRIOR CONVERSATION",
+    "Latest user request:",
+    intent,
+  ].join("\n\n");
+}
+
+function formatAskTurnForContext(turn) {
+  const parts = [`User: ${clipAskText(turn.question, 1600)}`];
+  if (turn.answer) parts.push(`Assistant: ${clipAskText(turn.answer, ASK_TURN_MAX_CHARS)}`);
+  if (turn.events?.length) parts.push(`Runtime events:\n${turn.events.map((item) => `- ${item}`).join("\n")}`);
+  return parts.join("\n");
+}
+
+function askTurnSummary(turn) {
+  return clipAskText(turn.answer || turn.events?.join("\n") || "(no answer captured yet)", 260);
+}
+
+function formatAskTurnTime(turn) {
+  try {
+    return new Date(turn.createdAt).toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  } catch {
+    return "";
+  }
+}
+
+function openAskContextDialog() {
+  renderAskContextDialog();
+  if (!askContextDialog) return;
+  if (typeof askContextDialog.showModal === "function") askContextDialog.showModal();
+  else askContextDialog.setAttribute("open", "");
+}
+
+function closeAskContextDialog() {
+  if (!askContextDialog) return;
+  if (typeof askContextDialog.close === "function" && askContextDialog.open) askContextDialog.close();
+  else askContextDialog.removeAttribute("open");
+}
+
+function renderAskContextDialog() {
+  if (!askContextList || !askContextEmpty) return;
+  const turns = askTranscript.slice().reverse();
+  askContextList.innerHTML = "";
+  askContextEmpty.hidden = turns.length > 0;
+  for (const turn of turns) {
+    const label = document.createElement("label");
+    label.className = "ask-context-item";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = askContextSelected.has(turn.id);
+    checkbox.addEventListener("change", () => {
+      if (checkbox.checked) askContextSelected.add(turn.id);
+      else askContextSelected.delete(turn.id);
+      storageSet(ASK_CONTEXT_SELECTED_KEY, JSON.stringify([...askContextSelected]));
+      syncAskContextUi();
+    });
+    const body = document.createElement("span");
+    body.className = "ask-context-item-body";
+    const head = document.createElement("span");
+    head.className = "ask-context-item-head";
+    head.textContent = `${formatAskTurnTime(turn)} · ${turn.question}`;
+    const summary = document.createElement("small");
+    summary.textContent = askTurnSummary(turn);
+    body.append(head, summary);
+    label.append(checkbox, body);
+    askContextList.appendChild(label);
+  }
+  if (askContextDialogCount) {
+    askContextDialogCount.textContent = `${askContextSelected.size} selected · ${askTranscript.length} saved`;
+  }
+}
+
+function selectAllAskContext() {
+  askContextSelected = new Set(askTranscript.map((turn) => turn.id));
+  storageSet(ASK_CONTEXT_SELECTED_KEY, JSON.stringify([...askContextSelected]));
+  setAskContextMode("selected");
+  renderAskContextDialog();
+}
+
+function clearAskContextSelection() {
+  askContextSelected = new Set();
+  storageSet(ASK_CONTEXT_SELECTED_KEY, "[]");
+  setAskContextMode("selected");
+  renderAskContextDialog();
+}
+
+function clearAskContextMemory() {
+  askTranscript = [];
+  askContextSelected = new Set();
+  storageRemove(ASK_TRANSCRIPT_KEY);
+  storageSet(ASK_CONTEXT_SELECTED_KEY, "[]");
+  setAskContextMode("none");
+  renderAskContextDialog();
 }
 
 function initWorkspace() {
@@ -4784,13 +5066,21 @@ const yamlRules = [
 // ---------------------------------------------------------------------------
 
 async function runAsk(intent, displayLine) {
+  const userIntent = String(intent ?? "").trim();
   if (askClaudeUnavailable()) {
-    line(displayLine ?? "? " + intent, displayLine ? "cmd" : "ask");
+    line(displayLine ?? "? " + userIntent, displayLine ? "cmd" : "ask");
     line("Ask Claude is not set up. Opened setup guide.", "err");
     openClaudeSetupDialog({ switchToAsk: true });
     return;
   }
-  line(displayLine ?? "? " + intent, displayLine ? "cmd" : "ask");
+  const contextTurns = askContextTurnsForRequest();
+  const requestIntent = buildAskIntentWithContext(userIntent);
+  const askTurn = beginAskTranscriptTurn(userIntent);
+  line(displayLine ?? "? " + userIntent, displayLine ? "cmd" : "ask");
+  if (contextTurns.length) {
+    appendAskTurnEvent(askTurn, `Context sent: ${contextTurns.length} prior turn(s).`);
+    line(`↳ context: ${contextTurns.length} prior turn(s) sent`, "muted");
+  }
   let sawAgent = false;
   const progress = startAgentProgress();
   let progressVisible = true;
@@ -4802,23 +5092,27 @@ async function runAsk(intent, displayLine) {
   // allowReal:true lets the agent request a REAL run — but each one still pauses
   // here for an explicit human click (the server parks until we POST /approve).
   try {
-    await postSse("/api/agent/stream", { intent, allowReal: true }, (event, data) => {
+    await postSse("/api/agent/stream", { intent: requestIntent, allowReal: true }, (event, data) => {
       sawAgent = true;
       switch (event) {
         case "text":
           if (data.text?.trim()) {
             finishProgress();
-            markdownLine(data.text.replace(/\n+$/, ""), "text");
+            const text = data.text.replace(/\n+$/, "");
+            markdownLine(text, "text");
+            appendAskTurnAnswer(askTurn, text);
           }
           break;
         case "proposed":
           finishProgress();
           line(data.dryRun ? "↳ proposed (dry-run): " + data.command : "↳ ran: " + data.command, "muted");
+          appendAskTurnEvent(askTurn, (data.dryRun ? "Proposed dry-run: " : "Ran: ") + data.command);
           renderOutcome(data.outcome);
           break;
         case "blocked":
           finishProgress();
           line("↳ BLOCKED: " + data.command, "err");
+          appendAskTurnEvent(askTurn, "Blocked: " + data.command);
           renderOutcome(data.outcome);
           break;
         case "approval_request":
@@ -4828,14 +5122,17 @@ async function runAsk(intent, displayLine) {
           // the same SSE stream resumes with the real outcome (or the dry-run
           // standing). No second connection, no key in the browser.
           renderApprovalPrompt(data);
+          appendAskTurnEvent(askTurn, "Approval requested: " + data.command);
           break;
         case "needs_approval":
           finishProgress();
           line("↳ declined: " + data.command + " (dry-run result stands)", "muted");
+          appendAskTurnEvent(askTurn, "Approval declined: " + data.command);
           break;
         case "tool_error":
           finishProgress();
           line(`↳ tool error (${data.tool}): ${data.message}`, "err");
+          appendAskTurnEvent(askTurn, `Tool error (${data.tool}): ${data.message}`);
           break;
         case "error":
           finishProgress();
@@ -4844,6 +5141,7 @@ async function runAsk(intent, displayLine) {
             openClaudeSetupDialog({ switchToAsk: true, message: data.error });
           }
           line("Agent error: " + (data.error ?? "unknown"), "err");
+          appendAskTurnEvent(askTurn, "Agent error: " + (data.error ?? "unknown"));
           break;
         case "done":
           finishProgress();
@@ -4854,6 +5152,7 @@ async function runAsk(intent, displayLine) {
     finishProgress();
     sawAgent = true;
     line("Agent error: " + (err instanceof Error ? err.message : "request failed"), "err");
+    appendAskTurnEvent(askTurn, "Agent error: " + (err instanceof Error ? err.message : "request failed"));
   } finally {
     finishProgress();
   }
@@ -4862,6 +5161,7 @@ async function runAsk(intent, displayLine) {
       "(no response — install Claude Code + run `claude login`, or set ANTHROPIC_API_KEY on the server)",
       "muted",
     );
+    appendAskTurnEvent(askTurn, "No response from agent.");
   }
   refreshLogs();
 }
