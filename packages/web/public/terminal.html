@@ -421,6 +421,16 @@
           aria-label="command input"
         ></textarea>
         <span
+          class="ai-input-progress"
+          id="ai-input-progress"
+          role="status"
+          aria-live="polite"
+          hidden
+        >
+          <span class="ai-input-spinner" aria-hidden="true"></span>
+          <span id="ai-input-progress-text">Asking Claude</span>
+        </span>
+        <span
           class="risk-indicator risk-indicator--empty"
           id="risk-indicator"
           role="status"

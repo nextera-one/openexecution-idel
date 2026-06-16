@@ -13,6 +13,8 @@ const initialOutput = $("output");
 const input = $("input");
 const form = $("form");
 const promptEl = $("prompt");
+const aiInputProgress = $("ai-input-progress");
+const aiInputProgressText = $("ai-input-progress-text");
 const batchToggle = $("batch-toggle");
 const riskIndicator = $("risk-indicator");
 const completionsEl = $("completions");
@@ -267,6 +269,8 @@ let searchUseRegex = false;
 let searchResults = [];
 let searchFocusedLine = null;
 let searchFocusTimer = 0;
+let aiPromptBusy = false;
+let aiPromptProgressText = "Asking Claude";
 
 function setServerPlatform(platformName) {
   const next = String(platformName ?? "").toLowerCase();
@@ -2645,7 +2649,7 @@ function autoApproveDecision(data) {
   return { approve: true, reason: `${pattern}, ${risk}` };
 }
 
-function maybeAutoApproveAgentRequest(data, askTurn) {
+function maybeAutoApproveAgentRequest(data, askTurn, options = {}) {
   const decision = autoApproveDecision(data);
   if (!decision.approve) return false;
   const command = String(data.command ?? "").trim();
@@ -2654,9 +2658,10 @@ function maybeAutoApproveAgentRequest(data, askTurn) {
   line(`↳ auto-approved: ${command} (${decision.reason})`, "ok");
   appendAskTurnEvent(askTurn, `Auto-approved: ${command} (${decision.reason})`);
   void sendAgentApproval(data, true).catch(() => {
+    options.onFailure?.();
     line("(auto approval failed — choose manually)", "err");
     appendAskTurnEvent(askTurn, "Auto approval failed: " + command);
-    renderApprovalPrompt(data);
+    renderApprovalPrompt(data, askTurn);
   });
   return true;
 }
@@ -2942,9 +2947,17 @@ function syncCommandArea() {
   const nativeActive = tab?.type === "native";
   const nativeXtermActive = nativeActive && Boolean(tab?.native?.terminal);
   const hidden = editorActive || nativeXtermActive;
+  const showAiProgress = aiPromptBusy && !hidden && !nativeActive;
   form.hidden = hidden;
   form.setAttribute("aria-hidden", String(hidden));
-  input.disabled = editorActive || (commandBusy && !nativeActive);
+  form.setAttribute("aria-busy", String(showAiProgress));
+  form.classList.toggle("ai-working", showAiProgress);
+  input.disabled = editorActive || ((commandBusy || aiPromptBusy) && !nativeActive);
+  if (aiInputProgress) {
+    aiInputProgress.hidden = !showAiProgress;
+    aiInputProgress.setAttribute("aria-hidden", String(!showAiProgress));
+  }
+  if (aiInputProgressText) aiInputProgressText.textContent = aiPromptProgressText;
   batchToggle.hidden = nativeActive;
   batchToggle.setAttribute("aria-hidden", String(nativeActive));
   if (editorActive) {
@@ -2958,6 +2971,17 @@ function syncCommandArea() {
   syncPrompt();
   syncInputPlaceholder();
   resizeCommandInput();
+}
+
+function setAiPromptProgress(active, text = "Asking Claude") {
+  aiPromptBusy = active === true;
+  aiPromptProgressText = text;
+  syncCommandArea();
+}
+
+function updateAiPromptProgress(text) {
+  aiPromptProgressText = text || "Asking Claude";
+  if (aiPromptBusy) syncCommandArea();
 }
 
 function createTerminalTab(activate = true) {
@@ -3762,13 +3786,19 @@ function startAgentProgress() {
   output.scrollTop = output.scrollHeight;
 
   let step = 0;
+  let customDetail = "";
   const timer = window.setInterval(() => {
     step = (step + 1) % AGENT_PROGRESS_STEPS.length;
-    detail.textContent = AGENT_PROGRESS_STEPS[step];
+    detail.textContent = customDetail || AGENT_PROGRESS_STEPS[step];
     output.scrollTop = output.scrollHeight;
   }, 1400);
 
   return {
+    setDetail(text) {
+      customDetail = text || "";
+      detail.textContent = customDetail || AGENT_PROGRESS_STEPS[step];
+      output.scrollTop = output.scrollHeight;
+    },
     stop() {
       window.clearInterval(timer);
       row.remove();
@@ -5742,6 +5772,7 @@ async function runAsk(intent, displayLine) {
     openClaudeSetupDialog({ switchToAsk: true });
     return;
   }
+  setAiPromptProgress(true, "Asking Claude");
   const contextTurns = askContextTurnsForRequest(userIntent);
   const requestIntent = buildAskIntentWithContext(userIntent, contextTurns);
   const askTurn = beginAskTranscriptTurn(userIntent);
@@ -5767,6 +5798,7 @@ async function runAsk(intent, displayLine) {
       switch (event) {
         case "text":
           if (data.text?.trim()) {
+            updateAiPromptProgress("Receiving answer");
             finishProgress();
             const text = data.text.replace(/\n+$/, "");
             markdownLine(text, "text");
@@ -5774,37 +5806,52 @@ async function runAsk(intent, displayLine) {
           }
           break;
         case "proposed":
+          updateAiPromptProgress(data.dryRun ? "Reviewing proposal" : "Running command");
           finishProgress();
           line(data.dryRun ? "↳ proposed (dry-run): " + data.command : "↳ ran: " + data.command, "muted");
           appendAskTurnEvent(askTurn, (data.dryRun ? "Proposed dry-run: " : "Ran: ") + data.command);
           renderOutcome(data.outcome);
           break;
         case "blocked":
+          updateAiPromptProgress("Blocked by policy");
           finishProgress();
           line("↳ BLOCKED: " + data.command, "err");
           appendAskTurnEvent(askTurn, "Blocked: " + data.command);
           renderOutcome(data.outcome);
           break;
         case "approval_request":
-          finishProgress();
           // The agent is parked server-side awaiting our decision. Auto-approval
           // can resolve the parked request only after the dry-run matches the
           // user's local rules; otherwise the manual buttons remain the gate.
-          if (maybeAutoApproveAgentRequest(data, askTurn)) break;
+          if (maybeAutoApproveAgentRequest(data, askTurn, {
+            onFailure: () => {
+              updateAiPromptProgress("Waiting for approval");
+              finishProgress();
+            },
+          })) {
+            updateAiPromptProgress("Auto approved; waiting for result");
+            progress.setDetail("Auto-approved; waiting for result");
+            break;
+          }
+          updateAiPromptProgress("Waiting for approval");
+          finishProgress();
           renderApprovalPrompt(data, askTurn);
           appendAskTurnEvent(askTurn, "Approval requested: " + data.command);
           break;
         case "needs_approval":
+          updateAiPromptProgress("Approval declined");
           finishProgress();
           line("↳ declined: " + data.command + " (dry-run result stands)", "muted");
           appendAskTurnEvent(askTurn, "Approval declined: " + data.command);
           break;
         case "tool_error":
+          updateAiPromptProgress("Tool error");
           finishProgress();
           line(`↳ tool error (${data.tool}): ${data.message}`, "err");
           appendAskTurnEvent(askTurn, `Tool error (${data.tool}): ${data.message}`);
           break;
         case "error":
+          updateAiPromptProgress("Agent error");
           finishProgress();
           if (String(data.error ?? "").includes("agent not configured")) {
             setAgentAvailability(false);
@@ -5825,6 +5872,7 @@ async function runAsk(intent, displayLine) {
     appendAskTurnEvent(askTurn, "Agent error: " + (err instanceof Error ? err.message : "request failed"));
   } finally {
     finishProgress();
+    setAiPromptProgress(false);
   }
   if (!sawAgent) {
     line(
@@ -5872,8 +5920,10 @@ function renderApprovalPrompt(data, askTurn = null) {
       q.textContent = `Auto-approved — ${verb}; running… `;
       line(`↳ auto-approve rule ${verb}: ${saved.pattern}`, "ok");
       appendAskTurnEvent(askTurn, `Auto-approve rule ${verb}: ${saved.pattern}`);
+      updateAiPromptProgress("Auto approved; waiting for result");
     } else {
       q.textContent = approve ? "Approved — running… " : "Declined. ";
+      updateAiPromptProgress(approve ? "Approved; waiting for result" : "Approval declined");
     }
     try {
       await sendAgentApproval(data, approve);
@@ -6311,6 +6361,10 @@ function syncInputPlaceholder() {
   const compact = compactInputMedia?.matches ?? false;
   if (activeTab()?.type === "native") {
     input.placeholder = compact ? "native shell" : "native shell input is live: Tab, arrows, Ctrl+C go to the shell";
+    return;
+  }
+  if (aiPromptBusy) {
+    input.placeholder = compact ? "Claude working..." : "Claude is working; progress is shown beside the input";
     return;
   }
   input.placeholder =
