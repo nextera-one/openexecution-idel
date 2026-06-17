@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@nextera.one/openlogs-sdk": "^2.2.0",
-    "@nextera.one/tps-standard": "^0.8.0",
+    "@nextera.one/tps-standard": "file:../../vendor/nextera.one-tps-standard-0.8.1.tgz",
     "@openexecution/types": "workspace:*"
   },
   "files": [

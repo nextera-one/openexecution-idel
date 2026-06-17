@@ -10,3 +10,6 @@ allowBuilds:
 # Required for `pnpm deploy` to produce a self-contained CLI artifact (workspace
 # deps copied in, not symlinked back to source) — see scripts/pack-cli.sh.
 inject-workspace-packages: true
+
+minimumReleaseAgeExclude:
+  - electron@42.4.1

@@ -17,7 +17,7 @@
     "@openexecution/types": "workspace:*",
     "@openexecution/server": "workspace:*",
     "@openexecution/registry": "workspace:*",
-    "@anthropic-ai/sdk": "^0.102.0"
+    "@anthropic-ai/sdk": "^0.104.2"
   },
   "devDependencies": {
     "@openexecution/policy": "workspace:*",
