@@ -202,6 +202,21 @@ local Electron dev dependency to remain available on the desktop machine. Set
 `IDEL_DESKTOP_PORT=9000` to choose another port, or `IDEL_ELECTRON_BIN=/path`
 to use a specific Electron executable.
 
+The VS Code extension lives in `packages/vscode-extension`. It contributes an
+`IDEL` activity-bar view and an `IDEL: Open Terminal` command, starts or reuses
+the same local `idel serve` process, and embeds `/terminal.html` inside a VS Code
+webview. Build the repo first with `pnpm build`, then open the extension folder
+in VS Code's Extension Development Host, or install it locally with
+`scripts/install-vscode-extension.sh`,
+`scripts/install-vscode-extension-macos.command`, or
+`scripts\install-vscode-extension.bat`. Remove it with the matching
+`scripts/uninstall-vscode-extension.sh`,
+`scripts/uninstall-vscode-extension-macos.command`, or
+`scripts\uninstall-vscode-extension.bat`.
+If VS Code reports `spawn node ENOENT`, re-run the installer from a shell where
+`node` works or set `openexecutionIdel.nodePath` to the full Node executable
+path.
+
 Upgrade dependencies to the latest published versions:
 
 ```bash
@@ -286,6 +301,7 @@ parse → resolve → coerce → safety (two-phase) → policy → plan → exec
 | `packages/server` | A dependency-free local HTTP+SSE boundary over the runtime (`idel serve`). Backs the web/Electron desktop terminal; every request still flows through the full safety/policy/OpenLogs pipeline. |
 | `packages/agent` | The embedded Claude console: exposes IDEL to Claude as a small tool surface, plus `idel learn` (CLI → IDEL draft). The only package that depends on `@anthropic-ai/sdk`; the key lives in the host process, never the browser. |
 | `packages/web` | The dependency-free static web terminal + landing page (no build step). Served by `idel serve --static`. |
+| `packages/vscode-extension` | VS Code extension that embeds the same `/terminal.html` UI in a webview and starts/reuses the local `idel serve` boundary. |
 | `packages/cli` | The `idel` executable, flag parsing, rendering, completion, the interactive terminal, `idel ask`, `idel learn`, and `idel serve`. |
 
 The core command definitions live in `registries/core/*.json` (filesystem, permissions, archive, find, path/env, meta).

@@ -1,0 +1,146 @@
+{
+  "name": "openexecution-idel-vscode",
+  "displayName": "OpenExecution IDEL Terminal",
+  "description": "Embed the OpenExecution IDEL web terminal in VS Code.",
+  "version": "0.1.0",
+  "publisher": "nextera-one",
+  "private": true,
+  "license": "MIT",
+  "type": "commonjs",
+  "engines": {
+    "vscode": "^1.91.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "openexecution",
+    "idel",
+    "terminal",
+    "audit",
+    "runtime"
+  ],
+  "main": "./src/extension.cjs",
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [
+    "onCommand:openexecutionIdel.openTerminal",
+    "onCommand:openexecutionIdel.startServer",
+    "onCommand:openexecutionIdel.stopServer",
+    "onCommand:openexecutionIdel.openInBrowser",
+    "onView:openexecutionIdel.terminalView"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "openexecutionIdel.openTerminal",
+        "title": "IDEL: Open Terminal",
+        "category": "OpenExecution"
+      },
+      {
+        "command": "openexecutionIdel.startServer",
+        "title": "IDEL: Start Local Server",
+        "category": "OpenExecution"
+      },
+      {
+        "command": "openexecutionIdel.stopServer",
+        "title": "IDEL: Stop Local Server",
+        "category": "OpenExecution"
+      },
+      {
+        "command": "openexecutionIdel.openInBrowser",
+        "title": "IDEL: Open Terminal in Browser",
+        "category": "OpenExecution"
+      }
+    ],
+    "configuration": {
+      "title": "OpenExecution IDEL",
+      "properties": {
+        "openexecutionIdel.serverUrl": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Use an existing `idel serve` instance instead of starting one, for example `http://127.0.0.1:7878`."
+        },
+        "openexecutionIdel.manageServer": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Start and stop `idel serve` from the extension when no existing server is reachable."
+        },
+        "openexecutionIdel.port": {
+          "type": "number",
+          "default": 7878,
+          "minimum": 0,
+          "maximum": 65535,
+          "markdownDescription": "Loopback port to use when the extension starts `idel serve`. Use `0` to let the OS choose a free port."
+        },
+        "openexecutionIdel.sourceRoot": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to the OpenExecution IDEL checkout. Leave empty to auto-detect from the current workspace or extension folder."
+        },
+        "openexecutionIdel.nodePath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Node.js executable used to start the local IDEL server. Defaults to `node` on PATH."
+        },
+        "openexecutionIdel.enableNativeTerminal": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Pass `--enable-native-terminal` to `idel serve`, enabling native shell tabs in the embedded terminal."
+        },
+        "openexecutionIdel.extraServeArgs": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "markdownDescription": "Additional arguments appended to `idel serve` when the extension starts the local server."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "openexecutionIdel",
+          "title": "IDEL",
+          "icon": "resources/terminal.svg"
+        }
+      ]
+    },
+    "views": {
+      "openexecutionIdel": [
+        {
+          "id": "openexecutionIdel.terminalView",
+          "name": "Terminal",
+          "type": "webview"
+        }
+      ]
+    }
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "The extension can start a local server process from the workspace checkout."
+    },
+    "virtualWorkspaces": false
+  },
+  "scripts": {
+    "check": "node --check src/extension.cjs"
+  },
+  "files": [
+    "resources",
+    "src",
+    "README.md",
+    "package.json"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nextera-one/openexecution-idel.git",
+    "directory": "packages/vscode-extension"
+  },
+  "homepage": "https://github.com/nextera-one/openexecution-idel#readme",
+  "bugs": {
+    "url": "https://github.com/nextera-one/openexecution-idel/issues"
+  }
+}
