@@ -9,6 +9,8 @@ import { Registry, findCoreDir, loadLayerFromDir } from "./loader.js";
 import { coerceParams } from "./coerce.js";
 
 const CORE_COMMAND_VERBS = new Set([
+  "add",
+  "allow",
   "append",
   "ask",
   "change",
@@ -16,10 +18,14 @@ const CORE_COMMAND_VERBS = new Set([
   "clear",
   "copy",
   "create",
+  "deny",
+  "disable",
   "edit",
+  "enable",
   "explain",
   "extract",
   "find",
+  "flush",
   "get",
   "install",
   "learn",
@@ -34,7 +40,9 @@ const CORE_COMMAND_VERBS = new Set([
   "search",
   "set",
   "show",
+  "simulate",
   "tail",
+  "test",
   "update",
   "wait",
   "write",
@@ -163,6 +171,44 @@ describe("schema — validateCommandDef", () => {
         adapters: {},
       }).ok,
     ).toBe(true);
+  });
+
+  it("allows empty adapters for commands that declare external adapter support", () => {
+    const res = checkCommandDef(
+      goodDef({
+        id: "allow.network",
+        category: "network",
+        adapters: {},
+        support: {
+          domain: "network",
+          targets: {
+            "linux-nftables": {
+              status: "requires_adapter_install",
+              adapter: "linux-nftables",
+              platform: "linux",
+            },
+          },
+        },
+      }),
+    );
+    expect(res.ok).toBe(true);
+  });
+
+  it("rejects malformed support metadata", () => {
+    const res = checkCommandDef(
+      goodDef({
+        id: "allow.network",
+        category: "network",
+        adapters: {},
+        support: {
+          targets: {
+            "linux-nftables": { status: "maybe" },
+          },
+        } as never,
+      }),
+    );
+    expect(res.ok).toBe(false);
+    expect(res.errors.join("\n")).toMatch(/support\.targets\.linux-nftables\.status/);
   });
 
   it("validateCommandDef throws a RegistryError with details", () => {

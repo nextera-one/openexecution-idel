@@ -217,13 +217,6 @@ export class Runtime {
     ast: CommandAst,
     ctx: RuntimeContext,
   ): Promise<RuntimeOutcome> {
-    // Meta commands (list.registry, check.policy, list.logs) are handled by the runtime
-    // itself, not by an execution adapter. They are LOW risk and bypass the
-    // adapter chain, but still get logged.
-    if (isMetaCommand(ast.command)) {
-      return this.handleMeta(ast, ctx);
-    }
-
     // 1) Resolve in the registry (custom > official > core).
     const resolved = this.registry.resolve(ast.command);
     if (!resolved) {
@@ -311,7 +304,17 @@ export class Runtime {
       this.policy,
     );
 
-    // 6) Pick an adapter + build a plan (needed for dry-run output too).
+    // 6) Meta commands (list.registry, install.adapter, list.logs, etc.) are
+    // runtime-internal and have no execution adapter, but they still pass
+    // registry resolution, schema coercion, risk defaults, policy, and logging.
+    if (isMetaCommand(ast.command)) {
+      return this.handleMeta(typedAst, ctx, {
+        risk: { level: effectiveRisk, findings, affected, assessment: assessmentForBytes },
+        decision,
+      });
+    }
+
+    // 7) Pick an adapter + build a plan (needed for dry-run output too).
     const adapter = this.pickAdapter(resolved.def.id);
     let plan: ExecutionPlan | undefined;
     if (adapter) {
@@ -404,14 +407,6 @@ export class Runtime {
     ast: CommandAst,
     ctx: RuntimeContext,
   ): Promise<RuntimePreview> {
-    if (isMetaCommand(ast.command)) {
-      return this.buildPreview({
-        ast,
-        risk: { level: "LOW", findings: [], affected: undefined },
-        decision: { action: "allow", matchedRule: -1, reason: "meta command" },
-      });
-    }
-
     const resolved = this.registry.resolve(ast.command);
     if (!resolved) {
       return this.previewFailure(
@@ -580,23 +575,7 @@ export class Runtime {
 
     // APPROVAL_REQUIRED — in CI this fails closed; interactively we ask.
     if (decision.action === "approval_required") {
-      if (ctx.ci || !this.onApproval) {
-        return this.finish({
-          ast,
-          ctx,
-          risk,
-          decision,
-          plan,
-          outcome: "approval_required",
-        });
-      }
-      const approved = await this.onApproval({
-        command: ast.command,
-        risk: risk.level,
-        reason: decision.reason,
-        approvers: decision.approvers,
-      });
-      if (!approved) {
+      if (ctx.approval === false) {
         return this.finish({
           ast,
           ctx,
@@ -605,6 +584,34 @@ export class Runtime {
           plan,
           outcome: "blocked_before_execution",
         });
+      }
+      if (ctx.approval !== true) {
+        if (ctx.ci || !this.onApproval) {
+          return this.finish({
+            ast,
+            ctx,
+            risk,
+            decision,
+            plan,
+            outcome: "approval_required",
+          });
+        }
+        const approved = await this.onApproval({
+          command: ast.command,
+          risk: risk.level,
+          reason: decision.reason,
+          approvers: decision.approvers,
+        });
+        if (!approved) {
+          return this.finish({
+            ast,
+            ctx,
+            risk,
+            decision,
+            plan,
+            outcome: "blocked_before_execution",
+          });
+        }
       }
     }
 
@@ -616,11 +623,20 @@ export class Runtime {
 
     // No adapter and no native plan → nothing to execute.
     if (!plan) {
-      return this.failAfterParse(
-        ast as CommandAst,
+      return this.finish({
+        ast,
         ctx,
-        `No adapter available to execute "${ast.command}" on this platform.`,
-      );
+        risk,
+        decision,
+        result: {
+          exitCode: 1,
+          durationMs: 0,
+          stdout: "",
+          stderr: `No adapter available to execute "${ast.command}" on this platform.\n`,
+          simulated: false,
+        },
+        outcome: "failed",
+      });
     }
 
     // Execute.
@@ -635,11 +651,21 @@ export class Runtime {
           interactive: ctx.interactive === true,
         });
       } else {
-        return this.failAfterParse(
-          ast as CommandAst,
+        return this.finish({
+          ast,
           ctx,
-          `No adapter bound for "${ast.command}".`,
-        );
+          risk,
+          decision,
+          plan,
+          result: {
+            exitCode: 1,
+            durationMs: 0,
+            stdout: "",
+            stderr: `No adapter bound for "${ast.command}".\n`,
+            simulated: false,
+          },
+          outcome: "failed",
+        });
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -676,7 +702,75 @@ export class Runtime {
   private async handleMeta(
     ast: CommandAst,
     ctx: RuntimeContext,
+    classified?: {
+      risk: {
+        level: RiskLevel;
+        findings: RiskFinding[];
+        affected: number | undefined;
+        assessment?: RiskAssessment;
+      };
+      decision: PolicyDecision;
+    },
   ): Promise<RuntimeOutcome> {
+    const risk = classified?.risk ?? {
+      level: "LOW" as RiskLevel,
+      findings: [],
+      affected: undefined,
+    };
+    const decision = classified?.decision ?? {
+      action: "allow" as const,
+      matchedRule: -1,
+      reason: "meta command",
+    };
+
+    if (decision.action === "block") {
+      return this.finish({
+        ast,
+        ctx,
+        risk,
+        decision,
+        outcome: "blocked_before_execution",
+      });
+    }
+
+    if (decision.action === "approval_required") {
+      if (ctx.approval === false) {
+        return this.finish({
+          ast,
+          ctx,
+          risk,
+          decision,
+          outcome: "blocked_before_execution",
+        });
+      }
+      if (ctx.approval !== true) {
+        if (ctx.ci || !this.onApproval) {
+          return this.finish({
+            ast,
+            ctx,
+            risk,
+            decision,
+            outcome: "approval_required",
+          });
+        }
+        const approved = await this.onApproval({
+          command: ast.command,
+          risk: risk.level,
+          reason: decision.reason,
+          approvers: decision.approvers,
+        });
+        if (!approved) {
+          return this.finish({
+            ast,
+            ctx,
+            risk,
+            decision,
+            outcome: "blocked_before_execution",
+          });
+        }
+      }
+    }
+
     const out = await runMeta(ast, {
       registry: this.registry,
       policy: this.policy,
@@ -693,8 +787,8 @@ export class Runtime {
     return this.finish({
       ast,
       ctx,
-      risk: { level: "LOW", findings: [], affected: undefined },
-      decision: { action: "allow", matchedRule: -1, reason: "meta command" },
+      risk,
+      decision,
       result,
       outcome: out.exitCode === 0 ? "success" : "failed",
     });

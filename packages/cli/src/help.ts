@@ -14,6 +14,7 @@ USAGE
   idel registry verify                 check signatures on the official registry layer (fail-closed)
   idel editor <file>                   open a file in your local editor (TTY only)
   idel terminal                        interactive IDEL terminal (readline REPL; \`? <ask>\` for Claude)
+  idel connect <server-url>            connect this terminal to a remote IDEL server
   idel serve [--port N] [--static D]   start the local web/desktop terminal server
   idel completion <partial>            print autocomplete suggestions
   idel help | version
@@ -38,6 +39,8 @@ EXAMPLES
   learn.cli cli=git
   idel promote gh                            (review + sign gh drafts into the official layer)
   idel registry verify                       (verify every signed official command)
+  ssh -L 8787:127.0.0.1:7878 user@host       (safe remote access tunnel)
+  idel connect http://127.0.0.1:8787         (use IDEL through that tunnel)
 
 CLAUDE
   The Claude console (ask.ai, idel ask, \`?\` in terminal, the web "Ask Claude") reaches

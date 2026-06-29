@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterEach, afterAll } from "vitest";
-import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile, mkdir, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -375,6 +375,48 @@ describe("TerminalService approval handling", () => {
     // ci-mode default (no approve flag) → approval_required is recorded, not run.
     expect(out.decision.action).toBe("approval_required");
     expect(out.record.result).toBe("approval_required");
+  });
+
+  it("executes when an approval_required command is resubmitted with approve=true", async () => {
+    const runtime = new Runtime({
+      registry,
+      policy: {
+        rules: [
+          { match: { risk: "HIGH" }, action: "approval_required", approvers: ["lead"] },
+        ],
+      },
+    });
+    const dir = await sandbox();
+    await mkdir(join(dir, "v2"));
+    const svc = new TerminalService({ runtime, cwd: dir });
+    const out = await svc.run({
+      command: "remove.folder name=v2 recursive=true",
+      cwd: dir,
+      approve: true,
+    });
+    expect(out.record.result).toBe("success");
+    expect(await readdir(dir)).not.toContain("v2");
+  });
+
+  it("records a refusal when an approval_required command is resubmitted with approve=false", async () => {
+    const runtime = new Runtime({
+      registry,
+      policy: {
+        rules: [
+          { match: { risk: "HIGH" }, action: "approval_required", approvers: ["lead"] },
+        ],
+      },
+    });
+    const dir = await sandbox();
+    await mkdir(join(dir, "v2"));
+    const svc = new TerminalService({ runtime, cwd: dir });
+    const out = await svc.run({
+      command: "remove.folder name=v2 recursive=true",
+      cwd: dir,
+      approve: false,
+    });
+    expect(out.record.result).toBe("blocked_before_execution");
+    expect(await readdir(dir)).toContain("v2");
   });
 });
 

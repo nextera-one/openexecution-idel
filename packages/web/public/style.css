@@ -2009,6 +2009,7 @@ body.logs-hidden .term-side {
 .palette-dialog,
 .workflow-dialog,
 .native-sessions-dialog,
+.connect-dialog,
 .setup-check-dialog,
 .dictionary-dialog,
 .knowledge-dialog,
@@ -2029,6 +2030,7 @@ body.logs-hidden .term-side {
 .palette-dialog::backdrop,
 .workflow-dialog::backdrop,
 .native-sessions-dialog::backdrop,
+.connect-dialog::backdrop,
 .setup-check-dialog::backdrop,
 .dictionary-dialog::backdrop,
 .knowledge-dialog::backdrop,
@@ -2065,6 +2067,7 @@ body.logs-hidden .term-side {
 }
 .workflow-dialog,
 .native-sessions-dialog,
+.connect-dialog,
 .setup-check-dialog,
 .search-dialog,
 .ask-context-dialog {
@@ -2076,6 +2079,7 @@ body.logs-hidden .term-side {
 .palette-panel,
 .workflow-panel,
 .native-sessions-panel,
+.connect-panel,
 .setup-check-panel,
 .dictionary-panel,
 .search-panel,
@@ -2088,6 +2092,74 @@ body.logs-hidden .term-side {
   border-radius: 10px;
   background: var(--panel);
   box-shadow: 0 24px 80px var(--shadow-soft);
+}
+.connect-body {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.85rem 0.95rem 0.95rem;
+}
+.connect-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.7rem;
+}
+.connect-field {
+  display: grid;
+  gap: 0.32rem;
+  min-width: 0;
+}
+.connect-field span {
+  color: var(--fg-dim);
+  font-size: 0.74rem;
+  font-weight: 650;
+  text-transform: uppercase;
+}
+.connect-field input {
+  width: 100%;
+  min-width: 0;
+  height: 2.25rem;
+  padding: 0 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  outline: none;
+  background: var(--field-bg);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 0.82rem;
+}
+.connect-field input:focus {
+  border-color: color-mix(in srgb, var(--accent) 70%, var(--border));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.connect-command {
+  min-height: 2.4rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--field-bg);
+  color: var(--code-fg);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.connect-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+.connect-status {
+  min-height: 1.1rem;
+  color: var(--fg-dim);
+  font-family: var(--mono);
+  font-size: 0.76rem;
+}
+.connect-status.ok {
+  color: var(--green);
+}
+.connect-status.err {
+  color: var(--red);
 }
 .palette-search {
   display: grid;

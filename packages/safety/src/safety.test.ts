@@ -113,6 +113,21 @@ function readFileDef(): CommandDef {
   };
 }
 
+function networkDef(
+  id: string,
+  riskDefault: CommandDef["riskDefault"] = "MEDIUM",
+): CommandDef {
+  return {
+    id,
+    version: "0.1.0",
+    summary: "Network command",
+    category: id.includes("firewall") ? "firewall" : "network",
+    riskDefault,
+    params: {},
+    adapters: {},
+  };
+}
+
 function codes(findings: { code: string }[]): string[] {
   return findings.map((f) => f.code);
 }
@@ -316,6 +331,54 @@ describe("assessAst — device + low-risk", () => {
   it("read.file even at root path => not CRITICAL (non-destructive)", () => {
     const a = assessAst(makeAst("read.file", { path: "/" }), readFileDef());
     expect(a.level).not.toBe("CRITICAL");
+  });
+});
+
+describe("assessAst — network and firewall intent", () => {
+  it("allow.network any to any on any port => CRITICAL", () => {
+    const a = assessAst(
+      makeAst("allow.network", {
+        from: "any",
+        to: "any",
+        port: "any",
+        protocol: "any",
+      }),
+      networkDef("allow.network"),
+    );
+    expect(a.level).toBe("CRITICAL");
+    expect(codes(a.findings)).toContain("network-allow-any-any-any");
+  });
+
+  it("allow.network public SSH => CRITICAL", () => {
+    const a = assessAst(
+      makeAst("allow.network", {
+        from: "0.0.0.0/0",
+        to: "host",
+        port: "22",
+        protocol: "tcp",
+      }),
+      networkDef("allow.network"),
+    );
+    expect(a.level).toBe("CRITICAL");
+    expect(codes(a.findings)).toContain("network-allow-public-admin-port");
+  });
+
+  it("deny.network SSH => HIGH lockout risk", () => {
+    const a = assessAst(
+      makeAst("deny.network", { from: "any", to: "host", port: "22" }),
+      networkDef("deny.network"),
+    );
+    expect(a.level).toBe("HIGH");
+    expect(codes(a.findings)).toContain("network-deny-admin-port");
+  });
+
+  it("flush.firewall => CRITICAL", () => {
+    const a = assessAst(
+      makeAst("flush.firewall", {}),
+      networkDef("flush.firewall", "CRITICAL"),
+    );
+    expect(a.level).toBe("CRITICAL");
+    expect(codes(a.findings)).toContain("firewall-flush");
   });
 });
 

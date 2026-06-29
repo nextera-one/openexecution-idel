@@ -12,6 +12,7 @@
  */
 
 export { assessAst, isDestructive, resolveTargetParam, readTargetString } from "./ast.js";
+export { classifyNetworkIntent, isNetworkCommand } from "./network.js";
 export { assessResolved, WALK_ENTRY_CAP } from "./resolved.js";
 export { scanNative } from "./native.js";
 export { SAFETY_FLOORS } from "./floors.js";

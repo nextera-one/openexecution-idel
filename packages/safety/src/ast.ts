@@ -34,6 +34,7 @@ import {
   normalizeTarget,
 } from "./paths.js";
 import { levelOfFindings, riskRank } from "./risk.js";
+import { classifyNetworkIntent, isNetworkCommand } from "./network.js";
 
 /**
  * Param names that may hold the primary filesystem target, in priority order.
@@ -292,6 +293,11 @@ export function assessAst(ast: AnyAst, def?: CommandDef): RiskAssessment {
 
   const destructive = isDestructive(ast, def);
   const rawTarget = readTargetString(ast, def);
+
+  if (isNetworkCommand(ast, def)) {
+    findings.push(...classifyNetworkIntent(ast, def));
+    return finalize("ast", findings, def);
+  }
 
   // --- Empty / missing target on a destructive verb — BLOCK/HIGH --------
   if (destructive && (rawTarget === undefined || rawTarget.trim() === "")) {

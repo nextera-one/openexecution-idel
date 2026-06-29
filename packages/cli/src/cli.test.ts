@@ -47,11 +47,14 @@ describe("parseArgv", () => {
     expect(() => parseArgv(["create.file", "--policy"])).toThrow(/requires a value/);
   });
 
-  it("maps help / version / terminal / serve / completion subcommands", () => {
+  it("maps help / version / terminal / connect / serve / completion subcommands", () => {
     expect(parseArgv([]).mode).toBe("help");
     expect(parseArgv(["help"]).mode).toBe("help");
     expect(parseArgv(["version"]).mode).toBe("version");
     expect(parseArgv(["terminal"]).mode).toBe("terminal");
+    const remote = parseArgv(["connect", "http://127.0.0.1:8787"]);
+    expect(remote.mode).toBe("connect");
+    expect(remote.command).toBe("http://127.0.0.1:8787");
     expect(parseArgv(["serve"]).mode).toBe("serve");
     const c = parseArgv(["completion", "create."]);
     expect(c.mode).toBe("completion");

@@ -13,6 +13,14 @@
         >OpenExecution<span class="brand-dot">·</span>IDEL</a
       >
       <span class="term-status" id="status">connecting…</span>
+      <button
+        class="term-tool-btn"
+        id="connect-open"
+        type="button"
+        title="Connect to an IDEL server"
+      >
+        Connect
+      </button>
       <span class="term-modes">
         <button
           class="mode-btn active"
@@ -277,6 +285,83 @@
         >
           Preferences
         </button>
+      </div>
+    </dialog>
+
+    <dialog
+      class="connect-dialog"
+      id="connect-dialog"
+      aria-labelledby="connect-title"
+    >
+      <div class="connect-panel">
+        <div class="preferences-head">
+          <div>
+            <h2 id="connect-title">Connect</h2>
+            <p>IDEL server</p>
+          </div>
+          <button
+            class="icon-btn"
+            id="connect-close"
+            type="button"
+            title="Close"
+            aria-label="Close connect"
+          >
+            x
+          </button>
+        </div>
+        <div class="connect-body">
+          <label class="connect-field">
+            <span>Server URL</span>
+            <input
+              id="connect-url"
+              type="url"
+              spellcheck="false"
+              autocomplete="off"
+              placeholder="http://127.0.0.1:8787"
+            />
+          </label>
+          <div class="connect-grid">
+            <label class="connect-field">
+              <span>Host</span>
+              <input
+                id="connect-host"
+                type="text"
+                spellcheck="false"
+                autocomplete="off"
+                placeholder="server.example.com"
+              />
+            </label>
+            <label class="connect-field">
+              <span>User</span>
+              <input
+                id="connect-user"
+                type="text"
+                spellcheck="false"
+                autocomplete="username"
+                placeholder="ubuntu"
+              />
+            </label>
+            <label class="connect-field">
+              <span>Local port</span>
+              <input id="connect-local-port" type="number" min="1" max="65535" value="8787" />
+            </label>
+            <label class="connect-field">
+              <span>Remote port</span>
+              <input id="connect-remote-port" type="number" min="1" max="65535" value="7878" />
+            </label>
+          </div>
+          <label class="connect-field">
+            <span>SSH tunnel</span>
+            <output id="connect-ssh-command" class="connect-command"></output>
+          </label>
+          <div class="connect-actions">
+            <button class="term-tool-btn" id="connect-copy-ssh" type="button">Copy SSH</button>
+            <button class="term-tool-btn" id="connect-reset" type="button">Local</button>
+            <button class="mode-btn" id="connect-test" type="button">Test</button>
+            <button class="mode-btn active" id="connect-apply" type="button">Connect</button>
+          </div>
+          <div class="connect-status" id="connect-status"></div>
+        </div>
       </div>
     </dialog>
 

@@ -23,6 +23,20 @@ const logsEl = $("logs");
 const tabsEl = $("tabs");
 const modeIdelBtn = $("mode-idel");
 const modeAskBtn = $("mode-ask");
+const connectOpen = $("connect-open");
+const connectDialog = $("connect-dialog");
+const connectClose = $("connect-close");
+const connectUrl = $("connect-url");
+const connectHost = $("connect-host");
+const connectUser = $("connect-user");
+const connectLocalPort = $("connect-local-port");
+const connectRemotePort = $("connect-remote-port");
+const connectSshCommand = $("connect-ssh-command");
+const connectCopySsh = $("connect-copy-ssh");
+const connectReset = $("connect-reset");
+const connectTest = $("connect-test");
+const connectApply = $("connect-apply");
+const connectStatus = $("connect-status");
 const appearanceMenuOpen = $("appearance-menu-open");
 const appearanceMenuDialog = $("appearance-menu-dialog");
 const actionsMenuOpen = $("actions-menu-open");
@@ -175,6 +189,34 @@ const AGENT_PROGRESS_STEPS = [
   "Waiting for response",
 ];
 
+function normalizeApiBase(raw) {
+  const text = String(raw ?? "").trim();
+  if (!text) return "";
+  const withScheme = /^https?:\/\//i.test(text) ? text : `http://${text}`;
+  try {
+    const url = new URL(withScheme);
+    url.pathname = url.pathname.replace(/\/+$/, "");
+    url.search = "";
+    url.hash = "";
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return null;
+  }
+}
+
+function apiUrl(path) {
+  if (!apiBaseUrl) return path;
+  return new URL(path, apiBaseUrl).toString();
+}
+
+function apiFetch(path, options) {
+  return fetch(apiUrl(path), options);
+}
+
+function currentApiLabel() {
+  return apiBaseUrl || location.origin;
+}
+
 const THEMES = new Set(["dark", "light"]);
 const PALETTES = new Set(["cyan", "blue", "sky", "teal", "mint", "green", "lime", "amber", "orange", "rose", "red", "fuchsia", "violet", "indigo", "slate", "stone"]);
 const FONT_SIZES = new Set(["small", "normal", "large", "xlarge"]);
@@ -196,6 +238,7 @@ const AUTO_APPROVE_PATTERNS_KEY = "idel.autoApprove.patterns";
 const AUTO_APPROVE_RISK_KEY = "idel.autoApprove.maxRisk";
 const WORKFLOW_KEY = "idel.workflows";
 const SETUP_DISMISSED_KEY = "idel.setup.dismissed";
+const API_BASE_KEY = "idel.apiBase";
 const PAGE_EXIT_MESSAGE =
   "Refresh or leave IDEL terminal? Current terminal output, running commands, and unsaved editor changes may be lost.";
 const DEFAULT_PREFERENCES = {
@@ -257,6 +300,7 @@ const AUTO_APPROVE_RISK_ORDER = new Map([
 const DEFAULT_AUTO_APPROVE_PATTERNS = ["list.*", "show.*", "explain.*", "check.*"].join("\n");
 const SEARCH_SCOPES = new Set(["all", "ai-prompt", "ai-answer", "idel-command", "idel-reply"]);
 const SEARCH_RESULT_LIMIT = 200;
+let apiBaseUrl = normalizeApiBase(storageGet(API_BASE_KEY)) ?? "";
 let askContextMode = "none";
 let askContextSelected = new Set();
 let askTranscript = [];
@@ -476,6 +520,136 @@ function positionHeaderMenuDialog(menu) {
   dialog.style.setProperty("--header-menu-top", `${Math.round(top)}px`);
   dialog.style.setProperty("--header-menu-left", `${Math.round(left)}px`);
   dialog.style.setProperty("--header-menu-max-height", `${Math.round(maxHeight)}px`);
+}
+
+function initConnectDialog() {
+  connectOpen?.addEventListener("click", openConnectDialog);
+  connectClose?.addEventListener("click", closeConnectDialog);
+  connectDialog?.addEventListener("click", (e) => {
+    if (e.target === connectDialog) closeConnectDialog();
+  });
+  connectDialog?.addEventListener("cancel", (e) => {
+    e.preventDefault();
+    closeConnectDialog();
+  });
+  for (const el of [connectHost, connectUser, connectLocalPort, connectRemotePort]) {
+    el?.addEventListener("input", updateConnectSshCommand);
+  }
+  connectLocalPort?.addEventListener("input", updateConnectUrlFromPorts);
+  connectApply?.addEventListener("click", () => void applyConnectDialog());
+  connectTest?.addEventListener("click", () => void testConnectDialog());
+  connectReset?.addEventListener("click", () => void resetConnectDialog());
+  connectCopySsh?.addEventListener("click", () => void copyConnectSsh());
+}
+
+function openConnectDialog() {
+  if (!connectDialog) return;
+  if (connectUrl) connectUrl.value = apiBaseUrl || location.origin;
+  if (connectLocalPort && !connectLocalPort.value) connectLocalPort.value = "8787";
+  if (connectRemotePort && !connectRemotePort.value) connectRemotePort.value = "7878";
+  setConnectStatus(`Current: ${currentApiLabel()}`, "");
+  updateConnectSshCommand();
+  if (typeof connectDialog.showModal === "function") connectDialog.showModal();
+  else connectDialog.setAttribute("open", "");
+  connectUrl?.focus();
+}
+
+function closeConnectDialog() {
+  if (!connectDialog) return;
+  if (typeof connectDialog.close === "function" && connectDialog.open) connectDialog.close();
+  else connectDialog.removeAttribute("open");
+}
+
+async function applyConnectDialog() {
+  const base = normalizeApiBase(connectUrl?.value ?? "");
+  if (base === null) {
+    setConnectStatus("Invalid server URL.", "err");
+    return;
+  }
+  const previous = apiBaseUrl;
+  apiBaseUrl = base;
+  if (apiBaseUrl) storageSet(API_BASE_KEY, apiBaseUrl);
+  else storageRemove(API_BASE_KEY);
+  try {
+    await refreshServerHealth({ suppressSetup: true });
+    dictionaryLoaded = false;
+    await loadDictionary(true);
+    refreshLogs();
+    setConnectStatus(`Connected: ${currentApiLabel()}`, "ok");
+    line(`Connected IDEL terminal to ${currentApiLabel()}`, "ok");
+    closeConnectDialog();
+  } catch (err) {
+    apiBaseUrl = previous;
+    if (apiBaseUrl) storageSet(API_BASE_KEY, apiBaseUrl);
+    else storageRemove(API_BASE_KEY);
+    setConnectStatus(`Connection failed: ${err?.message ?? String(err)}`, "err");
+  }
+}
+
+async function testConnectDialog() {
+  const base = normalizeApiBase(connectUrl?.value ?? "");
+  if (base === null) {
+    setConnectStatus("Invalid server URL.", "err");
+    return;
+  }
+  const previous = apiBaseUrl;
+  apiBaseUrl = base;
+  try {
+    const data = await fetchHealth();
+    setConnectStatus(`OK: idel ${data.version ?? "unknown"} · ${data.platform ?? "unknown"}`, "ok");
+  } catch (err) {
+    setConnectStatus(`Failed: ${err?.message ?? String(err)}`, "err");
+  } finally {
+    apiBaseUrl = previous;
+  }
+}
+
+async function resetConnectDialog() {
+  apiBaseUrl = "";
+  storageRemove(API_BASE_KEY);
+  if (connectUrl) connectUrl.value = location.origin;
+  await refreshServerHealth({ suppressSetup: true }).catch(() => undefined);
+  refreshLogs();
+  setConnectStatus("Using local IDEL server.", "ok");
+}
+
+function updateConnectUrlFromPorts() {
+  const port = portValue(connectLocalPort?.value, 8787);
+  if (connectUrl && !connectUrl.value.trim()) connectUrl.value = `http://127.0.0.1:${port}`;
+  updateConnectSshCommand();
+}
+
+function updateConnectSshCommand() {
+  if (!connectSshCommand) return;
+  const host = String(connectHost?.value ?? "").trim() || "host";
+  const user = String(connectUser?.value ?? "").trim();
+  const localPort = portValue(connectLocalPort?.value, 8787);
+  const remotePort = portValue(connectRemotePort?.value, 7878);
+  const value = `ssh -L ${localPort}:127.0.0.1:${remotePort} ${user ? `${user}@` : ""}${host}`;
+  connectSshCommand.value = value;
+  connectSshCommand.textContent = value;
+}
+
+async function copyConnectSsh() {
+  const value = String(connectSshCommand?.value || connectSshCommand?.textContent || "");
+  if (!value) return;
+  try {
+    await navigator.clipboard.writeText(value);
+    setConnectStatus("SSH command copied.", "ok");
+  } catch {
+    setConnectStatus(value, "");
+  }
+}
+
+function setConnectStatus(text, kind) {
+  if (!connectStatus) return;
+  connectStatus.textContent = text;
+  connectStatus.className = `connect-status ${kind || ""}`.trim();
+}
+
+function portValue(raw, fallback) {
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 && n <= 65535 ? n : fallback;
 }
 
 function initClaudeSetupDialog() {
@@ -1278,7 +1452,7 @@ async function refreshNativeSessionsDialog() {
 }
 
 async function fetchNativeSessions() {
-  const res = await fetch("/api/native/sessions");
+  const res = await apiFetch("/api/native/sessions");
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const sessions = await res.json();
   return Array.isArray(sessions) ? sessions : [];
@@ -1373,7 +1547,7 @@ async function closeNativeSessionId(id) {
     updateNativeShellUi(localTab);
   }
   try {
-    const res = await fetch(`/api/native/${encodeURIComponent(sessionId)}/close`, { method: "POST" });
+    const res = await apiFetch(`/api/native/${encodeURIComponent(sessionId)}/close`, { method: "POST" });
     if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`);
     if (localTab) {
       if (res.status === 404) {
@@ -1637,12 +1811,12 @@ function closeDictionary() {
   focusActiveInput();
 }
 
-async function loadDictionary() {
-  if (dictionaryLoaded || dictionaryLoading) return;
+async function loadDictionary(force = false) {
+  if (!force && (dictionaryLoaded || dictionaryLoading)) return;
   dictionaryLoading = true;
   dictionaryCount.textContent = "Loading...";
   try {
-    const res = await fetch("/api/registry");
+    const res = await apiFetch("/api/registry");
     dictionaryEntries = res.ok ? await res.json() : [];
     dictionaryEntries.sort((a, b) => a.category.localeCompare(b.category) || a.id.localeCompare(b.id));
     registryCommandCount = dictionaryEntries.length;
@@ -2006,11 +2180,52 @@ function askClaudeUnavailable() {
   return agentStatusKnown && !agentAvailable;
 }
 
+async function fetchHealth() {
+  const res = await apiFetch("/api/health");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  if (!data?.ok) throw new Error("health check failed");
+  return data;
+}
+
+async function refreshServerHealth() {
+  let sawHealthAgentStatus = false;
+  try {
+    const d = await fetchHealth();
+    serverOnline = true;
+    statusEl.textContent = `● ${apiBaseUrl ? "connected" : "online"} · idel ${d.version ?? ""}`;
+    statusEl.title = currentApiLabel();
+    statusEl.classList.remove("offline");
+    statusEl.classList.add("online");
+    if (Object.prototype.hasOwnProperty.call(d, "platform")) setServerPlatform(d.platform);
+    if (Object.prototype.hasOwnProperty.call(d, "agentAvailable")) {
+      sawHealthAgentStatus = true;
+      setAgentAvailability(d.agentAvailable !== false);
+    }
+    if (Object.prototype.hasOwnProperty.call(d, "nativeAvailable")) {
+      setNativeAvailability(d.nativeAvailable !== false);
+    }
+  } catch (err) {
+    serverOnline = false;
+    statusEl.textContent = apiBaseUrl
+      ? `○ remote offline · ${currentApiLabel()}`
+      : "○ offline — start `idel serve --static …`";
+    statusEl.title = err?.message ?? currentApiLabel();
+    statusEl.classList.remove("online");
+    statusEl.classList.add("offline");
+    setAgentAvailability(false);
+    setNativeAvailability(false);
+    throw err;
+  }
+  // Probe whether the Claude console is wired on older servers that do not
+  // expose health.agentAvailable yet.
+  if (!sawHealthAgentStatus) await probeAgentAvailability();
+}
+
 async function refreshAgentAvailability() {
   try {
-    const res = await fetch("/api/health");
-    const d = res.ok ? await res.json() : null;
-    if (d?.ok && Object.prototype.hasOwnProperty.call(d, "agentAvailable")) {
+    const d = await fetchHealth();
+    if (Object.prototype.hasOwnProperty.call(d, "agentAvailable")) {
       serverOnline = true;
       if (Object.prototype.hasOwnProperty.call(d, "platform")) setServerPlatform(d.platform);
       if (Object.prototype.hasOwnProperty.call(d, "nativeAvailable")) {
@@ -2028,7 +2243,7 @@ async function refreshAgentAvailability() {
 
 async function probeAgentAvailability() {
   try {
-    const probe = await fetch("/api/agent/stream", {
+    const probe = await apiFetch("/api/agent/stream", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ intent: "" }),
@@ -2733,7 +2948,7 @@ function globPatternRegex(pattern) {
 }
 
 async function sendAgentApproval(data, approve) {
-  const res = await fetch("/api/agent/approve", {
+  const res = await apiFetch("/api/agent/approve", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ approvalId: data.approvalId, approve }),
@@ -3214,7 +3429,7 @@ async function sendNativeSignal(tab, signal, button) {
     updateNativeShellUi(tab);
   }
   try {
-    const res = await fetch(`/api/native/${encodeURIComponent(tab.native.id)}/signal`, {
+    const res = await apiFetch(`/api/native/${encodeURIComponent(tab.native.id)}/signal`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ signal }),
@@ -3947,7 +4162,7 @@ async function startNativeTerminal(tab) {
   const generation = tab.native.generation;
   try {
     const size = nativeTerminalSize(tab);
-    const res = await fetch("/api/native/start", {
+    const res = await apiFetch("/api/native/start", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(size),
@@ -4015,7 +4230,7 @@ function attachNativeSessionToTab(tab, info) {
 function openNativeStream(tab) {
   if (!tab.native?.id || typeof EventSource !== "function") return;
   const generation = tab.native.generation;
-  const source = new EventSource(`/api/native/${encodeURIComponent(tab.native.id)}/stream`);
+  const source = new EventSource(apiUrl(`/api/native/${encodeURIComponent(tab.native.id)}/stream`));
   tab.native.eventSource = source;
   source.addEventListener("ready", (e) => {
     if (tab.native.generation !== generation) return;
@@ -4113,7 +4328,7 @@ async function sendNativeResize(tab) {
   tab.native.rows = rows;
   if (tab.native.sentCols === cols && tab.native.sentRows === rows) return;
   try {
-    const res = await fetch(`/api/native/${encodeURIComponent(tab.native.id)}/resize`, {
+    const res = await apiFetch(`/api/native/${encodeURIComponent(tab.native.id)}/resize`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ cols, rows }),
@@ -4138,7 +4353,7 @@ async function flushNativeInput(tab) {
   if (!data) return;
   tab.native.inputBuffer = "";
   tab.native.writeChain = tab.native.writeChain.then(async () => {
-    const res = await fetch(`/api/native/${encodeURIComponent(tab.native.id)}/input`, {
+    const res = await apiFetch(`/api/native/${encodeURIComponent(tab.native.id)}/input`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ data }),
@@ -4172,7 +4387,7 @@ async function shutdownNativeSession(tab, options = {}) {
     tab.native.terminal?.dispose?.();
   }
   if (requestServer && sessionId) {
-    await fetch(`/api/native/${encodeURIComponent(sessionId)}/close`, { method: "POST" }).catch(() => undefined);
+    await apiFetch(`/api/native/${encodeURIComponent(sessionId)}/close`, { method: "POST" }).catch(() => undefined);
   }
   if (tab.native.generation === generation) {
     tab.native.stopping = false;
@@ -4790,6 +5005,54 @@ function renderOutcome(o) {
   html(wrap);
 }
 
+function renderCommandApprovalPrompt(command, outcome) {
+  const approvalCommand = String(outcome?.record?.command || command || "").trim();
+  if (!approvalCommand || outcome?.record?.result !== "approval_required") return;
+  const card = document.createElement("div");
+  card.className = "line approval";
+  const q = document.createElement("span");
+  q.textContent = "Approve this command? ";
+  const yes = document.createElement("button");
+  yes.className = "appr-btn yes";
+  yes.textContent = "Approve";
+  yes.title = "Run this command for real";
+  const no = document.createElement("button");
+  no.className = "appr-btn no";
+  no.textContent = "Decline";
+  no.title = "Record a refusal without running";
+  let settled = false;
+  const decide = async (approve) => {
+    if (settled) return;
+    settled = true;
+    yes.disabled = no.disabled = true;
+    card.classList.add("decided");
+    q.textContent = approve ? "Approved — running… " : "Declined. ";
+    try {
+      await runApprovedIdel(approvalCommand, approve);
+    } catch (err) {
+      line("Approval failed: " + (err?.message ?? String(err)), "err");
+    }
+  };
+  yes.addEventListener("click", () => void decide(true));
+  no.addEventListener("click", () => void decide(false));
+  card.append(q, yes, no);
+  html(card);
+}
+
+async function runApprovedIdel(command, approve) {
+  await postSse("/api/run/stream", { command, dryRun: false, approve }, (event, data) => {
+    if (event === "outcome") renderOutcome(data);
+    else if (event === "batch_start") line(`batch: ${data.commands?.length ?? 0} step(s)`, "muted");
+    else if (event === "batch_step") line(`batch ${data.index}/${data.total}> ${data.command}`, "muted");
+    else if (event === "batch_stop") {
+      const skipped = Math.max(0, Number(data.total ?? 0) - Number(data.index ?? 0));
+      line(`batch stopped at step ${data.index}; ${skipped} step(s) skipped`, "err");
+    }
+    else if (event === "error") line("Error: " + (data.error ?? "unknown"), "err");
+  });
+  refreshLogs();
+}
+
 function describeResult(r) {
   switch (r) {
     case "success":
@@ -4812,7 +5075,7 @@ function describeResult(r) {
 // ---------------------------------------------------------------------------
 
 async function postSse(path, body, onEvent) {
-  const res = await fetch(path, {
+  const res = await apiFetch(path, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -4860,7 +5123,10 @@ async function runIdel(command) {
   line("idel> " + command, "cmd");
   await postSse("/api/run/stream", { command, dryRun: false }, (event, data) => {
     if (event === "text" && data.text?.trim()) markdownLine(data.text.replace(/\n+$/, ""), "text");
-    else if (event === "outcome") renderOutcome(data);
+    else if (event === "outcome") {
+      renderOutcome(data);
+      renderCommandApprovalPrompt(command, data);
+    }
     else if (event === "batch_start") line(`batch: ${data.commands?.length ?? 0} step(s)`, "muted");
     else if (event === "batch_step") line(`batch ${data.index}/${data.total}> ${data.command}`, "muted");
     else if (event === "batch_stop") {
@@ -4899,6 +5165,7 @@ async function runBatchStep(command) {
     if (event === "outcome") {
       lastOutcome = data;
       renderOutcome(data);
+      renderCommandApprovalPrompt(command, data);
     } else if (event === "batch_start") line(`nested batch: ${data.commands?.length ?? 0} step(s)`, "muted");
     else if (event === "batch_step") line(`nested batch ${data.index}/${data.total}> ${data.command}`, "muted");
     else if (event === "batch_stop") {
@@ -4927,7 +5194,7 @@ async function runEditorCommand(command) {
     return;
   }
   try {
-    const res = await fetch("/api/editor/open", {
+    const res = await apiFetch("/api/editor/open", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ file }),
@@ -5123,7 +5390,7 @@ function renderInlineEditor(file, content, language) {
     status.textContent = "saving";
     save.disabled = saveAs.disabled = reload.disabled = true;
     try {
-      const res = await fetch("/api/editor/save", {
+      const res = await apiFetch("/api/editor/save", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ file, content: ta.value }),
@@ -5170,7 +5437,7 @@ function renderInlineEditor(file, content, language) {
     if (ta.value !== state.clean && !confirm(`Discard unsaved changes to ${state.file}?`)) return;
     status.textContent = "loading";
     try {
-      const res = await fetch("/api/editor/open", {
+      const res = await apiFetch("/api/editor/open", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ file: state.file }),
@@ -5597,7 +5864,7 @@ async function runLearnCommand(command) {
   }
   line(`Introspecting "${parsed.cli}" and drafting IDEL commands...`, "muted");
   try {
-    const res = await fetch("/api/learn", {
+    const res = await apiFetch("/api/learn", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ cli: parsed.cli, write: parsed.write }),
@@ -5953,7 +6220,7 @@ async function updateCompletions() {
   clearTimeout(completeTimer);
   completeTimer = setTimeout(async () => {
     try {
-      const res = await fetch("/api/complete", {
+      const res = await apiFetch("/api/complete", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ input: value }),
@@ -6240,7 +6507,7 @@ async function previewCommandRisk(command, seq) {
   const controller = typeof AbortController === "function" ? new AbortController() : null;
   riskPreviewAbort = controller;
   try {
-    const res = await fetch("/api/preview", {
+    const res = await apiFetch("/api/preview", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ command }),
@@ -6308,7 +6575,7 @@ function riskPreviewTitle(preview, prefix = "") {
 
 async function refreshLogs() {
   try {
-    const res = await fetch("/api/logs?limit=20");
+    const res = await apiFetch("/api/logs?limit=20");
     if (!res.ok) return;
     const recs = await res.json();
     logsEl.innerHTML = "";
@@ -6641,31 +6908,7 @@ async function runIdelInput(value) {
 // ---------------------------------------------------------------------------
 
 async function boot() {
-  let sawHealthAgentStatus = false;
-  try {
-    const res = await fetch("/api/health");
-    const d = res.ok ? await res.json() : null;
-    if (d?.ok) {
-      serverOnline = true;
-      statusEl.textContent = "● online · idel " + (d.version ?? "");
-      statusEl.classList.add("online");
-      if (Object.prototype.hasOwnProperty.call(d, "platform")) setServerPlatform(d.platform);
-      if (Object.prototype.hasOwnProperty.call(d, "agentAvailable")) {
-        sawHealthAgentStatus = true;
-        setAgentAvailability(d.agentAvailable !== false);
-      }
-      if (Object.prototype.hasOwnProperty.call(d, "nativeAvailable")) {
-        setNativeAvailability(d.nativeAvailable !== false);
-      }
-    } else throw new Error();
-  } catch {
-    serverOnline = false;
-    statusEl.textContent = "○ offline — start `idel serve --static …`";
-    statusEl.classList.add("offline");
-  }
-  // Probe whether the Claude console is wired on older servers that do not
-  // expose health.agentAvailable yet.
-  if (!sawHealthAgentStatus) await probeAgentAvailability();
+  await refreshServerHealth().catch(() => undefined);
   setMode(mode, { suppressSetup: true });
   refreshLogs();
   if (!storageGet(SETUP_DISMISSED_KEY)) {
@@ -6674,6 +6917,7 @@ async function boot() {
 }
 
 initPreferences();
+initConnectDialog();
 initClaudeSetupDialog();
 initDictionary();
 initKnowledgeBase();

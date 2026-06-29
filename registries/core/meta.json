@@ -32,7 +32,7 @@
     "category": "meta",
     "riskDefault": "LOW",
     "params": {
-      "command": { "type": "string", "required": true, "description": "The IDEL command line to evaluate." }
+      "command": { "type": "string", "description": "Optional IDEL command line to evaluate in a future policy-preview mode." }
     },
     "adapters": {},
     "examples": ["check.policy command=\"remove.folder name=dist recursive=true\""],
@@ -68,6 +68,74 @@
       "learn.cli cli=git",
       "learn.cli cli=git write=true"
     ]
+  },
+  {
+    "id": "list.adapters",
+    "version": "0.1.0",
+    "summary": "List official installable adapters known to this runtime.",
+    "category": "meta",
+    "riskDefault": "LOW",
+    "params": {
+      "domain": { "type": "string", "description": "Filter by risk domain, e.g. network." },
+      "platform": { "type": "string", "description": "Filter by platform, e.g. linux or windows." }
+    },
+    "adapters": {},
+    "examples": ["list.adapters", "list.adapters domain=network"],
+    "tests": [{ "input": "list.adapters", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "search.adapters",
+    "version": "0.1.0",
+    "summary": "Search official installable adapters by id, command, platform, or domain.",
+    "category": "meta",
+    "riskDefault": "LOW",
+    "params": {
+      "query": { "type": "string", "required": true, "description": "Search text." }
+    },
+    "adapters": {},
+    "examples": ["search.adapters query=firewall", "search.adapters query=nftables"],
+    "tests": [{ "input": "search.adapters query=firewall", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "check.adapter",
+    "version": "0.1.0",
+    "summary": "Show install status, capabilities, and verified release metadata for an adapter.",
+    "category": "meta",
+    "riskDefault": "LOW",
+    "params": {
+      "name": { "type": "string", "required": true, "description": "Adapter id, e.g. linux-nftables." }
+    },
+    "adapters": {},
+    "examples": ["check.adapter name=linux-nftables"],
+    "tests": [{ "input": "check.adapter name=linux-nftables", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "install.adapter",
+    "version": "0.1.0",
+    "summary": "Prepare an official adapter installation plan from verified GitHub release metadata.",
+    "category": "meta",
+    "riskDefault": "MEDIUM",
+    "params": {
+      "name": { "type": "string", "required": true, "description": "Adapter id, e.g. linux-nftables." },
+      "dryRun": { "type": "boolean", "default": true, "description": "Show the verified install plan without writing adapter files." }
+    },
+    "adapters": {},
+    "examples": ["install.adapter name=linux-nftables", "install.adapter name=windows-firewall dryRun=true"],
+    "tests": [{ "input": "install.adapter name=linux-nftables", "expectRisk": "MEDIUM" }]
+  },
+  {
+    "id": "remove.adapter",
+    "version": "0.1.0",
+    "summary": "Remove an installed adapter from the local adapter cache.",
+    "category": "meta",
+    "riskDefault": "MEDIUM",
+    "params": {
+      "name": { "type": "string", "required": true, "description": "Adapter id, e.g. linux-nftables." },
+      "dryRun": { "type": "boolean", "default": true, "description": "Show what would be removed without deleting files." }
+    },
+    "adapters": {},
+    "examples": ["remove.adapter name=linux-nftables dryRun=true"],
+    "tests": [{ "input": "remove.adapter name=linux-nftables", "expectRisk": "MEDIUM" }]
   },
   {
     "id": "wait.time",

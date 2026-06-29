@@ -14,6 +14,7 @@ import { parseArgv, type CliFlags } from "./argv.js";
 import { complete } from "./complete.js";
 import { color, render, renderJson } from "./render.js";
 import { startTerminal } from "./terminal.js";
+import { connectTerminal } from "./connect.js";
 import { ask } from "./ask.js";
 import { ASK_AI_USAGE, askAiIntent, isAskAiCommand } from "./ask-ai.js";
 import { learn, learnForHost } from "./learn.js";
@@ -49,6 +50,10 @@ export async function main(argv: string[]): Promise<number> {
       write: inv.flags.write ?? false,
       json: inv.flags.json,
     });
+  }
+
+  if (inv.mode === "connect") {
+    return connectTerminal(inv.command);
   }
 
   // `idel promote <cli>` moves reviewed learned drafts up to the signed official

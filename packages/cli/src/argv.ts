@@ -9,7 +9,7 @@
  */
 
 export interface CliInvocation {
-  /** Top-level subcommand: "run" (default), "ask", "learn", "promote", "registry", "terminal", "serve", "completion", "help", "version". */
+  /** Top-level subcommand: "run" (default), "ask", "learn", "promote", "registry", "terminal", "connect", "serve", "completion", "help", "version". */
   mode:
     | "run"
     | "ask"
@@ -17,6 +17,7 @@ export interface CliInvocation {
     | "promote"
     | "registry"
     | "terminal"
+    | "connect"
     | "serve"
     | "completion"
     | "help"
@@ -130,6 +131,14 @@ export function parseArgv(argv: string[]): CliInvocation {
   }
   if (first === "terminal") {
     return { mode: "terminal", command: "", native: false, flags };
+  }
+  if (first === "connect") {
+    return {
+      mode: "connect",
+      command: rest.slice(1).join(" ").trim(),
+      native: false,
+      flags,
+    };
   }
   if (first === "serve") {
     return { mode: "serve", command: "", native: false, flags };

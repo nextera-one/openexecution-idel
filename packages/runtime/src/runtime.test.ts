@@ -354,6 +354,44 @@ describe("approval flow", () => {
     expect(await readdir(dir)).not.toContain("dist");
   });
 
+  it("executes when a transport host supplies explicit approval", async () => {
+    const policy = loadPolicy(
+      JSON.stringify({
+        rules: [
+          { match: { command: "remove.folder" }, action: "approval", approvers: ["lead"] },
+        ],
+      }),
+    );
+    const dir = await sandbox();
+    await mkdir(join(dir, "dist"));
+    const rt = new Runtime({ registry, policy });
+    const out = await rt.run(
+      "remove.folder name=dist recursive=true",
+      ctx({ cwd: dir, approval: true }),
+    );
+    expect(out.record.result).toBe("success");
+    expect(await readdir(dir)).not.toContain("dist");
+  });
+
+  it("records a transport refusal without executing", async () => {
+    const policy = loadPolicy(
+      JSON.stringify({
+        rules: [
+          { match: { command: "remove.folder" }, action: "approval", approvers: ["lead"] },
+        ],
+      }),
+    );
+    const dir = await sandbox();
+    await mkdir(join(dir, "dist"));
+    const rt = new Runtime({ registry, policy });
+    const out = await rt.run(
+      "remove.folder name=dist recursive=true",
+      ctx({ cwd: dir, approval: false }),
+    );
+    expect(out.record.result).toBe("blocked_before_execution");
+    expect(await readdir(dir)).toContain("dist");
+  });
+
   it("lets hosts replace the approval handler after construction", async () => {
     const policy = loadPolicy(
       JSON.stringify({
@@ -430,6 +468,31 @@ describe("meta commands", () => {
     expect(out.result?.stderr).toMatch(/handled by the CLI or web terminal/i);
   });
 
+  it("lists official public adapters from the adapter store metadata", async () => {
+    const rt = await makeRuntime();
+    const out = await rt.run("list.adapters domain=network", ctx());
+    expect(out.risk.level).toBe("LOW");
+    expect(out.record.result).toBe("success");
+    expect(out.result?.stdout).toMatch(/linux-nftables/);
+    expect(out.result?.stdout).toMatch(/windows-firewall/);
+
+    const adapter = await rt.run("check.adapter name=linux-nftables", ctx());
+    expect(adapter.result?.stdout).toMatch(/https:\/\/github\.com\/nextera-one\/openexecution\.git/);
+  });
+
+  it("install.adapter is registry-risked and fail-closed without signed release metadata", async () => {
+    const rt = await makeRuntime();
+    const dryRun = await rt.run("install.adapter name=linux-nftables", ctx());
+    expect(dryRun.risk.level).toBe("MEDIUM");
+    expect(dryRun.record.result).toBe("success");
+    expect(dryRun.result?.stdout).toMatch(/signed GitHub release/);
+
+    const real = await rt.run("install.adapter name=linux-nftables dryRun=false", ctx());
+    expect(real.risk.level).toBe("MEDIUM");
+    expect(real.record.result).toBe("failed");
+    expect(real.result?.stderr).toMatch(/signed release metadata/);
+  });
+
   it("clear commands report that the terminal UI handles scrollback", async () => {
     const rt = await makeRuntime();
     const out = await rt.run("clear.last limit=1", ctx());
@@ -458,6 +521,24 @@ describe("meta commands", () => {
     expect(install.record.result).toBe("dry_run");
     expect(install.plan?.command).toBe("sudo");
     expect(install.plan?.argv).toEqual(["apt", "install", "git"]);
+  });
+
+  it("classifies firewall commands before adapter execution", async () => {
+    const rt = await makeRuntime();
+    const critical = await rt.run(
+      "allow.network from=any to=any port=any protocol=any",
+      ctx(),
+    );
+    expect(critical.risk.level).toBe("CRITICAL");
+    expect(critical.record.result).toBe("blocked_before_execution");
+
+    const medium = await rt.run(
+      "allow.network from=10.0.0.0/24 to=any port=443",
+      ctx(),
+    );
+    expect(medium.risk.level).toBe("MEDIUM");
+    expect(medium.record.result).toBe("failed");
+    expect(medium.result?.stderr).toMatch(/No adapter available/i);
   });
 
   it("list.history returns recent audited commands capped by limit", async () => {

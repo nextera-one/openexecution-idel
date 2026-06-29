@@ -371,6 +371,7 @@ export class TerminalService {
       // approval_required command fails closed (is returned, not executed)
       // instead of blocking on a prompt the HTTP layer cannot answer inline.
       ci: approve === undefined ? true : false,
+      approval: approve,
       dryRun,
       noNative: this.noNative,
       origin,
