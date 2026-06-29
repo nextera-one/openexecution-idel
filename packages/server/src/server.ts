@@ -51,7 +51,7 @@ import type {
  * used deliberately — it needs no extra dependency and matches Javelle's own
  * patch-stream contract (`EventSource`), so the desktop/web bridge is uniform.
  *
- * Agent: `POST /api/agent/stream` {intent, allowReal?} — the embedded Claude
+ * Agent: `POST /api/agent/stream` {intent, allowReal?} — the embedded AI
  * console. It drives the injected agent, streaming one SSE event per AgentEvent
  * (`text`, `proposed`, `blocked`, `approval_request`, ... then `done`). Each
  * command the agent proposes flows through the same TerminalService.run pipeline
@@ -76,7 +76,7 @@ export interface ServerOptions extends ServiceOptions {
   /** Enable raw native shell sessions and native API passthrough. Default false. */
   allowNativeTerminal?: boolean;
   /**
-   * Factory for the embedded Claude agent, given the server's TerminalService.
+   * Factory for the embedded AI agent, given the server's TerminalService.
    * Injected (not imported) so the dependency-free server core never pulls in
    * `@anthropic-ai/sdk`; the host (`idel serve`) wires it. When omitted,
    * `POST /api/agent/stream` returns 501 and the rest of the API is unchanged.
@@ -84,7 +84,7 @@ export interface ServerOptions extends ServiceOptions {
   agent?: (service: TerminalService) => AgentRunner;
   /**
    * Optional host-provided CLI learning surface. The server does not import the
-   * agent/Claude package directly; `idel serve` injects this when available.
+   * agent package directly; `idel serve` injects this when available.
    */
   learn?: LearnRunner;
 }
@@ -124,7 +124,7 @@ const DEFAULT_PORT = 7878;
 const MAX_BODY_BYTES = 1_000_000; // 1MB — command lines are tiny; cap abuse.
 const ASK_AI_USAGE = 'ask.ai prompt="what you want to do"';
 const AGENT_UNAVAILABLE =
-  "agent not configured on this server (install Claude Code + run `claude login`, or set ANTHROPIC_API_KEY)";
+  "Ask AI is not configured on this server (install Claude Code + run `claude login`, or set ANTHROPIC_API_KEY)";
 
 export interface RunningServer {
   url: string;

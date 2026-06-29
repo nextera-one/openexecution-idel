@@ -7,9 +7,9 @@
 #   2. starts `idel serve` bound to loopback with native terminal explicitly enabled,
 #   3. prints the URL (and opens it when --open is passed).
 #
-# The Claude console in the UI lights up automatically when ANTHROPIC_API_KEY is
+# The AI console in the UI lights up automatically when ANTHROPIC_API_KEY is
 # set in the environment; otherwise the terminal still runs every IDEL command
-# through the full safety/policy/OpenLogs pipeline, just without "Ask Claude".
+# through the full safety/policy/OpenLogs pipeline, just without "Ask AI".
 #
 # Usage:
 #   scripts/run-ui.sh                 # serve on http://127.0.0.1:7878

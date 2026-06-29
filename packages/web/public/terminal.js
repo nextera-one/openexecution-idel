@@ -3,8 +3,8 @@
 //
 // Two modes share one input box:
 //   IDEL       — type `verb.scope param=value`; POST /api/run/stream (SSE).
-//   Ask Claude — natural language; POST /api/agent/stream (SSE). Each command
-//                Claude proposes is run through the same pipeline server-side.
+//   Ask AI    — natural language; POST /api/agent/stream (SSE). Each command
+//                the AI proposes is run through the same pipeline server-side.
 // Both render into the same scrollback. The runtime, not this page, is the
 // enforcement boundary — the UI only displays what the server decided.
 
@@ -314,7 +314,7 @@ let searchResults = [];
 let searchFocusedLine = null;
 let searchFocusTimer = 0;
 let aiPromptBusy = false;
-let aiPromptProgressText = "Asking Claude";
+let aiPromptProgressText = "Asking AI";
 
 function setServerPlatform(platformName) {
   const next = String(platformName ?? "").toLowerCase();
@@ -1154,7 +1154,7 @@ function buildPaletteItems(query) {
     paletteAction("Open workflows", "Workflow", "Create and run saved batches", openWorkflowDialog),
     paletteAction("Open setup checklist", "Setup", "Review local IDEL readiness", () => void openSetupChecklist()),
     paletteAction("Preferences", "Settings", "Theme, palette, font size, audit panel", openPreferences),
-    paletteAction("Ask Claude setup", "AI", "Configure Claude Code or ANTHROPIC_API_KEY", () => openClaudeSetupDialog()),
+    paletteAction("Ask AI setup", "AI", "Configure AI providers", () => openClaudeSetupDialog()),
     paletteAction(multilineBatch ? "Turn batch input off" : "Turn batch input on", "Input", "Switch single-line and multiline command entry", () => setMultilineBatch(!multilineBatch)),
   ];
   if (active?.type === "native") {
@@ -1710,7 +1710,7 @@ function renderSetupChecklist() {
     setupCheck("Registry", registryCommandCount > 0, registryCommandCount ? `${registryCommandCount} commands loaded.` : "Registry is not loaded yet."),
     setupCheck("Package commands", packagePack, packagePack ? "Curated package-manager commands are available." : "Package-manager commands are not loaded."),
     setupCheck("Native shell", nativeAvailable, nativeAvailable ? "Native shell tabs are available." : "Native shell tabs are disabled.", "warn"),
-    setupCheck("AI provider", agentAvailable, agentAvailable ? "Ask Claude is ready." : "Ask Claude needs Claude Code or ANTHROPIC_API_KEY."),
+    setupCheck("AI provider", agentAvailable, agentAvailable ? "Ask AI is ready." : "Ask AI needs a supported provider."),
     setupCheck("Saved workflows", workflows.length > 0, workflows.length ? `${workflows.length} workflow(s) saved.` : "No workflows saved yet.", "warn"),
   ];
   setupChecks.innerHTML = "";
@@ -2116,7 +2116,7 @@ function quoteDictionaryValue(value) {
 
 function openClaudeSetupDialog({ switchToAsk = false, message = "" } = {}) {
   switchToAskAfterSetup = switchToAsk;
-  setClaudeSetupStatus(message || "Ask Claude is not configured on this server.");
+  setClaudeSetupStatus(message || "Ask AI is not configured on this server.");
   if (!claudeSetupDialog) return;
   if (typeof claudeSetupDialog.showModal === "function") claudeSetupDialog.showModal();
   else claudeSetupDialog.setAttribute("open", "");
@@ -2140,7 +2140,7 @@ async function checkClaudeSetup() {
     const available = await refreshAgentAvailability();
     if (available) {
       const shouldSwitchToAsk = switchToAskAfterSetup;
-      setClaudeSetupStatus("Ask Claude is ready.");
+      setClaudeSetupStatus("Ask AI is ready.");
       closeClaudeSetupDialog();
       if (shouldSwitchToAsk) activateAskMode();
     } else {
@@ -2158,8 +2158,8 @@ function setAgentAvailability(available) {
   modeAskBtn.classList.toggle("unavailable", !available);
   modeAskBtn.setAttribute("aria-disabled", String(!available));
   modeAskBtn.title = available
-    ? "Ask Claude in natural language"
-    : "Ask Claude is not set up. Click for setup instructions.";
+    ? "Ask AI in natural language"
+    : "Ask AI is not set up. Click for setup instructions.";
   if (!available && mode === "ask") setMode("idel", { suppressSetup: true });
 }
 
@@ -2217,7 +2217,7 @@ async function refreshServerHealth() {
     setNativeAvailability(false);
     throw err;
   }
-  // Probe whether the Claude console is wired on older servers that do not
+  // Probe whether the AI console is wired on older servers that do not
   // expose health.agentAvailable yet.
   if (!sawHealthAgentStatus) await probeAgentAvailability();
 }
@@ -2824,7 +2824,7 @@ function buildAskIntentWithContext(intent, turns = askContextTurnsForRequest(int
   }
   if (!blocks.length) return intent;
   return [
-    "You are continuing an Ask Claude conversation in the IDEL web terminal.",
+    "You are continuing an Ask AI conversation in the IDEL web terminal.",
     "Use the prior conversation only when it is relevant. The latest user request appears after END PRIOR CONVERSATION.",
     "PRIOR CONVERSATION",
     blocks.join("\n\n"),
@@ -3188,14 +3188,14 @@ function syncCommandArea() {
   resizeCommandInput();
 }
 
-function setAiPromptProgress(active, text = "Asking Claude") {
+function setAiPromptProgress(active, text = "Asking AI") {
   aiPromptBusy = active === true;
   aiPromptProgressText = text;
   syncCommandArea();
 }
 
 function updateAiPromptProgress(text) {
-  aiPromptProgressText = text || "Asking Claude";
+  aiPromptProgressText = text || "Asking AI";
   if (aiPromptBusy) syncCommandArea();
 }
 
@@ -3677,7 +3677,7 @@ function explainErrorText(text) {
     input.value = `ask.ai prompt=${quoteDictionaryValue(prompt)}`;
     resizeCommandInput();
     openClaudeSetupDialog({ switchToAsk: false });
-    line("Ask Claude is not set up. Opened setup guide.", "err");
+    line("Ask AI is not set up. Opened setup guide.", "err");
     return;
   }
   void runAsk(prompt, "? explain error");
@@ -3979,7 +3979,7 @@ function startAgentProgress() {
 
   const head = document.createElement("span");
   head.className = "ai-progress-head";
-  head.textContent = "Asking Claude";
+  head.textContent = "Asking AI";
 
   const dots = document.createElement("span");
   dots.className = "ai-progress-dots";
@@ -6028,18 +6028,18 @@ const yamlRules = [
 ];
 
 // ---------------------------------------------------------------------------
-// Ask (Claude mode)
+// Ask (AI mode)
 // ---------------------------------------------------------------------------
 
 async function runAsk(intent, displayLine) {
   const userIntent = String(intent ?? "").trim();
   if (askClaudeUnavailable()) {
     line(displayLine ?? "? " + userIntent, displayLine ? "cmd" : "ask");
-    line("Ask Claude is not set up. Opened setup guide.", "err");
+    line("Ask AI is not set up. Opened setup guide.", "err");
     openClaudeSetupDialog({ switchToAsk: true });
     return;
   }
-  setAiPromptProgress(true, "Asking Claude");
+  setAiPromptProgress(true, "Asking AI");
   const contextTurns = askContextTurnsForRequest(userIntent);
   const requestIntent = buildAskIntentWithContext(userIntent, contextTurns);
   const askTurn = beginAskTranscriptTurn(userIntent);
@@ -6143,7 +6143,7 @@ async function runAsk(intent, displayLine) {
   }
   if (!sawAgent) {
     line(
-      "(no response — install Claude Code + run `claude login`, or set ANTHROPIC_API_KEY on the server)",
+      "(no response — configure an Ask AI provider on the server)",
       "muted",
     );
     appendAskTurnEvent(askTurn, "No response from agent.");
@@ -6470,7 +6470,7 @@ function scheduleRiskPreview() {
   if (mode !== "idel") {
     const prefixed = mode === "ask" ? idelPromptSegment(currentInputSegment()) : null;
     if (!prefixed) {
-      setRiskIndicator("empty", "agent", "Ask Claude proposals are risk-scanned before the runtime runs them.");
+      setRiskIndicator("empty", "agent", "Ask AI proposals are risk-scanned before the runtime runs them.");
       return;
     }
     commandValue = prefixed.value;
@@ -6631,7 +6631,7 @@ function syncInputPlaceholder() {
     return;
   }
   if (aiPromptBusy) {
-    input.placeholder = compact ? "Claude working..." : "Claude is working; progress is shown beside the input";
+    input.placeholder = compact ? "AI working..." : "AI is working; progress is shown beside the input";
     return;
   }
   input.placeholder =

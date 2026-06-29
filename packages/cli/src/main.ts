@@ -253,7 +253,7 @@ async function runBatch(
  * to a CLI command.
  */
 async function serve(runtime: Runtime, flags: CliFlags): Promise<number> {
-  // Pick how the embedded Claude console reaches Claude: the user's Pro/Max
+  // Pick how the embedded AI console reaches Claude: the user's Pro/Max
   // SUBSCRIPTION via the installed `claude` CLI (preferred), else the API key.
   // Detected once at startup so the (synchronous) agent factory can build the
   // matching agent per request. The hosted agent can run for real, but only
@@ -292,9 +292,9 @@ async function serve(runtime: Runtime, flags: CliFlags): Promise<number> {
   );
   const claudeNote =
     provider === "cli"
-      ? "(Claude console enabled — your subscription, via the claude CLI)\n"
+      ? "(AI console enabled — your subscription, via the claude CLI)\n"
       : provider === "api"
-        ? "(Claude console enabled — Anthropic API)\n"
+        ? "(AI console enabled — Anthropic API)\n"
         : "(disabled — install Claude Code + `claude login`, or set ANTHROPIC_API_KEY)\n";
   process.stdout.write(
     color.gray(

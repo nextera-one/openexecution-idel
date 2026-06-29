@@ -181,10 +181,10 @@ stays runtime-free. Covered by the verification suite in `learn.test.ts`
 
 Done: **Web terminal + landing page** — `packages/web` ships a dependency-free
 static UI (no build step): `index.html` (the "all about it" landing page) and
-`terminal.html` (a live terminal with IDEL mode, an embedded **Ask Claude**
+`terminal.html` (a live terminal with IDEL mode, an embedded **Ask AI**
 console over `/api/agent/stream`, registry-driven completion, history, and a live
 audit-log panel). Served by `idel serve --static packages/web/public`
-(`pnpm ui` / `scripts/run-ui.sh`). The Claude console only lights up when
+(`pnpm ui` / `scripts/run-ui.sh`). The AI console only lights up when
 `ANTHROPIC_API_KEY` is set server-side; the key never reaches the browser.
 
 Done: **Web real-run approval flow** — the hosted agent is no longer

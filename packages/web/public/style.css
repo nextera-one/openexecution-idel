@@ -2919,6 +2919,39 @@ body.logs-hidden .term-side {
   font-size: 0.78rem;
   line-height: 1.5;
 }
+.ai-provider-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.4rem;
+  margin: 0.15rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+.ai-provider-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.55rem;
+  min-width: 0;
+  padding: 0.42rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--field-bg);
+}
+.ai-provider-list li span {
+  overflow: hidden;
+  color: var(--fg);
+  font-size: 0.78rem;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-provider-list li em {
+  flex: 0 0 auto;
+  color: var(--fg-dim);
+  font-size: 0.7rem;
+  font-style: normal;
+}
 .setup-note {
   color: var(--yellow) !important;
 }

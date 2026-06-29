@@ -6,14 +6,14 @@ USAGE
   idel <verb.scope> [key=value ...] [flags]
   idel "<cmd.one ... && cmd.two ...>"  run an IDEL batch; stop on first non-success
   idel ! <native command>              native passthrough (risk-scanned + logged)
-  idel ask "<natural language>"        ask Claude to do it (proposes IDEL, runs via the runtime)
+  idel ask "<natural language>"        ask AI to do it (proposes IDEL, runs via the runtime)
   idel ask.ai prompt="<request>"       IDEL-shaped alias for the AI console
   idel learn <cli> [--write]           teach IDEL an installed CLI (drafts IDEL commands from its --help)
   learn <cli>                          same command inside \`idel terminal\`
   idel promote <cli> [--yes]           promote learned drafts to the signed official layer (re-verify + sign)
   idel registry verify                 check signatures on the official registry layer (fail-closed)
   idel editor <file>                   open a file in your local editor (TTY only)
-  idel terminal                        interactive IDEL terminal (readline REPL; \`? <ask>\` for Claude)
+  idel terminal                        interactive IDEL terminal (readline REPL; \`? <ask>\` for AI)
   idel connect <server-url>            connect this terminal to a remote IDEL server
   idel serve [--port N] [--static D]   start the local web/desktop terminal server
   idel completion <partial>            print autocomplete suggestions
@@ -33,7 +33,7 @@ EXAMPLES
   idel list.history
   idel list.logs
   idel ! tar -xvzf backup.tar.gz
-  idel ask "delete the dist folder"          (uses your Claude subscription or ANTHROPIC_API_KEY; --yes to allow real runs)
+  idel ask "delete the dist folder"          (uses the configured AI provider; --yes to allow real runs)
   idel ask.ai prompt="delete the dist folder"
   idel learn gh --write                      (drafts IDEL commands for the gh CLI into the custom layer)
   learn.cli cli=git
@@ -42,11 +42,13 @@ EXAMPLES
   ssh -L 8787:127.0.0.1:7878 user@host       (safe remote access tunnel)
   idel connect http://127.0.0.1:8787         (use IDEL through that tunnel)
 
-CLAUDE
-  The Claude console (ask.ai, idel ask, \`?\` in terminal, the web "Ask Claude") reaches
-  Claude via — in order — the installed \`claude\` CLI (your Pro/Max SUBSCRIPTION;
+ASK AI
+  The AI console (ask.ai, idel ask, \`?\` in terminal, the web "Ask AI") reaches
+  the currently supported Claude provider via — in order — the installed \`claude\` CLI (your Pro/Max SUBSCRIPTION;
   run \`claude login\` once), else ANTHROPIC_API_KEY (pay-per-token API). Force one
   with IDEL_CLAUDE_PROVIDER=cli|api.
+  Provider roadmap: ChatGPT/OpenAI, Gemini, Microsoft Copilot, Perplexity,
+  Mistral, Grok, and Llama/local models.
 
 FLAGS
   --dry-run        plan + classify, never touch the filesystem

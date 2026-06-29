@@ -32,9 +32,9 @@
         <button
           class="mode-btn"
           id="mode-ask"
-          title="Ask Claude in natural language"
+          title="Ask AI in natural language"
         >
-          Ask Claude
+          Ask AI
         </button>
       </span>
       <button
@@ -489,7 +489,7 @@
           through the same safety → policy → signed-log pipeline as the CLI.
         </div>
         <div class="line muted">
-          Switch to <strong>Ask Claude</strong> (top right) to describe what you
+          Switch to <strong>Ask AI</strong> (top right) to describe what you
           want in natural language — the runtime stays the enforcement boundary.
         </div>
       </section>
@@ -513,7 +513,7 @@
           hidden
         >
           <span class="ai-input-spinner" aria-hidden="true"></span>
-          <span id="ai-input-progress-text">Asking Claude</span>
+          <span id="ai-input-progress-text">Asking AI</span>
         </span>
         <span
           class="risk-indicator risk-indicator--empty"
@@ -841,22 +841,22 @@
 
         <section class="preference-row ask-context-row">
           <div class="preference-copy">
-            <span>Ask Claude context</span>
+            <span>Ask AI context</span>
             <small
-              >Send previous Q/A so Claude can continue the conversation</small
+              >Send previous Q/A so Ask AI can continue the conversation</small
             >
           </div>
           <span class="ask-context-controls">
             <span
               class="theme-toggle ask-context-toggle"
               role="group"
-              aria-label="Ask Claude context preference"
+              aria-label="Ask AI context preference"
             >
               <button
                 class="theme-btn active"
                 type="button"
                 data-ask-context-mode="none"
-                title="Start each Ask Claude request fresh"
+                title="Start each Ask AI request fresh"
               >
                 Off
               </button>
@@ -864,7 +864,7 @@
                 class="theme-btn"
                 type="button"
                 data-ask-context-mode="auto"
-                title="Automatically send relevant recent Ask Claude turns"
+                title="Automatically send relevant recent Ask AI turns"
               >
                 Auto
               </button>
@@ -872,7 +872,7 @@
                 class="theme-btn"
                 type="button"
                 data-ask-context-mode="all"
-                title="Send recent Ask Claude turns"
+                title="Send recent Ask AI turns"
               >
                 All
               </button>
@@ -880,7 +880,7 @@
                 class="theme-btn"
                 type="button"
                 data-ask-context-mode="selected"
-                title="Send only picked Ask Claude turns"
+                title="Send only picked Ask AI turns"
               >
                 Pick
               </button>
@@ -902,12 +902,12 @@
           <div class="preference-copy">
             <span>Auto approve</span>
             <small
-              >Approve matching Ask Claude commands after dry-run checks</small
+              >Approve matching Ask AI commands after dry-run checks</small
             >
           </div>
           <label
             class="switch"
-            title="Auto approve matching Ask Claude real-run requests"
+            title="Auto approve matching Ask AI real-run requests"
           >
             <input id="pref-auto-approve" type="checkbox" />
             <span aria-hidden="true"></span>
@@ -980,7 +980,7 @@ list.*&#10;show.*&#10;explain.*&#10;check.*</textarea
       <div class="ask-context-panel">
         <div class="preferences-head">
           <div>
-            <h2 id="ask-context-title">Ask Claude Context</h2>
+            <h2 id="ask-context-title">Ask AI Context</h2>
             <p>
               Pick prior questions and answers to send with the next request
             </p>
@@ -990,7 +990,7 @@ list.*&#10;show.*&#10;explain.*&#10;check.*</textarea
             id="ask-context-close"
             type="button"
             title="Close"
-            aria-label="Close Ask Claude context"
+            aria-label="Close Ask AI context"
           >
             x
           </button>
@@ -1013,7 +1013,7 @@ list.*&#10;show.*&#10;explain.*&#10;check.*</textarea
         </div>
         <div class="ask-context-list" id="ask-context-list"></div>
         <div class="ask-context-empty" id="ask-context-empty" hidden>
-          No Ask Claude conversation saved yet.
+          No Ask AI conversation saved yet.
         </div>
         <div class="ask-context-actions">
           <span id="ask-context-dialog-count">0 selected</span>
@@ -1385,9 +1385,9 @@ learn.cli cli=apt</code></pre>
       <div class="preferences-panel">
         <div class="preferences-head">
           <div>
-            <h2 id="claude-setup-title">Set Up Ask Claude</h2>
+            <h2 id="claude-setup-title">Set Up Ask AI</h2>
             <p id="claude-setup-status">
-              Ask Claude is not configured on this server.
+              Ask AI is not configured on this server.
             </p>
           </div>
           <button
@@ -1403,9 +1403,24 @@ learn.cli cli=apt</code></pre>
 
         <section class="setup-body">
           <p>
-            Ask Claude runs inside the local <code>idel serve</code> process.
+            Ask AI runs inside the local <code>idel serve</code> process.
             Enable one provider, then restart the UI server.
           </p>
+
+          <div class="setup-option">
+            <strong>Provider catalog</strong>
+            <span>Supported now: Claude. Planned provider adapters:</span>
+            <ul class="ai-provider-list">
+              <li><span>Claude</span><em>Supported</em></li>
+              <li><span>ChatGPT / OpenAI</span><em>Planned</em></li>
+              <li><span>Gemini</span><em>Planned</em></li>
+              <li><span>Microsoft Copilot</span><em>Planned</em></li>
+              <li><span>Perplexity</span><em>Planned</em></li>
+              <li><span>Mistral</span><em>Planned</em></li>
+              <li><span>Grok</span><em>Planned</em></li>
+              <li><span>Llama / local models</span><em>Planned</em></li>
+            </ul>
+          </div>
 
           <div class="setup-option">
             <strong>Use Claude Code</strong>

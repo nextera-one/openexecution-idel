@@ -20,7 +20,7 @@ The bet of V1 is narrow and defensible: **prove that a runtime can prevent dange
 - [Risk levels & policy actions](#risk-levels--policy-actions)
 - [Native passthrough](#native-passthrough)
 - [Web terminal & teaching IDEL a CLI](#quick-start)
-- [Using your Claude subscription](#using-your-claude-subscription)
+- [Using Ask AI](#using-ask-ai)
 - [OpenLogs](#openlogs)
 - [CLI flags](#cli-flags)
 - [Exit codes](#exit-codes)
@@ -228,7 +228,7 @@ Pass npm-check-updates options after `--`, for example
 `pnpm upgrade:latest -- --target minor`. The pnpm path is the default because
 the workspace declares `packageManager: pnpm`.
 
-The page at `/` explains the runtime; `/terminal.html` is a live terminal with an **IDEL** mode (registry completion, history, a live audit-log panel), an **Ask Claude** mode that drives the embedded console over `/api/agent/stream`, and optional `sh` tabs for a native OS shell. The Claude console lights up when Claude is reachable on the `idel serve` process (see [Using your Claude subscription](#using-your-claude-subscription)) — the credential never reaches the browser.
+The page at `/` explains the runtime; `/terminal.html` is a live terminal with an **IDEL** mode (registry completion, history, a live audit-log panel), an **Ask AI** mode that drives the embedded console over `/api/agent/stream`, and optional `sh` tabs for a native OS shell. Ask AI currently runs through the Claude provider on the `idel serve` process (see [Using Ask AI](#using-ask-ai)) — the credential never reaches the browser.
 
 Use IDEL tabs for the audited policy pipeline. Use a native `sh` tab only when you need interactive OS behavior such as `sudo apt install git`, package prompts, shell autocomplete, Ctrl+C, arrows, or full-screen terminal tools. Native shell tabs are backed by xterm.js and are intentionally direct shell sessions, so commands typed there are not converted into IDEL commands or risk-scanned command-by-command. When native tabs are explicitly enabled with `--enable-native-terminal`, their session start/close/signal/exit lifecycle events are still written to signed OpenLogs. Without that flag, `idel serve` leaves native shell tabs disabled by default.
 
@@ -249,20 +249,23 @@ A learned def must clear **two** gates to be accepted: schema validation, and ev
 
 ---
 
-## Using your Claude subscription
+## Using Ask AI
 
-The AI console (`ask.ai prompt="..."`, `idel ask`, the `?` prefix in `idel terminal`, and the web **Ask Claude** mode) reaches Claude through one of two providers, picked automatically:
+The AI console (`ask.ai prompt="..."`, `idel ask`, the `?` prefix in `idel terminal`, and the web **Ask AI** mode) currently reaches Claude through one of two providers, picked automatically:
 
 1. **Your Pro/Max subscription via the `claude` CLI** *(preferred — no API key)*. If [Claude Code](https://claude.com/claude-code) is installed and you've run `claude login`, IDEL shells out to `claude -p` using your subscription. IDEL **unsets `ANTHROPIC_API_KEY` in the spawned process**, so a stray key never silently bills per token.
 2. **`ANTHROPIC_API_KEY` via the Anthropic SDK** *(fallback)* — for CI/servers without the CLI.
 
 Precedence: `claude` CLI → API key → none. Force a provider with `IDEL_CLAUDE_PROVIDER=cli|api`. When neither is available, the console prints how to enable one.
 
+Provider roadmap: ChatGPT/OpenAI, Gemini, Microsoft Copilot, Perplexity,
+Mistral, Grok, and Llama/local models.
+
 The two providers differ only in transport — the runtime is the enforcement boundary in both. With the subscription CLI, Claude has no tools and cannot touch your filesystem: it replies with the IDEL command(s) to run, and IDEL parses → classifies → policy-checks → executes-or-refuses → audits each one, then feeds the outcome back (via `claude -p --resume`) so Claude can adapt. A CRITICAL command Claude proposes is blocked by the same floor that catches a human typo, and recorded as `source: "agent"`.
 
 ```bash
-claude login            # once — authenticates the CLI to your subscription
-idel ask "clean the build directory"   # Claude proposes IDEL; the runtime runs it
+claude login            # once — authenticates the current Claude provider
+idel ask "clean the build directory"   # AI proposes IDEL; the runtime runs it
 idel ask.ai prompt="clean the build directory"
 ```
 
@@ -299,7 +302,7 @@ parse → resolve → coerce → safety (two-phase) → policy → plan → exec
 | `packages/openlogs` | Signed, hash-chained audit writer (OpenLogs v2) with secret redaction. |
 | `packages/runtime` | Orchestrates the whole pipeline; handles native passthrough, approval, meta commands, and outcome assembly. |
 | `packages/server` | A dependency-free local HTTP+SSE boundary over the runtime (`idel serve`). Backs the web/Electron desktop terminal; every request still flows through the full safety/policy/OpenLogs pipeline. |
-| `packages/agent` | The embedded Claude console: exposes IDEL to Claude as a small tool surface, plus `idel learn` (CLI → IDEL draft). The only package that depends on `@anthropic-ai/sdk`; the key lives in the host process, never the browser. |
+| `packages/agent` | The embedded AI console: exposes IDEL to Claude as a small tool surface, plus `idel learn` (CLI → IDEL draft). The only package that depends on `@anthropic-ai/sdk`; the key lives in the host process, never the browser. |
 | `packages/web` | The dependency-free static web terminal + landing page (no build step). Served by `idel serve --static`. |
 | `packages/vscode-extension` | VS Code extension that embeds the same `/terminal.html` UI in a webview and starts/reuses the local `idel serve` boundary. |
 | `packages/cli` | The `idel` executable, flag parsing, rendering, completion, the interactive terminal, `idel ask`, `idel learn`, and `idel serve`. |

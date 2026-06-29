@@ -144,7 +144,7 @@ export function parseArgv(argv: string[]): CliInvocation {
     return { mode: "serve", command: "", native: false, flags };
   }
   if (first === "ask") {
-    // `idel ask "<natural language intent>"` — the embedded Claude console.
+    // `idel ask "<natural language intent>"` — the embedded AI console.
     return {
       mode: "ask",
       command: rest.slice(1).join(" "),

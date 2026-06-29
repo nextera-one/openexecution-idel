@@ -47,7 +47,7 @@ export async function startTerminal(
     );
   });
 
-  // The agent (Claude console) is built lazily on first `?` use, so the absence
+  // The agent (AI console) is built lazily on first `?` use, so the absence
   // of both a claude CLI and an API key only matters if you actually ask. It
   // shares one TerminalService over this runtime, so agent-run commands are
   // audited identically (source: "agent") to typed ones. Claude is reached via
@@ -75,8 +75,8 @@ export async function startTerminal(
     process.stdout.write(
       color.gray(
         selection.kind === "cli"
-          ? "(Claude console via your subscription — claude CLI)\n"
-          : "(Claude console via the Anthropic API)\n",
+          ? "(AI console via your subscription — claude CLI)\n"
+          : "(AI console via the Anthropic API)\n",
       ),
     );
     agent = selection.agent;
@@ -187,7 +187,7 @@ export async function startTerminal(
         return;
       }
 
-      // `? <intent>` routes to the embedded Claude console.
+      // `? <intent>` routes to the embedded AI console.
       if (line.startsWith("?")) {
         const intent = line.slice(1).trim();
         const a = intent ? await getAgent() : undefined;

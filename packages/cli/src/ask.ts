@@ -7,7 +7,7 @@ import type { Runtime } from "@openexecution/runtime";
 import { color, render } from "./render.js";
 
 /**
- * `idel ask "<intent>"` and the REPL's `?` prefix — the Claude console embedded
+ * `idel ask "<intent>"` and the REPL's `?` prefix — the AI console embedded
  * in the terminal. Natural language goes to the agent, which proposes IDEL
  * commands; each one runs through the same runtime pipeline as a typed command,
  * so safety/policy/OpenLogs are identical and AI-run commands are audited as
@@ -115,10 +115,10 @@ function promptYesNo(question: string): Promise<boolean> {
   });
 }
 
-/** Guidance shown when neither the claude CLI nor an API key is available. */
+/** Guidance shown when no Ask AI provider is available. */
 export function noClaudeMessage(): string {
   return (
-    color.red("Claude is not available. ") +
+    color.red("Ask AI is not available. ") +
     color.gray(
       "To use `ask.ai` / `idel ask` / `?`, enable one provider:\n" +
         "  • install Claude Code and run `claude login` (uses your Pro/Max subscription), or\n" +
