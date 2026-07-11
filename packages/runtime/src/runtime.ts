@@ -560,6 +560,7 @@ export class Runtime {
     nativeShell?: boolean;
   }): Promise<RuntimeOutcome> {
     const { ast, ctx, risk, decision, adapter, plan, nativeShell } = args;
+    let approvalGranted = decision.action === "approval_required" && ctx.approval === true;
 
     // BLOCK — record and stop. No fs touched.
     if (decision.action === "block") {
@@ -612,6 +613,7 @@ export class Runtime {
             outcome: "blocked_before_execution",
           });
         }
+        approvalGranted = true;
       }
     }
 
@@ -649,6 +651,7 @@ export class Runtime {
           dryRun,
           cwd: ast.cwd,
           interactive: ctx.interactive === true,
+          approved: approvalGranted,
         });
       } else {
         return this.finish({

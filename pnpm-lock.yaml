@@ -190,6 +190,8 @@ importers:
 
   packages/types: {}
 
+  packages/vscode-extension: {}
+
   packages/web: {}
 
 packages:

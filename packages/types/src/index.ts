@@ -308,7 +308,7 @@ export interface Adapter extends AdapterCapabilities {
   /** Execute a plan. Must honor dryRun by returning a simulated result. */
   execute(
     plan: ExecutionPlan,
-    opts: { dryRun: boolean; cwd: string; interactive?: boolean },
+    opts: { dryRun: boolean; cwd: string; interactive?: boolean; approved?: boolean },
   ): Promise<ExecutionResult>;
 }
 

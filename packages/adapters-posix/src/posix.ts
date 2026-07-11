@@ -77,7 +77,7 @@ export class PosixAdapter implements Adapter {
 
   async execute(
     plan: ExecutionPlan,
-    opts: { dryRun: boolean; cwd: string },
+    opts: { dryRun: boolean; cwd: string; approved?: boolean },
   ): Promise<ExecutionResult> {
     if (opts.dryRun) {
       return {
@@ -94,6 +94,9 @@ export class PosixAdapter implements Adapter {
       const child = spawn(plan.command, plan.argv, {
         cwd: opts.cwd,
         shell: false,
+        env: opts.approved
+          ? { ...process.env, IDEL_EXECUTION_APPROVED: "true" }
+          : process.env,
       });
 
       let stdout = "";
