@@ -41,20 +41,19 @@ the tests, and CI fully reproducible **without** waiting on the publish.
 4. Only then is `npm install -g @openexecution/cli` viable from a clean machine
    (also requires un-setting `"private": true` on the packages you publish).
 
-## 2. Runtime swallows OpenLogs write failures (silent) — FIXED
+## 2. Runtime OpenLogs failure behavior (resolved in 1.2)
 
-`packages/runtime/src/runtime.ts`: the runtime still never lets a failed append
-sink a command (the product stance), but it no longer fails *silently*. The
-first append failure per runtime instance now writes a one-time warning to
-stderr:
+`packages/runtime/src/runtime.ts` no longer hides evidence loss. The first
+append failure per runtime instance calls the host's `onLogError` hook; hosts
+without a hook receive a one-time stderr warning:
 
 ```
 openlogs: failed to record this command — audit trail may be incomplete (<detail>)
 ```
 
-Subsequent failures in the same process are not re-warned (no log spam). Covered
-by a runtime test that injects a failing writer and asserts (a) the command still
-succeeds and (b) exactly one warning is emitted across two failed appends.
+Subsequent failures are not re-warned. Governed callers can set
+`evidenceRequired: true`; publication, promotion, revocation, and similar flows
+then fail closed with `EvidenceWriteError` when the receipt cannot be recorded.
 
 ## 3. Legacy (pre-signing) log records are ignored, not migrated
 

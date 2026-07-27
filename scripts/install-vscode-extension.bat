@@ -3,15 +3,23 @@ setlocal EnableExtensions EnableDelayedExpansion
 
 set "EXT_PUBLISHER=nextera-one"
 set "EXT_NAME=openexecution-idel-vscode"
-set "EXT_VERSION=0.1.0"
+set "EXT_VERSION=0.2.0"
 set "EXT_FOLDER=%EXT_PUBLISHER%.%EXT_NAME%-%EXT_VERSION%"
+set "PREVIOUS_EXT_FOLDER=%EXT_PUBLISHER%.%EXT_NAME%-0.1.0"
 
 set "SCRIPT_DIR=%~dp0"
 for %%I in ("%SCRIPT_DIR%..") do set "ROOT_DIR=%%~fI"
 set "EXT_SRC=%ROOT_DIR%\packages\vscode-extension"
+set "STRUCTURE_SRC=%ROOT_DIR%\packages\structure"
+set "STRUCTURE_DIST=%STRUCTURE_SRC%\dist"
 
 if not exist "%EXT_SRC%\package.json" (
   echo Could not find VS Code extension source at: %EXT_SRC% 1>&2
+  exit /b 1
+)
+if not exist "%STRUCTURE_DIST%\index.js" (
+  echo IDEL Structure runtime is not built: %STRUCTURE_DIST%\index.js 1>&2
+  echo Run the workspace build, then rerun this installer. 1>&2
   exit /b 1
 )
 
@@ -37,6 +45,9 @@ copy /y "%EXT_SRC%\package.json" "%TMP_DIR%\package.json" >nul
 copy /y "%EXT_SRC%\README.md" "%TMP_DIR%\README.md" >nul
 xcopy /e /i /y "%EXT_SRC%\src" "%TMP_DIR%\src" >nul
 xcopy /e /i /y "%EXT_SRC%\resources" "%TMP_DIR%\resources" >nul
+mkdir "%TMP_DIR%\runtime\structure"
+xcopy /e /i /y "%STRUCTURE_DIST%" "%TMP_DIR%\runtime\structure" >nul
+copy /y "%STRUCTURE_SRC%\package.json" "%TMP_DIR%\runtime\structure\package.json" >nul
 
 for /f "delims=" %%I in ('where node 2^>nul') do if not defined NODE_BIN set "NODE_BIN=%%I"
 if not defined NODE_BIN for /f "delims=" %%I in ('where nodejs 2^>nul') do if not defined NODE_BIN set "NODE_BIN=%%I"
@@ -58,10 +69,11 @@ if defined NODE_BIN (
 
 if exist "%TARGET_DIR%" rmdir /s /q "%TARGET_DIR%"
 move "%TMP_DIR%" "%TARGET_DIR%" >nul
+if exist "%TARGET_BASE%\%PREVIOUS_EXT_FOLDER%" rmdir /s /q "%TARGET_BASE%\%PREVIOUS_EXT_FOLDER%"
 
 echo.
 echo Installed: %TARGET_DIR%
-echo Reload VS Code, then run: IDEL: Open Terminal
+echo Reload VS Code, then open any .idel file for coloring, diagnostics, and autocomplete.
 echo.
 echo To install into another VS Code-compatible profile, set VSCODE_EXTENSIONS_DIR.
 

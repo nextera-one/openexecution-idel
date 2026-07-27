@@ -118,6 +118,10 @@ idel remove.folder name=dist recursive=true --dry-run
 # Run a non-interactive script through a first-class IDEL command
 idel run.script path=./scripts/check.js shell=node args="--fix src"
 
+# Validate, compile, and execute an IDEL Structure workflow
+idel run examples/workflow.idel
+idel examples/workflow.idel
+
 # Run multiple IDEL commands sequentially; stop on the first non-success
 idel 'create.file name=a.txt && wait.time ms=500 && read.file name=a.txt'
 
@@ -152,6 +156,18 @@ Log: ~/.idel/logs/openlogs.jsonl
 ```
 
 Other useful commands: `idel list.registry` (59 core commands), `idel check.policy`, `idel terminal` (interactive REPL), `idel completion <partial>`.
+
+Inside `idel terminal`, a local `workflow.idel` has native IDEL short forms:
+
+```text
+run.workflow.idel
+run.workflow
+```
+
+Both forms compile the file and execute its leaf commands through the normal
+risk, policy, approval, adapter, and OpenLogs pipeline. Declarative files such
+as `project.idel`, `package.idel`, and `repositories.idel` are validated or
+compiled; they are not executable workflow roots.
 
 Web terminal scrollback commands are local to the active terminal tab:
 `clear.all`, `clear.last limit=10`, `clear.first limit=5`, and
@@ -269,6 +285,47 @@ idel ask "clean the build directory"   # AI proposes IDEL; the runtime runs it
 idel ask.ai prompt="clean the build directory"
 ```
 
+## IDEL packages
+
+The existing runtime CLI also owns the package workflow so users do not need a
+second executable:
+
+```bash
+idel init
+idel validate
+idel pack
+idel lock init
+idel lock verify --immutable
+idel install
+idel install --immutable
+idel verify
+```
+
+`idel validate` applies the OpenExecution Package v1 contract and checks that
+the lowercase `package.idel` Structure source is typed and every declared
+export matches a safe packaged file. Manifest semantic identity is deterministic
+CBOR, so formatting and source order do not change its digest. `idel pack` creates a
+UTF-8-byte-sorted ustar archive with normalized ownership, modes, and timestamps,
+adds a canonical `IDEL-BUNDLE.json` index, and compresses it with deterministic
+single-threaded zstd settings. Symlinks, device files, absolute paths, parent
+traversal, duplicate names, and undeclared missing exports fail closed.
+Credential-like files such as `.env*`, private-key formats, JKS/PKCS#12
+keystores, and Firebase admin credentials are rejected; packages declare secret
+references instead of distributing secret bytes.
+
+The lock command creates native lowercase IDEL Structure in `idel.lock` and
+verifies manifest drift. Registry-backed installation writes exact package
+versions, immutable digests, publisher authority, evidence, trust, and resolved
+dependency versions.
+
+`idel install` discovers the registry through
+`/.well-known/idel-registry`, resolves the complete graph with deterministic
+SemVer backtracking, excludes yanked/quarantined/revoked releases, verifies
+immutable metadata and bundle digests, and writes the lockfile atomically.
+`--immutable` preserves the exact graph and rejects metadata drift.
+`--immutable --offline` requires every locked bundle to already exist in the
+content-addressed cache.
+
 ---
 
 ## Architecture
@@ -292,6 +349,7 @@ parse → resolve → coerce → safety (two-phase) → policy → plan → exec
 
 | Package | Responsibility |
 | --- | --- |
+| `packages/structure` | Parse lowercase IDEL Structure, enforce dotted command/enum and `snake_case` field naming, expose the shared language registry, and emit deterministic CBOR. |
 | `packages/parser` | Tokenize and parse IDEL into a typed `CommandAst` / `NativeCommandAst`. |
 | `packages/types` | The shared contract every package depends on — the source of truth for all types. |
 | `packages/registry` | Load, validate (fail-closed), and resolve command defs across the three layers; schema-driven param coercion. |
@@ -304,7 +362,7 @@ parse → resolve → coerce → safety (two-phase) → policy → plan → exec
 | `packages/server` | A dependency-free local HTTP+SSE boundary over the runtime (`idel serve`). Backs the web/Electron desktop terminal; every request still flows through the full safety/policy/OpenLogs pipeline. |
 | `packages/agent` | The embedded AI console: exposes IDEL to Claude as a small tool surface, plus `idel learn` (CLI → IDEL draft). The only package that depends on `@anthropic-ai/sdk`; the key lives in the host process, never the browser. |
 | `packages/web` | The dependency-free static web terminal + landing page (no build step). Served by `idel serve --static`. |
-| `packages/vscode-extension` | VS Code extension that embeds the same `/terminal.html` UI in a webview and starts/reuses the local `idel serve` boundary. |
+| `packages/vscode-extension` | VS Code `.idel` coloring, shared-parser diagnostics, autocomplete, hover help, and the embedded `/terminal.html` UI. Includes local install/uninstall scripts. |
 | `packages/cli` | The `idel` executable, flag parsing, rendering, completion, the interactive terminal, `idel ask`, `idel learn`, and `idel serve`. |
 
 The core command definitions live in `registries/core/*.json` (filesystem, permissions, archive, find, path/env, meta).

@@ -4,6 +4,7 @@ const { existsSync, readFileSync, readdirSync } = require("node:fs");
 const http = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
+const { pathToFileURL } = require("node:url");
 
 const VIEW_TYPE = "openexecutionIdel.terminalView";
 const DEFAULT_PORT = 7878;
@@ -12,6 +13,7 @@ const STARTUP_TIMEOUT_MS = 20000;
 let manager;
 let output;
 let panel;
+let structureRuntimePromise;
 
 function activate(context) {
   output = vscode.window.createOutputChannel("OpenExecution IDEL");
@@ -48,6 +50,200 @@ function activate(context) {
       await vscode.env.openExternal(externalUri);
     }),
   );
+
+  registerIdelLanguage(context);
+}
+
+function registerIdelLanguage(context) {
+  const selector = { language: "idel" };
+  const diagnostics = vscode.languages.createDiagnosticCollection("idel");
+  const refresh = (document, announce = false) =>
+    validateIdelDocument(context, diagnostics, document, announce);
+
+  context.subscriptions.push(
+    diagnostics,
+    vscode.workspace.onDidOpenTextDocument((document) => {
+      if (document.languageId === "idel") void refresh(document);
+    }),
+    vscode.workspace.onDidChangeTextDocument((event) => {
+      if (event.document.languageId === "idel") void refresh(event.document);
+    }),
+    vscode.workspace.onDidCloseTextDocument((document) => {
+      diagnostics.delete(document.uri);
+    }),
+    vscode.commands.registerCommand("openexecutionIdel.validateDocument", async () => {
+      const document = vscode.window.activeTextEditor?.document;
+      if (!document || document.languageId !== "idel") {
+        vscode.window.showWarningMessage("Open an .idel document to validate it.");
+        return;
+      }
+      await refresh(document, true);
+    }),
+    vscode.languages.registerCompletionItemProvider(
+      selector,
+      {
+        async provideCompletionItems() {
+          const runtime = await loadStructureRuntime(context);
+          return completionItems(runtime.LANGUAGE_REGISTRY);
+        },
+      },
+      ".",
+    ),
+    vscode.languages.registerHoverProvider(selector, {
+      async provideHover(document, position) {
+        const range = document.getWordRangeAtPosition(
+          position,
+          /[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)*/,
+        );
+        if (!range) return undefined;
+        const name = document.getText(range);
+        const runtime = await loadStructureRuntime(context);
+        const found = registryEntries(runtime.LANGUAGE_REGISTRY)
+          .find((item) => item.name === name);
+        if (!found) return undefined;
+        const markdown = new vscode.MarkdownString();
+        markdown.appendCodeblock(found.name, "idel");
+        markdown.appendMarkdown(`**${found.detail}**\n\n${found.documentation}`);
+        return new vscode.Hover(markdown, range);
+      },
+    }),
+    vscode.languages.registerDocumentFormattingEditProvider(selector, {
+      async provideDocumentFormattingEdits(document) {
+        const runtime = await loadStructureRuntime(context);
+        const formatted = runtime.formatStructure(document.getText());
+        if (formatted === document.getText()) return [];
+        const end = document.lineAt(document.lineCount - 1).range.end;
+        return [vscode.TextEdit.replace(new vscode.Range(0, 0, end.line, end.character), formatted)];
+      },
+    }),
+  );
+
+  for (const document of vscode.workspace.textDocuments) {
+    if (document.languageId === "idel") void refresh(document);
+  }
+}
+
+async function validateIdelDocument(context, collection, document, announce) {
+  try {
+    const runtime = await loadStructureRuntime(context);
+    runtime.parseStructure(document.getText());
+    collection.set(document.uri, []);
+    if (announce) {
+      vscode.window.showInformationMessage(
+        `${path.basename(document.fileName)} is valid IDEL Structure 1.0.`,
+      );
+    }
+  } catch (error) {
+    const line = Math.max(0, Number(error.line || 1) - 1);
+    const column = Math.max(0, Number(error.column || 1) - 1);
+    const lineText = document.lineAt(
+      Math.min(line, Math.max(0, document.lineCount - 1)),
+    ).text;
+    const end = Math.max(column + 1, wordEnd(lineText, column));
+    const range = new vscode.Range(line, column, line, end);
+    const message = String(error.message || error)
+      .replace(/^[0-9]+:[0-9]+:\s*/, "");
+    const diagnostic = new vscode.Diagnostic(
+      range,
+      message,
+      vscode.DiagnosticSeverity.Error,
+    );
+    diagnostic.source = "IDEL Structure";
+    diagnostic.code = error.code || "IDEL_STRUCTURE_INVALID";
+    collection.set(document.uri, [diagnostic]);
+    if (announce) {
+      vscode.window.showErrorMessage(
+        `${path.basename(document.fileName)}: ${diagnostic.code}: ${message}`,
+      );
+    }
+  }
+}
+
+function completionItems(registry) {
+  const items = [];
+  for (const entry of registry.commands) {
+    const item = new vscode.CompletionItem(
+      entry.name,
+      vscode.CompletionItemKind.Keyword,
+    );
+    item.detail = entry.detail;
+    item.documentation = new vscode.MarkdownString(entry.documentation);
+    item.insertText = new vscode.SnippetString(
+      `${entry.name} "\${1:label}" {\n  \${0}\n}`,
+    );
+    item.sortText = `0-${entry.name}`;
+    items.push(item);
+  }
+  for (const entry of registry.fields) {
+    const item = new vscode.CompletionItem(
+      entry.name,
+      vscode.CompletionItemKind.Field,
+    );
+    item.detail = entry.detail;
+    item.documentation = new vscode.MarkdownString(entry.documentation);
+    item.insertText = new vscode.SnippetString(`${entry.name} = \${0}`);
+    item.sortText = `1-${entry.name}`;
+    items.push(item);
+  }
+  for (const entry of registry.constructors) {
+    const item = new vscode.CompletionItem(
+      entry.name,
+      vscode.CompletionItemKind.Constructor,
+    );
+    item.detail = entry.detail;
+    item.documentation = new vscode.MarkdownString(entry.documentation);
+    item.insertText = new vscode.SnippetString(`${entry.name}("\${1:value}")`);
+    item.sortText = `2-${entry.name}`;
+    items.push(item);
+  }
+  for (const entry of registry.enums) {
+    const item = new vscode.CompletionItem(
+      entry.name,
+      vscode.CompletionItemKind.EnumMember,
+    );
+    item.detail = entry.detail;
+    item.documentation = new vscode.MarkdownString(entry.documentation);
+    item.sortText = `3-${entry.name}`;
+    items.push(item);
+  }
+  return items;
+}
+
+function registryEntries(registry) {
+  return [
+    ...registry.commands,
+    ...registry.fields,
+    ...registry.constructors,
+    ...registry.enums,
+  ];
+}
+
+function wordEnd(text, column) {
+  let index = Math.min(column, text.length);
+  while (index < text.length && /[A-Za-z0-9_.:@/-]/.test(text[index])) {
+    index++;
+  }
+  return index;
+}
+
+function loadStructureRuntime(context) {
+  if (!structureRuntimePromise) {
+    structureRuntimePromise = importFirstExisting([
+      path.join(context.extensionPath, "runtime", "structure", "index.js"),
+      path.resolve(context.extensionPath, "..", "structure", "dist", "index.js"),
+    ]);
+  }
+  return structureRuntimePromise;
+}
+
+async function importFirstExisting(candidates) {
+  const found = candidates.find((candidate) => existsSync(candidate));
+  if (!found) {
+    throw new Error(
+      "IDEL Structure runtime is missing. Run the VS Code extension installer after building the workspace.",
+    );
+  }
+  return import(pathToFileURL(found).href);
 }
 
 async function openTerminalPanel(serverManager, out) {

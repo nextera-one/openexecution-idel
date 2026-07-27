@@ -83,6 +83,17 @@ export interface RuntimeOptions {
   adapters?: Adapter[];
   /** Called when policy says approval_required and we're interactive. */
   onApproval?: ApprovalHandler;
+  /** Called once when the evidence writer fails, so audit loss is never silent. */
+  onLogError?: (error: Error) => void;
+  /**
+   * Fail the command when required evidence cannot be recorded.
+   * Publication, promotion, revocation, and other governed callers set this.
+   */
+  evidenceRequired?: boolean;
+}
+
+export class EvidenceWriteError extends Error {
+  override readonly name = "EvidenceWriteError";
 }
 
 /**
@@ -95,14 +106,17 @@ export class Runtime {
   private readonly openLogWriter: OpenLogWriter | undefined;
   private readonly adapters: Adapter[];
   private onApproval: ApprovalHandler | undefined;
-  /** Set once an OpenLogs append has failed, so we warn only on the first miss. */
-  private logFailureWarned = false;
+  private readonly onLogError: ((error: Error) => void) | undefined;
+  private readonly evidenceRequired: boolean;
+  private logFailureReported = false;
 
   constructor(opts: RuntimeOptions) {
     this.registry = opts.registry;
     this.policy = opts.policy ?? defaultPolicy();
     this.openLogWriter = opts.logWriter;
     this.onApproval = opts.onApproval;
+    this.onLogError = opts.onLogError;
+    this.evidenceRequired = opts.evidenceRequired ?? false;
     // Default adapter chain: Node fs first (safest), then platform shell.
     this.adapters =
       opts.adapters ??
@@ -888,19 +902,27 @@ export class Runtime {
     };
 
     if (this.openLogWriter) {
-      // Logging must never sink a command — a failed append cannot fail the
-      // command. But an accountability layer that silently stops recording is
-      // worse than one that complains, so surface the FIRST failure to stderr
-      // (once per runtime) instead of swallowing it entirely (CONCERNS §2).
-      await this.openLogWriter.append(record).catch((err: unknown) => {
-        if (!this.logFailureWarned) {
-          this.logFailureWarned = true;
-          const detail = (err as Error)?.message ?? String(err);
-          process.stderr.write(
-            `openlogs: failed to record this command — audit trail may be incomplete (${detail})\n`,
+      try {
+        await this.openLogWriter.append(record);
+      } catch (error) {
+        const typed =
+          error instanceof Error ? error : new Error(String(error));
+        if (!this.logFailureReported) {
+          this.logFailureReported = true;
+          if (this.onLogError) {
+            this.onLogError(typed);
+          } else {
+            process.stderr.write(
+              `openlogs: failed to record this command — audit trail may be incomplete (${typed.message})\n`,
+            );
+          }
+        }
+        if (this.evidenceRequired) {
+          throw new EvidenceWriteError(
+            `required execution evidence could not be recorded: ${typed.message}`,
           );
         }
-      });
+      }
     }
 
     // Build the returned assessment from the AUTHORITATIVE merged values

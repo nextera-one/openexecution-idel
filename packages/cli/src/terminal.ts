@@ -1,6 +1,6 @@
 import { createInterface, type Interface } from "node:readline";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { createAgent, type AgentLike } from "@openexecution/agent";
 import { TerminalService } from "@openexecution/server";
@@ -15,6 +15,10 @@ import { renderEvent, noClaudeMessage } from "./ask.js";
 import { ASK_AI_USAGE, askAiIntent, isAskAiCommand } from "./ask-ai.js";
 import { learn } from "./learn.js";
 import { LEARN_USAGE, parseLearnCommand } from "./learn-command.js";
+import {
+  loadStructureExecutionPlan,
+  terminalWorkflowPath,
+} from "./structure-runner.js";
 
 /**
  * Interactive IDEL terminal (spec §24, `idel terminal`). A thin readline REPL
@@ -136,12 +140,50 @@ export async function startTerminal(
         process.stdout.write(
           color.gray(
             "Enter IDEL commands like `create.file name=x.txt`, `cmd.one && cmd.two`, or `! rm -rf dist`.\n" +
+              "Run local workflows with `run.workflow.idel` or `run.workflow` (for workflow.idel).\n" +
               "Ask AI in natural language with `ask.ai prompt=\"delete the dist folder\"` or a leading `?`.\n" +
               `Learn an installed CLI with \`${LEARN_USAGE}\` or \`learn.cli cli=git\`.\n` +
               "Meta: list.registry, explain.registry command=remove.folder, check.policy, list.history, list.logs.\n" +
               "Web scrollback: clear.all, clear.last limit=10, clear.first limit=10, clear.range from=2 to=5.\n",
           ),
         );
+        return;
+      }
+
+      const workflowPath = await terminalWorkflowPath(line, process.cwd());
+      if (workflowPath !== undefined) {
+        try {
+          const plan = await loadStructureExecutionPlan(
+            workflowPath,
+            process.cwd(),
+          );
+          process.stdout.write(
+            color.gray(
+              `Running ${plan.workflow} from ${plan.source} (${plan.digest})\n`,
+            ),
+          );
+          const ctx: RuntimeContext = {
+            ...baseCtx,
+            cwd: dirname(plan.source),
+          };
+          for (const command of plan.commands) {
+            const outcome = await runWithPreview(runtime, command, ctx, rl);
+            if (
+              outcome === undefined ||
+              (outcome.record.result !== "success" &&
+                !(ctx.dryRun && outcome.record.result === "dry_run"))
+            ) {
+              break;
+            }
+          }
+        } catch (error) {
+          const typed = error as Error & { code?: string };
+          process.stdout.write(
+            color.red(
+              `${typed.code ?? "IDEL_RUN_FAILED"}: ${typed.message}\n`,
+            ),
+          );
+        }
         return;
       }
 

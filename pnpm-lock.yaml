@@ -82,6 +82,9 @@ importers:
       '@openexecution/openlogs':
         specifier: workspace:*
         version: link:../openlogs
+      '@openexecution/package':
+        specifier: workspace:*
+        version: link:../package
       '@openexecution/parser':
         specifier: workspace:*
         version: link:../parser
@@ -97,6 +100,9 @@ importers:
       '@openexecution/server':
         specifier: workspace:*
         version: link:../server
+      '@openexecution/structure':
+        specifier: workspace:*
+        version: link:../structure
       '@openexecution/types':
         specifier: workspace:*
         version: link:../types
@@ -112,6 +118,12 @@ importers:
       '@openexecution/types':
         specifier: workspace:*
         version: link:../types
+
+  packages/package:
+    dependencies:
+      '@openexecution/structure':
+        specifier: workspace:*
+        version: link:../structure
 
   packages/parser:
     dependencies:
@@ -187,6 +199,8 @@ importers:
       '@openexecution/types':
         specifier: workspace:*
         version: link:../types
+
+  packages/structure: {}
 
   packages/types: {}
 

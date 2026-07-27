@@ -12,6 +12,8 @@
     { "path": "../registry" },
     { "path": "../parser" },
     { "path": "../openlogs" },
+    { "path": "../package" },
+    { "path": "../structure" },
     { "path": "../policy" },
     { "path": "../server" },
     { "path": "../agent" }

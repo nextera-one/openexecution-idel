@@ -14,6 +14,7 @@ describe("parseArgv", () => {
     expect(inv.mode).toBe("run");
     expect(inv.command).toBe("create.file name=readme.md");
     expect(inv.native).toBe(false);
+    expect(inv.arguments).toEqual(["create.file", "name=readme.md"]);
   });
 
   it("recognizes native passthrough via !", () => {
@@ -87,6 +88,67 @@ describe("parseArgv", () => {
 
     const spaced = parseArgv(["editor", "my file.txt", "editor=nano"]);
     expect(spaced.command).toBe('edit.file path="my file.txt" editor=nano');
+  });
+
+  it("maps explicit and short-form IDEL workflow execution", () => {
+    const explicit = parseArgv(["run", "intents/release.idel", "--dry-run"]);
+    expect(explicit.mode).toBe("structure-run");
+    expect(explicit.command).toBe("intents/release.idel");
+    expect(explicit.flags.dryRun).toBe(true);
+
+    const short = parseArgv(["release.idel"]);
+    expect(short.mode).toBe("structure-run");
+    expect(short.command).toBe("release.idel");
+  });
+
+  it("maps package and universal commands without sending them to the execution runtime", () => {
+    const validate = parseArgv(["validate", "--manifest", "package/package.idel"]);
+    expect(validate.mode).toBe("universal");
+    expect(validate.command).toBe("validate");
+    expect(validate.flags.manifestPath).toBe("package/package.idel");
+
+    const lock = parseArgv(["lock", "verify", "--immutable"]);
+    expect(lock.mode).toBe("package");
+    expect(lock.arguments).toEqual(["verify"]);
+    expect(lock.flags.immutable).toBe(true);
+
+    const install = parseArgv([
+      "install",
+      "--registry",
+      "https://packages.example",
+      "--offline",
+    ]);
+    expect(install.mode).toBe("package");
+    expect(install.flags.registryUrl).toBe("https://packages.example");
+    expect(install.flags.offline).toBe(true);
+
+    const add = parseArgv([
+      "add",
+      "pkg:npm/vue@3.5.17",
+      "--file",
+      "project.idel",
+      "--repository",
+      "global#npmjs",
+      "--purpose",
+      "runtime",
+    ]);
+    expect(add.mode).toBe("universal");
+    expect(add.flags.filePath).toBe("project.idel");
+    expect(add.flags.repositoryName).toBe("global#npmjs");
+    expect(add.flags.purpose).toBe("runtime");
+
+    const repository = parseArgv([
+      "repo",
+      "add",
+      "pypi",
+      "--kind",
+      "pypi",
+      "--endpoint",
+      "https://pypi.org/simple",
+    ]);
+    expect(repository.mode).toBe("universal");
+    expect(repository.command).toBe("repository");
+    expect(repository.flags.repositoryKind).toBe("pypi");
   });
 
   it("handles --no-native and --yes", () => {

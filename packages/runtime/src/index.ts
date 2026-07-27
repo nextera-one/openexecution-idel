@@ -22,7 +22,7 @@
  *     phase be skipped for destructive commands.
  */
 
-export { Runtime } from "./runtime.js";
+export { EvidenceWriteError, Runtime } from "./runtime.js";
 export type { RuntimeOptions, ApprovalHandler } from "./runtime.js";
 export {
   formatDecision,
