@@ -1,6 +1,6 @@
 import { hostname, userInfo, platform, homedir } from "node:os";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { splitBatch } from "@openexecution/parser";
 import { Runtime } from "@openexecution/runtime";
@@ -22,6 +22,9 @@ import { promote } from "./promote.js";
 import { verifyRegistry, verifyOfficialLayer } from "./registry-verify.js";
 import { parseLearnCommand } from "./learn-command.js";
 import { HELP_TEXT, VERSION } from "./help.js";
+import { runPackageCommand } from "./package-command.js";
+import { runUniversalCommand } from "./universal-command.js";
+import { loadStructureExecutionPlan } from "./structure-runner.js";
 
 /** Process entry point. Returns the desired process exit code. */
 export async function main(argv: string[]): Promise<number> {
@@ -40,6 +43,24 @@ export async function main(argv: string[]): Promise<number> {
   if (inv.mode === "version") {
     process.stdout.write(`idel ${VERSION}\n`);
     return 0;
+  }
+  if (inv.mode === "package") {
+    const output = await runPackageCommand(inv);
+    if (output.exitCode === 0) {
+      process.stdout.write(output.text);
+    } else {
+      process.stderr.write(output.text);
+    }
+    return output.exitCode;
+  }
+  if (inv.mode === "universal") {
+    const output = await runUniversalCommand(inv);
+    if (output.exitCode === 0) {
+      process.stdout.write(output.text);
+    } else {
+      process.stderr.write(output.text);
+    }
+    return output.exitCode;
   }
 
   // `idel learn <cli>` introspects an installed CLI and drafts IDEL defs. It
@@ -99,6 +120,13 @@ export async function main(argv: string[]): Promise<number> {
     officialDir,
     customDir: registryDirs.custom,
     logWriter: new OpenLogWriter({}),
+    onLogError: (error) => {
+      process.stderr.write(
+        color.yellow(
+          `openlogs: failed to record execution evidence: ${error.message}\n`,
+        ),
+      );
+    },
     // Interactive approval only when not in CI and the user passed --yes is NOT
     // a blanket bypass: --yes still cannot clear CRITICAL (the policy floor
     // handles that). Here --yes simply auto-approves approval_required prompts.
@@ -111,6 +139,31 @@ export async function main(argv: string[]): Promise<number> {
     const suggestions = complete(inv.command, runtime.reg, process.cwd());
     process.stdout.write(suggestions.join("\n") + (suggestions.length ? "\n" : ""));
     return 0;
+  }
+
+  if (inv.mode === "structure-run") {
+    try {
+      const plan = await loadStructureExecutionPlan(inv.command);
+      if (!inv.flags.json) {
+        process.stdout.write(
+          color.gray(
+            `Running ${plan.workflow} from ${plan.source} (${plan.digest})\n`,
+          ),
+        );
+      }
+      return runBatch(
+        runtime,
+        plan.commands,
+        { ...makeContext(inv.flags), cwd: dirname(plan.source) },
+        inv.flags.json,
+      );
+    } catch (error) {
+      const typed = error as Error & { code?: string };
+      process.stderr.write(
+        `${typed.code ?? "IDEL_RUN_FAILED"}: ${typed.message}\n`,
+      );
+      return 2;
+    }
   }
 
   if (inv.mode === "terminal") {

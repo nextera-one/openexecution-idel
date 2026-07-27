@@ -1,0 +1,128 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "IDEL Structure",
+  "scopeName": "source.idel",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#header" },
+    { "include": "#strings" },
+    { "include": "#commands" },
+    { "include": "#fields" },
+    { "include": "#constructors" },
+    { "include": "#constants" },
+    { "include": "#numbers" },
+    { "include": "#punctuation" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.number-sign.idel",
+          "match": "#.*$"
+        },
+        {
+          "name": "comment.line.double-slash.idel",
+          "match": "//.*$"
+        }
+      ]
+    },
+    "header": {
+      "patterns": [
+        {
+          "match": "^\\s*(@idel)\\s+([0-9]+\\.[0-9]+)",
+          "captures": {
+            "1": { "name": "keyword.control.directive.idel" },
+            "2": { "name": "constant.numeric.version.idel" }
+          }
+        },
+        {
+          "match": "^\\s*(use)\\b",
+          "captures": {
+            "1": { "name": "keyword.control.import.idel" }
+          }
+        }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.idel",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.idel",
+          "match": "\\\\(?:[\"\\\\/bfnrt]|u[0-9a-fA-F]{4})"
+        }
+      ]
+    },
+    "commands": {
+      "patterns": [
+        {
+          "match": "^\\s*([a-z][a-z0-9]*(?:\\.[a-z][a-z0-9]*)+)\\b(?=\\s*(?:\"|\\{))",
+          "captures": {
+            "1": { "name": "keyword.declaration.command.idel" }
+          }
+        }
+      ]
+    },
+    "fields": {
+      "patterns": [
+        {
+          "match": "\\b([a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)*)\\b(?=\\s*=)",
+          "captures": {
+            "1": { "name": "variable.other.property.idel" }
+          }
+        }
+      ]
+    },
+    "constructors": {
+      "patterns": [
+        {
+          "match": "\\b([a-z][a-z0-9_]*)\\b(?=\\s*\\()",
+          "captures": {
+            "1": { "name": "support.function.constructor.idel" }
+          }
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.idel",
+          "match": "\\b(?:true|false)\\b"
+        },
+        {
+          "name": "constant.language.enum.idel",
+          "match": "\\b(?:required|optional|forbidden|builtin|[a-z][a-z0-9]*(?:\\.[a-z0-9]+)+)\\b"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.idel",
+          "match": "(?<![A-Za-z0-9_])-?\\b[0-9]+(?:\\.[0-9]+)?\\b"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "keyword.operator.assignment.idel",
+          "match": "="
+        },
+        {
+          "name": "punctuation.separator.comma.idel",
+          "match": ","
+        },
+        {
+          "name": "punctuation.section.block.idel",
+          "match": "[{}]"
+        },
+        {
+          "name": "punctuation.section.group.idel",
+          "match": "[\\[\\]()]"
+        }
+      ]
+    }
+  }
+}

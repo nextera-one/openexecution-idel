@@ -1,0 +1,7 @@
+@idel 1.0
+
+define.intent.workflow "workflow" {
+  create.file "marker" {
+    name = "workflow-complete.txt"
+  }
+}

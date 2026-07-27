@@ -79,6 +79,39 @@ describe("the thesis: dangerous commands are blocked before execution", () => {
   });
 });
 
+describe("evidence failure behavior", () => {
+  const failingWriter = {
+    append: async () => {
+      throw new Error("evidence disk unavailable");
+    },
+  } as unknown as OpenLogWriter;
+
+  it("surfaces a non-required evidence failure once", async () => {
+    const warnings: string[] = [];
+    const rt = new Runtime({
+      registry,
+      policy: defaultPolicy(),
+      logWriter: failingWriter,
+      onLogError: (error) => warnings.push(error.message),
+    });
+    await rt.run("policy.check", ctx());
+    await rt.run("policy.check", ctx());
+    expect(warnings).toEqual(["evidence disk unavailable"]);
+  });
+
+  it("fails closed when governed evidence is required", async () => {
+    const rt = new Runtime({
+      registry,
+      policy: defaultPolicy(),
+      logWriter: failingWriter,
+      evidenceRequired: true,
+    });
+    await expect(rt.run("policy.check", ctx())).rejects.toThrow(
+      /required execution evidence could not be recorded/,
+    );
+  });
+});
+
 describe("safe commands execute for real in a sandbox", () => {
   it("creates a file (node adapter, in-process)", async () => {
     const dir = await sandbox();

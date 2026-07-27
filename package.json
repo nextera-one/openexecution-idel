@@ -1,6 +1,6 @@
 {
   "name": "openexecution-idel",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "description": "OpenExecution Runtime + IDEL Terminal: a policy-aware, audited, cross-platform execution runtime",
   "type": "module",

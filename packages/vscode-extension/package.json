@@ -1,8 +1,8 @@
 {
   "name": "openexecution-idel-vscode",
-  "displayName": "OpenExecution IDEL Terminal",
-  "description": "Embed the OpenExecution IDEL web terminal in VS Code.",
-  "version": "0.1.0",
+  "displayName": "OpenExecution IDEL",
+  "description": "IDEL Structure language support and the OpenExecution terminal for VS Code.",
+  "version": "0.2.0",
   "publisher": "nextera-one",
   "private": true,
   "license": "MIT",
@@ -11,11 +11,16 @@
     "vscode": "^1.91.0"
   },
   "categories": [
+    "Programming Languages",
+    "Linters",
     "Other"
   ],
   "keywords": [
     "openexecution",
     "idel",
+    "language",
+    "autocomplete",
+    "diagnostics",
     "terminal",
     "audit",
     "runtime"
@@ -29,9 +34,33 @@
     "onCommand:openexecutionIdel.startServer",
     "onCommand:openexecutionIdel.stopServer",
     "onCommand:openexecutionIdel.openInBrowser",
-    "onView:openexecutionIdel.terminalView"
+    "onView:openexecutionIdel.terminalView",
+    "onLanguage:idel"
   ],
   "contributes": {
+    "languages": [
+      {
+        "id": "idel",
+        "aliases": [
+          "IDEL Structure",
+          "idel"
+        ],
+        "extensions": [
+          ".idel"
+        ],
+        "filenames": [
+          "idel.lock"
+        ],
+        "configuration": "./resources/language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "idel",
+        "scopeName": "source.idel",
+        "path": "./resources/idel.tmLanguage.json"
+      }
+    ],
     "commands": [
       {
         "command": "openexecutionIdel.openTerminal",
@@ -51,6 +80,11 @@
       {
         "command": "openexecutionIdel.openInBrowser",
         "title": "IDEL: Open Terminal in Browser",
+        "category": "OpenExecution"
+      },
+      {
+        "command": "openexecutionIdel.validateDocument",
+        "title": "IDEL: Validate Structure",
         "category": "OpenExecution"
       }
     ],

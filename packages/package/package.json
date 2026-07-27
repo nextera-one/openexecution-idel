@@ -1,0 +1,23 @@
+{
+  "name": "@openexecution/package",
+  "version": "1.2.0",
+  "type": "module",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --build"
+  },
+  "dependencies": {
+    "@openexecution/structure": "workspace:*"
+  },
+  "files": [
+    "dist"
+  ]
+}

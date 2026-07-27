@@ -6,6 +6,8 @@
     { "path": "packages/registry" },
     { "path": "packages/safety" },
     { "path": "packages/policy" },
+    { "path": "packages/structure" },
+    { "path": "packages/package" },
     { "path": "packages/openlogs" },
     { "path": "packages/adapters-posix" },
     { "path": "packages/adapters-powershell" },

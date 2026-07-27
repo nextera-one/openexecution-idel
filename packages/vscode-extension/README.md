@@ -1,8 +1,25 @@
-# OpenExecution IDEL Terminal for VS Code
+# OpenExecution IDEL for VS Code
 
-This extension embeds the existing OpenExecution IDEL web terminal in VS Code.
-It starts or reuses `idel serve`, then loads `/terminal.html` in a VS Code
-webview.
+This extension provides native `.idel` editing and embeds the existing
+OpenExecution IDEL web terminal in VS Code.
+
+## IDEL Structure editing
+
+- TextMate coloring for headers, lowercase dotted commands and enums,
+  `snake_case` fields, constructors, strings, comments, and typed literals.
+- Live parser diagnostics with stable IDEL error codes.
+- Autocomplete snippets for registered commands, fields, constructors, and
+  enums.
+- Hover documentation from the shared IDEL Structure language registry.
+- Comment-preserving document formatting through the shared Structure formatter.
+- `IDEL: Validate Structure` for an explicit validation pass.
+- IDELProxy-aware completion and hover help for `proxy.idel` listeners,
+  redirects, host/path matching, routes, NexRun discovery, load balancing,
+  health checks, failover, timeouts, limits, authority, and evidence policy.
+
+The installed extension includes the same `@openexecution/structure` parser
+used by the CLI. Quoted external values preserve their case; native IDEL
+identifiers are lowercase.
 
 ## Commands
 
@@ -74,8 +91,9 @@ On Windows:
 scripts\uninstall-vscode-extension.bat
 ```
 
-The scripts install the unpacked extension into the default VS Code extension
-folder and write the detected Node executable path into `node-path.json`. Set
+The scripts build-install the unpacked extension and IDEL Structure runtime
+into the default VS Code extension folder and write the detected Node executable
+path into `node-path.json`. Set
 `VSCODE_EXTENSIONS_DIR` first if you use Insiders, VSCodium, or a custom
 extensions directory.
 
