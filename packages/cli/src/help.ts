@@ -12,6 +12,8 @@ USAGE
   learn <cli>                          same command inside \`idel terminal\`
   idel promote <cli> [--yes]           promote learned drafts to the signed official layer (re-verify + sign)
   idel registry verify                 check signatures on the official registry layer (fail-closed)
+  idel run.function <req.run.idel>     execute a signed IDEL function request (nonce, digest, capabilities)
+  idel verify.execution <receipt>      verify a rendered execution receipt
   idel editor <file>                   open a file in your local editor (TTY only)
   idel terminal                        interactive IDEL terminal (readline REPL; \`? <ask>\` for AI)
   idel connect <server-url>            connect this terminal to a remote IDEL server

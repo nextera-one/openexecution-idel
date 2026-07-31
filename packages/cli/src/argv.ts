@@ -16,6 +16,7 @@ export interface CliInvocation {
     | "learn"
     | "promote"
     | "registry"
+    | "function"
     | "terminal"
     | "connect"
     | "serve"
@@ -51,6 +52,10 @@ export interface CliFlags {
   open?: boolean;
   /** `idel learn` write accepted defs to the custom draft layer (default: preview only). */
   write?: boolean;
+  /** `idel run.function` directory scanned for *.func.idel (default: cwd). */
+  functionRoot?: string;
+  /** `idel run.function` write the rendered receipt here. */
+  receiptPath?: string;
 }
 
 const RUNTIME_FLAGS = new Set([
@@ -67,6 +72,8 @@ const RUNTIME_FLAGS = new Set([
 const RUNTIME_VALUE_FLAGS = new Set([
   "--policy",
   "--env",
+  "--functions",
+  "--receipt",
   "--port",
   "--host",
   "--static",
@@ -106,6 +113,8 @@ export function parseArgv(argv: string[]): CliInvocation {
       }
       if (arg === "--policy") flags.policyPath = value;
       else if (arg === "--env") flags.environment = value;
+      else if (arg === "--functions") flags.functionRoot = value;
+      else if (arg === "--receipt") flags.receiptPath = value;
       else if (arg === "--host") flags.host = value;
       else if (arg === "--static") flags.staticDir = value;
       else if (arg === "--port") {
@@ -175,6 +184,17 @@ export function parseArgv(argv: string[]): CliInvocation {
     return {
       mode: "registry",
       command: rest.slice(1).join(" ").trim(),
+      native: false,
+      flags,
+    };
+  }
+  if (first === "run.function" || first === "verify.execution") {
+    // Function-runtime commands keep IDEL's verb.scope shape but are handled
+    // by the function executor, not the command pipeline.
+    const rest_ = rest.slice(1).join(" ").trim();
+    return {
+      mode: "function",
+      command: `${first} ${rest_}`.trim(),
       native: false,
       flags,
     };

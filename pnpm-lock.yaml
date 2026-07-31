@@ -79,6 +79,9 @@ importers:
       '@openexecution/agent':
         specifier: workspace:*
         version: link:../agent
+      '@openexecution/function':
+        specifier: workspace:*
+        version: link:../function
       '@openexecution/openlogs':
         specifier: workspace:*
         version: link:../openlogs
@@ -100,6 +103,12 @@ importers:
       '@openexecution/types':
         specifier: workspace:*
         version: link:../types
+
+  packages/function:
+    dependencies:
+      '@openexecution/structure':
+        specifier: workspace:*
+        version: link:../structure
 
   packages/openlogs:
     dependencies:

@@ -4,6 +4,7 @@
     { "path": "packages/types" },
     { "path": "packages/structure" },
     { "path": "packages/package" },
+    { "path": "packages/function" },
     { "path": "packages/parser" },
     { "path": "packages/registry" },
     { "path": "packages/safety" },

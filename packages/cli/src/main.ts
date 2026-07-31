@@ -21,6 +21,7 @@ import { learn, learnForHost } from "./learn.js";
 import { promote } from "./promote.js";
 import { verifyRegistry, verifyOfficialLayer } from "./registry-verify.js";
 import { parseLearnCommand } from "./learn-command.js";
+import { runFunction, verifyExecution } from "./function-command.js";
 import { HELP_TEXT, VERSION } from "./help.js";
 
 /** Process entry point. Returns the desired process exit code. */
@@ -54,6 +55,32 @@ export async function main(argv: string[]): Promise<number> {
 
   if (inv.mode === "connect") {
     return connectTerminal(inv.command);
+  }
+
+  // `idel run.function` / `idel verify.execution` — the Phase 1 function
+  // runtime. It has its own admission chain (nonce, expiry, digest,
+  // capabilities) and capability-scoped handles, so it does not build the
+  // command runtime, policy, or registry.
+  if (inv.mode === "function") {
+    const [verb, ...restParts] = inv.command.split(/\s+/);
+    const target = restParts.join(" ").replace(/^path=/, "").trim();
+    if (!target) {
+      process.stderr.write(
+        `Usage: idel ${verb} <file>   (${
+          verb === "run.function" ? "a *.run.idel request" : "a rendered receipt"
+        })\n`,
+      );
+      return 2;
+    }
+    const options = {
+      json: inv.flags.json,
+      ...(inv.flags.functionRoot ? { root: inv.flags.functionRoot } : {}),
+      ...(inv.flags.receiptPath ? { receiptPath: inv.flags.receiptPath } : {}),
+      ...(inv.flags.dryRun ? { dryRun: true } : {}),
+    };
+    return verb === "run.function"
+      ? runFunction(target, options)
+      : verifyExecution(target, options);
   }
 
   // `idel promote <cli>` moves reviewed learned drafts up to the signed official
