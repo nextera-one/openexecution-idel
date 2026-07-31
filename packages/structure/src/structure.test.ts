@@ -113,6 +113,57 @@ describe("canonicalize and digestStructure", () => {
   });
 });
 
+describe("robustness on malformed input", () => {
+  // The VS Code extension parses on every keystroke, so it spends most of its
+  // life looking at truncated documents. Every prefix must terminate — a
+  // tokenizer or parser that fails to consume input would hang the editor.
+  it("terminates on every prefix of a valid document", () => {
+    for (let length = 0; length <= VALID.length; length += 1) {
+      const prefix = VALID.slice(0, length);
+      const started = Date.now();
+      const { diagnostics } = checkStructure(prefix);
+      expect(Date.now() - started).toBeLessThan(1000);
+      expect(Array.isArray(diagnostics)).toBe(true);
+    }
+  });
+
+  it("terminates on unbalanced and truncated delimiters", () => {
+    const hostile = [
+      "@idel 1.0\ndefine.a.b \"x\" {",
+      "@idel 1.0\ndefine.a.b \"x\" { y = ",
+      "@idel 1.0\ndefine.a.b \"x\" { y = call(",
+      "@idel 1.0\ndefine.a.b \"x\" { y = call(a, ",
+      "@idel 1.0\ndefine.a.b \"x\" { y = [",
+      "@idel 1.0\ndefine.a.b \"x\" { y = [a, ",
+      "@idel 1.0\ndefine.a.b \"x\" { y = step(\"a\").",
+      "@idel 1.0\ndefine.a.b \"x\" { y = step(\"a\").field(",
+      '@idel 1.0\ndefine.a.b "x" { y = "unterminated',
+      "@idel 1.0\n}}}}}}",
+      "@idel 1.0\n((((((",
+      "@idel 1.0\nuse ",
+      "@idel 1.0\nuse package(\"p\") as ",
+      "@idel",
+      "@",
+      "",
+    ];
+    for (const source of hostile) {
+      const started = Date.now();
+      expect(() => checkStructure(source)).not.toThrow();
+      expect(Date.now() - started).toBeLessThan(1000);
+    }
+  });
+
+  it("reports bare calls as block entries instead of accepting them", () => {
+    // `where { equal(field("a"), true) }` — entries are assignments or blocks;
+    // a bare predicate call is not an entry form.
+    const { document, diagnostics } = checkStructure(
+      '@idel 1.0\nquery.data.documents "q" {\n  where {\n    equal(field("a"), true)\n  }\n}\n',
+    );
+    expect(document).toBeNull();
+    expect(diagnostics[0]?.severity).toBe("error");
+  });
+});
+
 describe("checkStructure", () => {
   it("returns no diagnostics for valid input", () => {
     expect(checkStructure(VALID).diagnostics).toEqual([]);
