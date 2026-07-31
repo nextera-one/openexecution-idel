@@ -3,8 +3,10 @@
  *
  * Deliberately dependency-free and self-contained in one module so the
  * compiled output can be embedded verbatim by editor tooling (the VS Code
- * IDEL language extension bundles dist/index.js).
+ * IDEL language extension bundles dist/index.js). The only import is the
+ * node:crypto builtin, used by digestStructure.
  */
+import { createHash } from "node:crypto";
 export class StructureError extends Error {
     position;
     constructor(message, position) {
@@ -361,6 +363,66 @@ export function checkStructure(source) {
     for (const entry of document.entries)
         visit(entry, 0);
     return { document, diagnostics };
+}
+/**
+ * Deterministic canonical text for a parsed document: two-space indentation,
+ * one entry per line, comments and incidental whitespace erased, entry order
+ * preserved (order is semantic — execute steps run in sequence). Two sources
+ * that differ only in formatting canonicalize identically; digests are taken
+ * over these bytes so formatting-only edits never change identity.
+ */
+export function canonicalize(document) {
+    const lines = [`@idel ${document.version}`, ""];
+    const writeValue = (value) => {
+        switch (value.kind) {
+            case "string":
+                return `"${value.value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\t/g, "\\t")}"`;
+            case "number":
+                return String(value.value);
+            case "boolean":
+                return value.value ? "true" : "false";
+            case "token":
+                return value.name;
+            case "list":
+                return `[${value.items.map(writeValue).join(", ")}]`;
+            case "call": {
+                const head = `${value.name}(${value.args.map(writeValue).join(", ")})`;
+                return value.chain.reduce((text, segment) => `${text}.${segment.name}(${segment.args.map(writeValue).join(", ")})`, head);
+            }
+        }
+    };
+    const writeEntry = (entry, depth) => {
+        const indent = "  ".repeat(depth);
+        if (entry.kind === "use") {
+            lines.push(`${indent}use ${writeValue(entry.source)} as ${entry.alias}`);
+            return;
+        }
+        if (entry.kind === "assignment") {
+            lines.push(`${indent}${entry.key} = ${writeValue(entry.value)}`);
+            return;
+        }
+        const label = entry.label === null ? "" : ` "${entry.label}"`;
+        if (entry.entries.length === 0) {
+            lines.push(`${indent}${entry.verb}${label} {}`);
+            return;
+        }
+        lines.push(`${indent}${entry.verb}${label} {`);
+        for (const child of entry.entries)
+            writeEntry(child, depth + 1);
+        lines.push(`${indent}}`);
+    };
+    for (const entry of document.entries)
+        writeEntry(entry, 0);
+    return `${lines.join("\n")}\n`;
+}
+/**
+ * Content digest of a Structure source: sha256 over its canonical UTF-8
+ * bytes, returned as "sha256:<hex>". Formatting-only edits do not change
+ * the digest; any semantic edit (including entry reordering) does.
+ */
+export function digestStructure(source) {
+    const canonical = canonicalize(parseStructure(source));
+    return `sha256:${createHash("sha256").update(canonical, "utf8").digest("hex")}`;
 }
 const SECRET_LITERAL_KEYS = new Set(["password", "token", "private_key", "api_key"]);
 function lintSecretAssignment(entry, diagnostics) {

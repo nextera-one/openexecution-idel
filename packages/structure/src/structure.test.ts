@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { checkStructure, parseStructure, StructureError } from "./index.js";
+import {
+  canonicalize,
+  checkStructure,
+  digestStructure,
+  parseStructure,
+  StructureError,
+} from "./index.js";
 
 const VALID = `@idel 1.0
 
@@ -78,6 +84,32 @@ describe("parseStructure", () => {
       '@idel 1.0\n# comment\ndefine.a.b "x" {\n  values = [one.a, one.b]\n}\n',
     );
     expect(document.entries).toHaveLength(1);
+  });
+});
+
+describe("canonicalize and digestStructure", () => {
+  it("round-trips: canonical text reparses to the same canonical text", () => {
+    const canonical = canonicalize(parseStructure(VALID));
+    expect(canonicalize(parseStructure(canonical))).toBe(canonical);
+  });
+
+  it("is stable under formatting-only changes", () => {
+    const reformatted = VALID.replace(/\n\n/g, "\n").replace(/ {2}/g, "\t") + "# trailing comment\n";
+    expect(digestStructure(reformatted)).toBe(digestStructure(VALID));
+  });
+
+  it("changes when entries are reordered", () => {
+    const reordered = VALID.replace(
+      '  version = semver("1.0.0")\n  mode = function.action\n',
+      '  mode = function.action\n  version = semver("1.0.0")\n',
+    );
+    expect(reordered).not.toBe(VALID);
+    expect(parseStructure(reordered)).toBeTruthy();
+    expect(digestStructure(reordered)).not.toBe(digestStructure(VALID));
+  });
+
+  it("prefixes digests with the algorithm", () => {
+    expect(digestStructure(VALID)).toMatch(/^sha256:[0-9a-f]{64}$/);
   });
 });
 
