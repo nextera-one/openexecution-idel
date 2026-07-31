@@ -2,6 +2,8 @@
   "files": [],
   "references": [
     { "path": "packages/types" },
+    { "path": "packages/structure" },
+    { "path": "packages/package" },
     { "path": "packages/parser" },
     { "path": "packages/registry" },
     { "path": "packages/safety" },

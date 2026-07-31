@@ -113,6 +113,12 @@ importers:
         specifier: workspace:*
         version: link:../types
 
+  packages/package:
+    dependencies:
+      '@openexecution/structure':
+        specifier: workspace:*
+        version: link:../structure
+
   packages/parser:
     dependencies:
       '@openexecution/types':
@@ -188,9 +194,13 @@ importers:
         specifier: workspace:*
         version: link:../types
 
+  packages/structure: {}
+
   packages/types: {}
 
   packages/vscode-extension: {}
+
+  packages/vscode-idel-language: {}
 
   packages/web: {}
 
