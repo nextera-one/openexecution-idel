@@ -41,34 +41,30 @@ the tests, and CI fully reproducible **without** waiting on the publish.
 4. Only then is `npm install -g @openexecution/cli` viable from a clean machine
    (also requires un-setting `"private": true` on the packages you publish).
 
-## 2. Runtime swallows OpenLogs write failures (silent) — FIXED
+## 2. Runtime audit append failures — FAIL-CLOSED BY DEFAULT
 
-`packages/runtime/src/runtime.ts`: the runtime still never lets a failed append
-sink a command (the product stance), but it no longer fails *silently*. The
-first append failure per runtime instance now writes a one-time warning to
-stderr:
+`packages/runtime/src/runtime.ts` now throws `AuditAppendError` whenever a
+configured OpenLogs writer cannot persist the command outcome. A host can opt
+into `auditFailureMode: "warn-and-continue"`, but that availability-first mode
+prints a warning for **every** missed record; it never becomes silent after the
+first failure. Fail-closed runtimes latch the first error, so later `run()`
+calls stop before execution even if a caller catches the original exception.
 
-```
-openlogs: failed to record this command — audit trail may be incomplete (<detail>)
-```
-
-Subsequent failures in the same process are not re-warned (no log spam). Covered
-by a runtime test that injects a failing writer and asserts (a) the command still
-succeeds and (b) exactly one warning is emitted across two failed appends.
+The outcome record is written after execution, so an append failure does not
+roll back an OS side effect. `AuditAppendError` therefore carries the intended
+record and warns callers not to retry the command blindly. A stronger future
+transaction protocol would need an auditable pre-execution intent plus durable
+completion/recovery semantics.
 
 ## 3. Legacy (pre-signing) log records are ignored, not migrated
 
 A log file written by the old plain-JSONL writer has records with no
-`entry`/`hash`. The new writer:
-- **skips** them in `read()` and `verify()` (they aren't signed, can't be
-  verified), and
-- starts a **fresh signed chain** on top of them (so `append` no longer throws).
-
-This is handled and tested, but it means: after upgrade, `idel list.logs` stops
-showing pre-upgrade entries, and `verify()` only covers records written since the
-upgrade. If preserving the old entries matters, write a one-shot migration that
-re-wraps legacy records into signed v2 records (note: their hashes/signatures
-would be newly minted, so they'd attest "imported at T", not original integrity).
+`entry`/`hash`. The new writer may still skip them for unverified display via
+`read()`, but strict verification and append reject malformed/legacy lines. It
+also refuses to adopt any populated chain lacking a continuity checkpoint
+unless the caller explicitly enables `allowUnanchoredLegacyAdoption`. A
+migration must validate and preserve the old material deliberately; newly
+minted signatures could only attest "imported at T", not original integrity.
 
 ## 4. ESM on Node 20–22.2 degrades zlib / TPS-native-crypto
 
@@ -86,17 +82,25 @@ is ever required.)
 
 ## 5. OpenLogs key management is local-only
 
-`~/.idel/keys/openlogs.key.json` is generated on first use, `0600`. There is:
+`~/.idel/keys/openlogs.key.json` is generated on first use, `0600`. Verification
+no longer derives trust from that private-key file. Public verifier trust is
+separate, and a durable `0600` continuity checkpoint binds the expected `kid`,
+public key, record count, and chain head. Writes use the append lock, fsync, and
+atomic state replacement; truncation, reset, missing state/trust, malformed
+tails, and key replacement fail closed. There is still:
+
 - **no rotation** (one key forever),
-- **only local trust pinning** (`verify()` now requires signatures, `kid`,
-  actor binding, and the generated local trusted key; there is still no team/CI
-  trust registry or out-of-band key distribution), and
+- **only local trust pinning by default** (production callers can supply
+  `trustedKeys` and disable local self-pinning, but there is no managed team/CI
+  trust registry or out-of-band key distribution),
+- **no external/remote chain-head anchor**, and
 - **no protection** beyond file permissions (no OS keychain / HSM).
 
-This is fine for the local V1 story but is the seam where the team/CI story (a
-managed `KeyRegistry`, signed policies, key rotation, and published public-key
-pins) will need real design. The SDK supports those pieces; the current writer
-uses only the local pinned key.
+Results explicitly report `signing: "local-development"` and
+`externalAnchoring: false`. A principal able to replace the log, trust file,
+and checkpoint together can still forge history. Production evidence still
+needs independently administered verifier keys, key rotation/revocation, and a
+remote append-only head anchor or transparency service.
 
 ## 6. TPS records use a placeholder location (`L:-`)
 
@@ -250,30 +254,35 @@ lowest-trust *custom* draft layer to the trusted *official* layer:
 - **Explicit review gate** — the eligible set is shown with its risk and gated
   behind an interactive y/N (`--yes` for CI; a non-interactive JSON promote
   without `--yes` is refused). Nothing is signed without confirmation.
-- **Ed25519 signing** — each confirmed def is signed over its *canonical* bytes
-  (sorted keys, `source` stripped, so a reformat keeps the signature but any
-  semantic edit breaks it) with the same machine-local OpenLogs key. Defs go to
+- **Ed25519 v2 envelopes** — each confirmed def is signed with a separate,
+  explicitly development-only key over a domain-separated canonical envelope.
+  The envelope binds the complete command bytes, digest/version, signing `kid`,
+  and `promotedBy`/`promotedAt`/`promotedFrom`/signing-mode provenance. Defs go to
   `~/.idel/registries/official/promoted-<cli>.json` + a detached
   `promoted-<cli>.sig.json` manifest; the promoted ids are pruned from the
   custom draft so a command lives in one writable layer.
-- **`idel registry verify`** checks every official signature and **fails closed**
-  on any tampered (sha-mismatch / bad-signature) or *unsigned* official def.
+- **Pinned trust, never self-authentication** — manifests contain no public key.
+  `idel registry verify` accepts signers only from the independently managed
+  `~/.idel/trust/registry-keys.json` (or `IDEL_REGISTRY_TRUST_STORE`) pin set and
+  fails closed on missing/wrong/ambiguous pins, metadata/content tamper, unsigned
+  definitions, and legacy v1 self-anchored manifests. Promotion prints the
+  development public key but deliberately does not add it to that trust store.
 - **Load-time gate** — the CLI verifies the official layer before trusting it;
   if ANY def fails, the WHOLE official layer is dropped (not partially honored)
   with a stderr warning, so a bad def can't be smuggled in beside good ones.
 - Promotion raises *trust/provenance*, never *privilege*: a promoted destructive
   command is re-classified by the same two-phase safety engine on every run.
-- Honest scope: the signing key is machine-local (CONCERNS §5) — this proves
-  integrity-since-promotion on this machine, not multi-party trust. A managed
-  team key registry / out-of-band public-key distribution remains the seam for
-  the team/CI story. Covered by `registry/src/signing.test.ts` (crypto + tamper
-  vectors) and `cli/src/promote.test.ts` (E2E promote → verify, incl. tamper and
-  unsigned-official detection).
+- Honest scope: local promotion is a development signing workflow. Trust exists
+  only after the operator/team pins that key through an independent channel;
+  production key custody, rotation/revocation, and signed trust-store
+  distribution remain future gates. Covered by `registry/src/signing.test.ts`
+  and `cli/src/promote.test.ts`, including attacker self-signing, wrong/missing
+  pins, provenance tamper, and explicit v1 migration rejection.
 
 Deferred (next):
-- **Phase 3 (rest)** — a managed team/CI key registry + signed-policy
-  distribution so a promoted `official` def is trusted across machines (not just
-  the promoting one); let `idel learn` propose `powershell` adapters too.
+- **Phase 3 (rest)** — production key custody plus rotation/revocation and
+  authenticated trust-store/signed-policy distribution across machines; let
+  `idel learn` propose `powershell` adapters too.
 - Multi-turn web conversations (today each `ask` is a fresh turn); persisting the
   agent message history across SSE connections behind the approval coordinator.
 - Stream the CLI provider's tokens live (`stream-json`) instead of awaiting the

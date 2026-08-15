@@ -77,6 +77,18 @@ describe("the thesis: dangerous commands are blocked before execution", () => {
     expect(out.decision.action).toBe("block");
     expect(out.record.result).toBe("blocked_before_execution");
   });
+
+  it("never default-executes a native line merely because no signature matched", async () => {
+    const rt = await makeRuntime();
+    const out = await rt.run("! echo harmless", ctx());
+    expect(out.risk.level).toBe("HIGH");
+    expect(out.risk.findings.map((f) => f.code)).toContain(
+      "native-passthrough-untrusted",
+    );
+    expect(out.decision.action).toBe("require_dry_run");
+    expect(out.record.result).toBe("dry_run");
+    expect(out.result?.simulated).toBe(true);
+  });
 });
 
 describe("safe commands execute for real in a sandbox", () => {
@@ -98,6 +110,46 @@ describe("safe commands execute for real in a sandbox", () => {
     expect(out.record.result).toBe("success");
     expect(out.result?.stdout).toContain("a.txt");
     expect(out.result?.stdout).toContain("b.txt");
+  });
+
+  it("treats find path=-delete as a path, never as the find -delete action", async () => {
+    if (process.platform === "win32") return;
+    const dir = await sandbox();
+    await mkdir(join(dir, "-delete"));
+    await writeFile(join(dir, "-delete", "x"), "still here");
+    const rt = await makeRuntime();
+    const out = await rt.run("find.files path=-delete name=x", ctx({ cwd: dir }));
+    expect(out.record.result).toBe("success");
+    expect(out.plan?.argv).toEqual(["./-delete", "-name", "x"]);
+    expect(out.result?.stdout).toContain("./-delete/x");
+    expect(await readdir(join(dir, "-delete"))).toContain("x");
+  });
+
+  it("blocks ambiguous option-like package values before spawning sudo", async () => {
+    if (process.platform === "win32") return;
+    const rt = await makeRuntime({ rules: [{ match: {}, action: "allow" }] });
+    const out = await rt.run("install.apt.package name=--purge", ctx());
+    expect(out.record.result).toBe("blocked_before_execution");
+    expect(out.decision.action).toBe("block");
+    expect(out.risk.findings.map((f) => f.code)).toContain(
+      "unsafe-posix-option-like-value",
+    );
+    expect(out.plan).toBeUndefined();
+  });
+
+  it("blocks chown --reference injection before spawning chown", async () => {
+    if (process.platform === "win32") return;
+    const rt = await makeRuntime({ rules: [{ match: {}, action: "allow" }] });
+    const out = await rt.run(
+      'set.file.owner path=harmless owner="--reference=/root/.ssh/id_rsa"',
+      ctx(),
+    );
+    expect(out.record.result).toBe("blocked_before_execution");
+    expect(out.decision.action).toBe("block");
+    expect(out.risk.findings.map((f) => f.code)).toContain(
+      "unsafe-posix-option-like-value",
+    );
+    expect(out.plan).toBeUndefined();
   });
 
   it("tails a file and returns the last requested lines", async () => {
@@ -564,7 +616,34 @@ describe("meta commands", () => {
 });
 
 describe("OpenLogs append failure is surfaced, not silently swallowed (CONCERNS §2)", () => {
-  it("completes the command but warns once on stderr when append fails", async () => {
+  it("fails the workflow by default when an audit append fails", async () => {
+    const dir = await sandbox();
+    let appendCalls = 0;
+    const failingWriter = {
+      append: async () => {
+        appendCalls++;
+        throw new Error("simulated append failure");
+      },
+    };
+    const rt = new Runtime({
+      registry,
+      policy: defaultPolicy(),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      logWriter: failingWriter as any,
+    });
+
+    await expect(rt.run("create.file name=a.txt", ctx({ cwd: dir }))).rejects.toThrow(
+      /workflow stopped.*simulated append failure/,
+    );
+    await expect(rt.run("create.file name=b.txt", ctx({ cwd: dir }))).rejects.toThrow(
+      /workflow stopped.*simulated append failure/,
+    );
+    expect(appendCalls).toBe(1);
+    expect(await readdir(dir)).toContain("a.txt");
+    expect(await readdir(dir)).not.toContain("b.txt");
+  });
+
+  it("warn-and-continue is explicit and warns on every missed record", async () => {
     const dir = await sandbox();
     let appendCalls = 0;
     // A log writer whose append always rejects — simulates the prev_hash bug that
@@ -576,7 +655,12 @@ describe("OpenLogs append failure is surfaced, not silently swallowed (CONCERNS 
       },
     };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const rt = new Runtime({ registry, policy: defaultPolicy(), logWriter: failingWriter as any });
+    const rt = new Runtime({
+      registry,
+      policy: defaultPolicy(),
+      logWriter: failingWriter as any,
+      auditFailureMode: "warn-and-continue",
+    });
 
     const writes: string[] = [];
     const original = process.stderr.write.bind(process.stderr);
@@ -586,10 +670,9 @@ describe("OpenLogs append failure is surfaced, not silently swallowed (CONCERNS 
       return true;
     };
     try {
-      // Two commands → two failed appends, but only ONE warning (once per runtime).
+      // This is the explicitly configured availability-over-audit mode.
       const a = await rt.run("create.file name=a.txt", ctx({ cwd: dir }));
       const b = await rt.run("create.file name=b.txt", ctx({ cwd: dir }));
-      // The command itself must still succeed — logging never sinks a command.
       expect(a.record.result).toBe("success");
       expect(b.record.result).toBe("success");
     } finally {
@@ -598,8 +681,8 @@ describe("OpenLogs append failure is surfaced, not silently swallowed (CONCERNS 
     }
 
     expect(appendCalls).toBe(2);
-    const warnings = writes.filter((w) => w.includes("audit trail may be incomplete"));
-    expect(warnings).toHaveLength(1); // warned exactly once, not per-command
-    expect(warnings[0]).toContain("simulated append failure");
+    const warnings = writes.filter((w) => w.includes("audit trail is incomplete"));
+    expect(warnings).toHaveLength(2);
+    expect(warnings.every((warning) => warning.includes("simulated append failure"))).toBe(true);
   });
 });

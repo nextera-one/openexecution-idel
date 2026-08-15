@@ -5,11 +5,11 @@
  * no structured AST to classify. Instead we run a *deterministic pattern scan*
  * over the raw command line and emit findings for known-catastrophic shapes.
  *
- * This is a heuristic blocklist, NOT a shell parser — it deliberately errs on
- * the side of flagging. A clean scan does not prove a native command is safe;
- * it only means none of the listed catastrophe patterns matched. The runtime's
- * policy layer is expected to gate native execution further (e.g. noNative in
- * CI/production).
+ * This is a heuristic blocklist, NOT a shell parser. Native input therefore
+ * always receives a HIGH untrusted-passthrough finding in addition to any
+ * matched signatures. Missing a clever shell spelling can no longer turn a
+ * native line into LOW/default-allow; production/hosted contexts should still
+ * set `noNative` and remove the surface entirely.
  */
 
 import type { RiskFinding, RiskLevel } from "@openexecution/types";
@@ -45,7 +45,7 @@ const PATTERNS: readonly NativePattern[] = [
     // targeting `/`, `/*`, `~`, `~/`, or `$HOME`.
     code: "native-rm-rf-root",
     level: "CRITICAL",
-    re: /\brm\b[^\n]*?\s-[a-z]*r[a-z]*f|\brm\b[^\n]*?\s-[a-z]*f[a-z]*r|\brm\b[^\n]*?(?:\s-r\b[^\n]*\s-f\b|\s-f\b[^\n]*\s-r\b)/i,
+    re: /\brm\b(?=[^\n;&|]*(?:\s-r(?:\s|$)|\s-[a-z]*r[a-z]*(?:\s|$)|\s--recursive(?:\s|$|=)))(?=[^\n;&|]*(?:\s-f(?:\s|$)|\s-[a-z]*f[a-z]*(?:\s|$)|\s--force(?:\s|$|=)))/i,
     message: "native `rm` with recursive+force flags",
   },
   {
@@ -54,6 +54,12 @@ const PATTERNS: readonly NativePattern[] = [
     // The dangerous *target*: exactly / , /* , ~ , ~/ , ~/* , $HOME , /*
     re: /\brm\b[^\n]*\s(?:--no-preserve-root\s+)?(?:\/|\/\*|~\/?\*?|\$HOME\/?\*?)(?:\s|$)/i,
     message: "native `rm` targeting root or home directory",
+  },
+  {
+    code: "native-posix-system-delete",
+    level: "CRITICAL",
+    re: /\b(?:rm|rmdir|shred)\b[^\n;&|]*(?:^|\s)["']?(?:\/etc|\/usr|\/bin|\/sbin|\/boot|\/lib(?:64)?|\/var|\/System|\/Library)(?:[\/\s"']|$)/im,
+    message: "native destructive command targeting an OS-managed POSIX/macOS tree",
   },
   {
     code: "native-no-preserve-root",
@@ -65,7 +71,7 @@ const PATTERNS: readonly NativePattern[] = [
   {
     code: "native-dd-device",
     level: "CRITICAL",
-    re: /\bdd\b[^\n]*\bof=\/dev\/(?:sd[a-z]|nvme\d|hd[a-z]|vd[a-z]|mmcblk\d|disk\d)/i,
+    re: /\bdd\b[^\n]*\bof=\/dev\/(?:sd[a-z]\d*|nvme\d+n\d+(?:p\d+)?|hd[a-z]\d*|vd[a-z]\d*|mmcblk\d+(?:p\d+)?|disk\d+(?:s\d+)?|md\d+|dm-\d+|mapper\/[^\s;&|]+)/i,
     message: "native `dd` writing directly to a disk device",
   },
   // --- mkfs / format: reformatting a filesystem --------------------------
@@ -79,7 +85,7 @@ const PATTERNS: readonly NativePattern[] = [
   {
     code: "native-redirect-device",
     level: "CRITICAL",
-    re: />\s*\/dev\/(?:sd[a-z]|nvme\d|hd[a-z]|vd[a-z]|mmcblk\d|disk\d)/i,
+    re: />\s*\/dev\/(?:sd[a-z]\d*|nvme\d+n\d+(?:p\d+)?|hd[a-z]\d*|vd[a-z]\d*|mmcblk\d+(?:p\d+)?|disk\d+(?:s\d+)?|md\d+|dm-\d+|mapper\/[^\s;&|]+)/i,
     message: "native output redirected onto a disk device",
   },
   // --- recursive chmod 777 on root ---------------------------------------
@@ -88,6 +94,12 @@ const PATTERNS: readonly NativePattern[] = [
     level: "CRITICAL",
     re: /\bchmod\b[^\n]*\s-[a-z]*R[a-z]*\s[^\n]*\b777\b[^\n]*\s(?:\/|~\/?)(?:\s|$)|\bchmod\b[^\n]*\b777\b[^\n]*\s-[a-z]*R[a-z]*\s[^\n]*\s(?:\/|~\/?)(?:\s|$)/i,
     message: "native recursive `chmod 777` on root/home",
+  },
+  {
+    code: "native-find-delete",
+    level: "HIGH",
+    re: /\bfind\b[^\n;&|]*\s-delete(?:\s|$)/i,
+    message: "native `find -delete` recursively deletes matched paths",
   },
   {
     code: "native-chmod-recursive-broad",
@@ -119,16 +131,30 @@ const PATTERNS: readonly NativePattern[] = [
     re: /\b(?:Remove-Item|rd|rmdir|del)\b[^\n]*\s[a-zA-Z]:\\?(?:\*)?(?:\s|$)/i,
     message: "native recursive delete targeting a Windows drive root",
   },
+  {
+    code: "native-windows-system-delete",
+    level: "CRITICAL",
+    re: /\b(?:Remove-Item|rd|rmdir|del)\b(?=[^\n;&|]*(?:-Recurse|\/s)\b)(?=[^\n;&|]*["']?[a-z]:[\\/](?:Windows|Program Files(?: \(x86\))?|ProgramData)(?:[\\/\s"']|$))[^\n;&|]*/i,
+    message: "native recursive delete targeting a Windows system directory",
+  },
 ];
 
+const NATIVE_BASELINE: RiskFinding = {
+  code: "native-passthrough-untrusted",
+  level: "HIGH",
+  message:
+    "Native shell passthrough is not structurally classified; default execution is disabled.",
+};
+
 /**
- * Scan a raw native command line and return any catastrophe findings. An empty
- * array means no listed pattern matched (NOT a safety guarantee).
+ * Scan a raw native command line. The HIGH baseline is unconditional because
+ * absence of a heuristic match is never evidence that arbitrary shell source
+ * is safe.
  */
 export function scanNative(native: string): RiskFinding[] {
   const line = normalize(native);
-  const findings: RiskFinding[] = [];
-  const seen = new Set<string>();
+  const findings: RiskFinding[] = [{ ...NATIVE_BASELINE }];
+  const seen = new Set<string>([NATIVE_BASELINE.code]);
   for (const p of PATTERNS) {
     if (p.re.test(line)) {
       if (seen.has(p.code)) continue;

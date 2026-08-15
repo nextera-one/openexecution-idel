@@ -114,6 +114,15 @@ describe("evaluate — CRITICAL hard floor", () => {
 });
 
 describe("match — command matching", () => {
+  it("treats a bare star as an explicit catch-all", () => {
+    expect(commandMatches("*", "list.files")).toBe(true);
+    expect(commandMatches("*", "remove.folder")).toBe(true);
+    const config: PolicyConfig = {
+      rules: [{ match: { command: "*" }, action: "block" }],
+    };
+    expect(evaluate(input({ command: "list.files", risk: "LOW" }), config).action).toBe("block");
+  });
+
   it("matches exact command names", () => {
     expect(commandMatches("remove.folder", "remove.folder")).toBe(true);
     expect(commandMatches("remove.folder", "remove.file")).toBe(false);

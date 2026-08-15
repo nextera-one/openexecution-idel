@@ -2,6 +2,10 @@ import Anthropic from "@anthropic-ai/sdk";
 import { ServiceError, type TerminalService } from "@openexecution/server";
 import type { RuntimeOutcome } from "@openexecution/types";
 
+import {
+  isModelProposedNative,
+  MODEL_NATIVE_REJECTION,
+} from "./command-boundary.js";
 import { AGENT_TOOLS, systemPrompt } from "./tools.js";
 
 /**
@@ -196,6 +200,16 @@ export class IdelAgent {
     gate: AgentApproval | undefined,
   ): Promise<{ result: { content: string; isError?: boolean }; event?: AgentEvent }> {
     const command = input.command;
+    if (isModelProposedNative(command)) {
+      return {
+        result: { content: MODEL_NATIVE_REJECTION, isError: true },
+        event: {
+          type: "tool_error",
+          tool: "run_idel",
+          message: MODEL_NATIVE_REJECTION,
+        },
+      };
+    }
     // Propose-only by default: dry-run unless the caller explicitly opted into
     // real execution via an approval gate AND the model didn't force dryRun.
     const wantsReal = input.dryRun === false && gate !== undefined;

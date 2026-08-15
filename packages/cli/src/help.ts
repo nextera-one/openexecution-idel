@@ -11,7 +11,7 @@ USAGE
   idel learn <cli> [--write]           teach IDEL an installed CLI (drafts IDEL commands from its --help)
   learn <cli>                          same command inside \`idel terminal\`
   idel promote <cli> [--yes]           promote learned drafts to the signed official layer (re-verify + sign)
-  idel registry verify                 check signatures on the official registry layer (fail-closed)
+  idel registry verify                 verify official commands against independently pinned keys
   idel run.function <req.run.idel>     execute a signed IDEL function request (nonce, digest, capabilities)
   idel verify.execution <receipt>      verify a rendered execution receipt
   idel editor <file>                   open a file in your local editor (TTY only)
@@ -66,7 +66,8 @@ SERVE FLAGS (idel serve)
   --host <addr>    bind address (default 127.0.0.1, loopback only)
   --static <dir>   serve a built terminal UI from this directory at /
   --enable-native-terminal
-                   enable native shell sessions and web native passthrough
+                   enable bearer-authenticated native shell sessions
+                   (optional 32+ char base64url token: IDEL_NATIVE_TERMINAL_AUTH_TOKEN)
 
 SAFETY
   Every command is risk-classified (LOW/MEDIUM/HIGH/CRITICAL) and policy-checked

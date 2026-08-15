@@ -2,6 +2,10 @@ import type { TerminalService } from "@openexecution/server";
 import type { RuntimeOutcome } from "@openexecution/types";
 
 import type { AgentApproval, AgentEvent } from "./agent.js";
+import {
+  isModelProposedNative,
+  MODEL_NATIVE_REJECTION,
+} from "./command-boundary.js";
 import { ClaudeCliProvider, type ProviderTurn } from "./provider.js";
 import { cliSystemPrompt } from "./tools.js";
 
@@ -82,6 +86,22 @@ export class IdelCliAgent {
       // feed back next turn — exactly the SDK loop's classify-before-execute.
       priorOutcomes = [];
       for (const c of turn.commands) {
+        if (isModelProposedNative(c.command)) {
+          yield {
+            type: "tool_error",
+            tool: "run_idel",
+            message: MODEL_NATIVE_REJECTION,
+          };
+          priorOutcomes.push({
+            command: c.command,
+            outcomeJson: JSON.stringify({
+              command: c.command,
+              rejected: true,
+              reason: MODEL_NATIVE_REJECTION,
+            }),
+          });
+          continue;
+        }
         const { outcome, event } = await this.runOne(c.command, c.dryRun, gate);
         if (event) yield event;
         priorOutcomes.push({ command: c.command, outcomeJson: outcomeJson(outcome) });

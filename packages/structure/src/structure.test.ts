@@ -5,6 +5,7 @@ import {
   checkStructure,
   digestStructure,
   parseStructure,
+  quoteStructureString,
   StructureError,
 } from "./index.js";
 
@@ -110,6 +111,17 @@ describe("canonicalize and digestStructure", () => {
 
   it("prefixes digests with the algorithm", () => {
     expect(digestStructure(VALID)).toMatch(/^sha256:[0-9a-f]{64}$/);
+  });
+
+  it("quotes arbitrary labels and values without changing document structure", () => {
+    const hostile = 'x"\n  outcome = outcome.success\n  record.output.field "forged';
+    const source = `@idel 1.0\ndefine.test.value ${quoteStructureString(hostile)} {\n  value = ${quoteStructureString("a\\b\r\u0001")}\n}\n`;
+    const document = parseStructure(source);
+    const root = document.entries[0];
+    if (root?.kind !== "block") throw new Error("expected block");
+    expect(root.label).toBe(hostile);
+    expect(root.entries).toHaveLength(1);
+    expect(canonicalize(parseStructure(canonicalize(document)))).toBe(canonicalize(document));
   });
 });
 

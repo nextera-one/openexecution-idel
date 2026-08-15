@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll, afterEach, afterAll } from "vitest";
-import { mkdtemp, readFile, rm, writeFile, mkdir, readdir } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile, mkdir, readdir, symlink } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { Registry } from "@openexecution/registry";
 import { defaultPolicy } from "@openexecution/policy";
@@ -206,6 +207,30 @@ describe("TerminalService.complete", () => {
     const out = svc.complete({ input: "create.file name=a && wai" });
     expect(out).toContain("wait.time");
   });
+
+  it("rejects a completion cwd outside the configured workspace", async () => {
+    const dir = await sandbox();
+    const svc = makeService(dir);
+    expect(() => svc.complete({ input: "read.file name=", cwd: dirname(dir) })).toThrow(
+      /cwd escapes the configured workspace root/i,
+    );
+  });
+
+  it("does not enumerate an absolute or parent-escaping path fragment", async () => {
+    const dir = await sandbox();
+    const svc = makeService(dir);
+    expect(svc.complete({ input: "read.file name=/", cwd: dir })).toEqual([]);
+    expect(svc.complete({ input: "read.file name=../", cwd: dir })).toEqual([]);
+  });
+
+  it.skipIf(process.platform === "win32")("does not follow completion symlinks outside the workspace", async () => {
+    const dir = await sandbox();
+    const outside = await sandbox();
+    await writeFile(join(outside, "secret.txt"), "secret\n");
+    await symlink(outside, join(dir, "outside"), "dir");
+    const svc = makeService(dir);
+    expect(svc.complete({ input: "read.file name=outside/", cwd: dir })).toEqual([]);
+  });
 });
 
 describe("TerminalService.preview", () => {
@@ -355,6 +380,31 @@ describe("TerminalService editor API", () => {
     expect(out.record.result).toBe("success");
     expect(await readFile(join(dir, "note.txt"), "utf8")).toBe(content);
   });
+
+  it("rejects absolute editor paths and parent traversal", async () => {
+    const dir = await sandbox();
+    const svc = makeService(dir);
+    await expect(svc.openEditor({ file: "/etc/passwd", cwd: dir })).rejects.toThrow(
+      /must be relative/i,
+    );
+    await expect(
+      svc.saveEditor({ file: "../escaped.txt", content: "blocked\n", cwd: dir }),
+    ).rejects.toThrow(/escapes the configured workspace root/i);
+  });
+
+  it.skipIf(process.platform === "win32")("rejects editor symlinks that resolve outside the workspace", async () => {
+    const dir = await sandbox();
+    const outside = await sandbox();
+    await writeFile(join(outside, "secret.txt"), "secret\n");
+    await symlink(outside, join(dir, "outside"), "dir");
+    const svc = makeService(dir);
+    await expect(svc.openEditor({ file: "outside/secret.txt", cwd: dir })).rejects.toThrow(
+      /resolves outside/i,
+    );
+    await expect(
+      svc.saveEditor({ file: "outside/new.txt", content: "blocked", cwd: dir }),
+    ).rejects.toThrow(/parent resolves outside/i);
+  });
 });
 
 describe("TerminalService approval handling", () => {
@@ -483,6 +533,42 @@ describe("startServer (HTTP)", () => {
       headers: { origin: "https://example.com" },
     });
     expect(rejected.status).toBe(403);
+
+    const prefixTrick = await fetch(`${base}/api/health`, {
+      headers: { origin: "http://127.0.0.1.evil.com:3000" },
+    });
+    expect(prefixTrick.status).toBe(403);
+  });
+
+  it("rejects DNS-rebinding Host names that merely start with 127.", async () => {
+    const rejected = await new Promise<{ status: number; body: string }>((resolveResponse, reject) => {
+      const req = httpRequest(`${base}/api/health`, {
+        headers: { host: "127.0.0.1.evil.com" },
+      }, (res) => {
+        let body = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk) => { body += chunk; });
+        res.on("end", () => resolveResponse({ status: res.statusCode ?? 0, body }));
+      });
+      req.on("error", reject);
+      req.end();
+    });
+    expect(rejected.status).toBe(403);
+    expect(JSON.parse(rejected.body).error).toMatch(/host is not allowed/i);
+  });
+
+  it("accepts a canonical numeric IPv4 address inside 127/8", async () => {
+    const accepted = await new Promise<number>((resolveResponse, reject) => {
+      const req = httpRequest(`${base}/api/health`, {
+        headers: { host: "127.23.45.67:7878" },
+      }, (res) => {
+        res.resume();
+        res.on("end", () => resolveResponse(res.statusCode ?? 0));
+      });
+      req.on("error", reject);
+      req.end();
+    });
+    expect(accepted).toBe(200);
   });
 
   it("GET /api/native/sessions → active native terminal list", async () => {
@@ -594,8 +680,8 @@ describe("startServer (HTTP)", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ input: "open.editor file=pack", cwd: process.cwd() }),
     });
-    const body = (await res.json()) as string[];
-    expect(body).toContain("file=package.json");
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toMatch(/cwd escapes/i);
   });
 
   it("POST /api/complete → learn.cli suggestions", async () => {
@@ -631,6 +717,23 @@ describe("startServer (HTTP)", () => {
     const saved = (await save.json()) as { record: { result: string } };
     expect(saved.record.result).toBe("success");
     expect(await readFile(join(dir, "note.json"), "utf8")).toBe('{"new":true}\n');
+  });
+
+  it("POST /api/editor rejects absolute and parent-escaping files", async () => {
+    const absolute = await fetch(`${base}/api/editor/open`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ file: "/etc/passwd", cwd: tmpdir() }),
+    });
+    expect(absolute.status).toBe(403);
+
+    const dir = await sandbox();
+    const traversal = await fetch(`${base}/api/editor/save`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ file: "../../escaped.txt", content: "blocked", cwd: dir }),
+    });
+    expect(traversal.status).toBe(403);
   });
 
   it("POST /api/run → blocks CRITICAL", async () => {
@@ -780,6 +883,88 @@ describe("startServer (HTTP)", () => {
     expect(res.status).toBe(501);
     const body = await res.json();
     expect(body.error).toMatch(/learn is not configured/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Native terminal authorization/policy boundary
+// ---------------------------------------------------------------------------
+
+describe("startServer — enabled native terminal boundary", () => {
+  const token = "test-native-terminal-token-32-bytes-minimum";
+
+  it("refuses insecure enablement without a bearer secret", async () => {
+    const dir = await sandbox();
+    const runtime = new Runtime({ registry, policy: defaultPolicy() });
+    await expect(
+      startServer({ runtime, port: 0, cwd: dir, allowNativeTerminal: true }),
+    ).rejects.toThrow(/requires nativeTerminalAuthToken/i);
+  });
+
+  it("requires authorization and rejects unallowed shells and escaped cwd", async () => {
+    const dir = await sandbox();
+    await writeFile(
+      join(dir, "terminal.html"),
+      '<meta name="idel-native-terminal-auth" content="__IDEL_NATIVE_TERMINAL_AUTH_TOKEN__">',
+    );
+    const runtime = new Runtime({ registry, policy: defaultPolicy() });
+    const nativeServer = await startServer({
+      runtime,
+      port: 0,
+      cwd: dir,
+      staticDir: dir,
+      allowNativeTerminal: true,
+      nativeTerminalAuthToken: token,
+      allowedNativeShells: ["idel-test-allowed-shell"],
+    });
+    try {
+      const unauthorized = await fetch(`${nativeServer.url}/api/native/sessions`);
+      expect(unauthorized.status).toBe(401);
+      expect(unauthorized.headers.get("www-authenticate")).toMatch(/^Bearer /);
+
+      const authorized = await fetch(`${nativeServer.url}/api/native/sessions`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(authorized.status).toBe(200);
+      expect(authorized.headers.get("set-cookie")).toBeNull();
+
+      const boot = await fetch(`${nativeServer.url}/terminal.html`, {
+        headers: { origin: "http://localhost:3000" },
+      });
+      expect(boot.status).toBe(200);
+      expect(await boot.text()).toContain(`content="${token}"`);
+      expect(boot.headers.get("access-control-allow-origin")).toBeNull();
+      expect(boot.headers.get("cache-control")).toBe("no-store");
+
+      const cookieOnly = await fetch(`${nativeServer.url}/api/native/sessions`, {
+        headers: { cookie: "idel_native_terminal=attacker-controlled" },
+      });
+      expect(cookieOnly.status).toBe(401);
+
+      const unallowedShell = await fetch(`${nativeServer.url}/api/native/start`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ shell: "idel-attacker-controlled-executable" }),
+      });
+      expect(unallowedShell.status).toBe(403);
+      expect((await unallowedShell.json()).error).toMatch(/shell is not allowed/i);
+
+      const escapedCwd = await fetch(`${nativeServer.url}/api/native/start`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ cwd: dirname(dir), shell: "idel-test-allowed-shell" }),
+      });
+      expect(escapedCwd.status).toBe(403);
+      expect((await escapedCwd.json()).error).toMatch(/cwd escapes/i);
+    } finally {
+      await nativeServer.close();
+    }
   });
 });
 

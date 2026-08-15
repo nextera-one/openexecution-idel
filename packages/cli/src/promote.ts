@@ -35,8 +35,9 @@ import { color } from "./render.js";
  *  2. **Explicit human review.** The accepted set is shown with its risk and the
  *     promotion is gated behind an interactive y/N (or `--yes` in CI). Nothing
  *     is signed without that confirmation.
- *  3. **Sign what passes.** Each confirmed def is Ed25519-signed (the same
- *     machine-local key OpenLogs uses) over its canonical bytes. The defs are
+ *  3. **Sign what passes.** Each confirmed def is Ed25519-signed with a
+ *     machine-local development key over a v2 envelope that binds its canonical
+ *     bytes, key identity, and promotion provenance. The defs are
  *     written to `~/.idel/registries/official/promoted-<cli>.json` and a
  *     detached signature manifest to `promoted-<cli>.sig.json`. The promoted
  *     ids are then removed from the custom draft file so a command lives in
@@ -47,9 +48,11 @@ import { color } from "./render.js";
  * raises *trust/provenance*, never *privilege*. `idel registry verify` checks
  * these signatures and fails closed on any tampered or unsigned official def.
  *
- * Trust scope (honest): the signing key is machine-local; this attests
- * integrity-since-promotion on this machine, not multi-party trust. A managed
- * team key registry is future work (CONCERNS §5).
+ * Trust scope (honest): promotion creates an explicitly DEVELOPMENT signature,
+ * but never silently trusts that signer. Verification and runtime loading use
+ * only independently pinned keys from the registry trust store. A team/CI must
+ * distribute that pin (or use a separately managed release signer) before an
+ * official layer is trusted across machines.
  */
 export async function promote(
   cli: string,
@@ -147,9 +150,13 @@ export async function promote(
           officialPath: written.defsPath,
           manifestPath: written.manifestPath,
           kid: written.kid,
+          signerPublicKeyHex: written.signerPublicKeyHex,
+          signingMode: "development",
+          trustedByDefault: false,
+          trustStorePath: written.trustStorePath,
           signatures: written.manifest.entries.map((e) => ({
-            id: e.id,
-            sha256: e.sha256,
+            id: e.payload.commandId,
+            sha256: e.payload.commandSha256,
           })),
         },
         null,
@@ -163,9 +170,11 @@ export async function promote(
     color.green(`\n✓ promoted ${eligible.length} command(s) `) +
       color.gray(`to the official layer\n`) +
       color.gray(`  defs:      ${written.defsPath}\n`) +
-      color.gray(`  signed by: ${written.kid}\n`) +
+      color.gray(`  signed by: ${written.kid} (DEVELOPMENT; not trusted by default)\n`) +
+      color.gray(`  public key: ${written.signerPublicKeyHex}\n`) +
       color.gray(`  manifest:  ${written.manifestPath}\n`) +
-      color.gray(`  Verify any time with:  idel registry verify\n`),
+      color.yellow(`  Pin this key out-of-band in ${written.trustStorePath}\n`) +
+      color.gray(`  Then verify with:  idel registry verify\n`),
   );
   return 0;
 }
@@ -219,6 +228,8 @@ interface WriteResult {
   manifestPath: string;
   manifest: SignedRegistryManifest;
   kid: string;
+  signerPublicKeyHex: string;
+  trustStorePath: string;
 }
 
 async function signAndWrite(
@@ -228,26 +239,41 @@ async function signAndWrite(
   draftPath: string,
   allDrafts: CommandDef[],
 ): Promise<WriteResult> {
-  const key = await loadOrCreateKeypair();
+  // This key is intentionally separate from OpenLogs and explicitly labelled
+  // development. Creating it does NOT add it to the verification trust store.
+  const developmentKeyPath = join(
+    homedir(),
+    ".idel",
+    "keys",
+    "registry-development.key.json",
+  );
+  const key = await loadOrCreateKeypair(developmentKeyPath);
+  const registryKid = `key:registry-development:${key.publicKeyHex.slice(0, 16)}`;
   const promotedAt = new Date().toISOString();
   const promotedBy = currentUser();
+  const provenance = {
+    promotedAt,
+    promotedBy,
+    promotedFrom: "custom",
+    signingMode: "development" as const,
+  };
 
   const entries: SignedRegistryEntry[] = [];
+  let signerPublicKeyHex = key.publicKeyHex;
   for (const def of defs) {
-    const sig = await signDef(def, {
-      privateKeyHex: bytesToHex(key.privateKey),
-      kid: key.kid,
-    });
+    const sig = await signDef(
+      def,
+      {
+        privateKeyHex: bytesToHex(key.privateKey),
+        kid: registryKid,
+      },
+      provenance,
+    );
+    signerPublicKeyHex = sig.signerPublicKeyHex;
     entries.push({
-      id: def.id,
-      version: def.version,
-      sha256: sig.sha256,
+      envelopeVersion: sig.envelopeVersion,
+      payload: sig.payload,
       signature: sig.signature,
-      kid: sig.kid,
-      publicKeyHex: sig.publicKeyHex,
-      promotedAt,
-      promotedBy,
-      promotedFrom: "custom",
     });
   }
   const manifest: SignedRegistryManifest = {
@@ -270,7 +296,14 @@ async function signAndWrite(
   const remaining = allDrafts.filter((d) => !promotedIds.has(d.id));
   await writeFile(draftPath, JSON.stringify(remaining, null, 2) + "\n", "utf8");
 
-  return { defsPath, manifestPath, manifest, kid: key.kid };
+  return {
+    defsPath,
+    manifestPath,
+    manifest,
+    kid: registryKid,
+    signerPublicKeyHex,
+    trustStorePath: join(homedir(), ".idel", "trust", "registry-keys.json"),
+  };
 }
 
 function renderPlan(

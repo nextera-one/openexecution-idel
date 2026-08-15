@@ -182,6 +182,7 @@ let matrixColumns = [];
 let matrixLastFrame = 0;
 let pageReloadConfirmed = false;
 let pendingNativePaste = null;
+const nativeTerminalAuthToken = readNativeTerminalAuthToken();
 const AGENT_PROGRESS_STEPS = [
   "Reading request",
   "Preparing context",
@@ -210,7 +211,18 @@ function apiUrl(path) {
 }
 
 function apiFetch(path, options) {
-  return fetch(apiUrl(path), options);
+  if (!String(path).startsWith("/api/native/") || !nativeTerminalAuthToken) {
+    return fetch(apiUrl(path), options);
+  }
+  const headers = new Headers(options?.headers);
+  headers.set("authorization", `Bearer ${nativeTerminalAuthToken}`);
+  return fetch(apiUrl(path), { ...options, headers });
+}
+
+/** Read the no-store, same-origin bootstrap value injected into terminal.html. */
+function readNativeTerminalAuthToken() {
+  const token = document.querySelector('meta[name="idel-native-terminal-auth"]')?.content ?? "";
+  return token === "__IDEL_NATIVE_TERMINAL_AUTH_TOKEN__" ? "" : token;
 }
 
 function currentApiLabel() {
@@ -4228,50 +4240,94 @@ function attachNativeSessionToTab(tab, info) {
 }
 
 function openNativeStream(tab) {
-  if (!tab.native?.id || typeof EventSource !== "function") return;
+  if (!tab.native?.id || typeof ReadableStream === "undefined") return;
   const generation = tab.native.generation;
-  const source = new EventSource(apiUrl(`/api/native/${encodeURIComponent(tab.native.id)}/stream`));
+  const controller = new AbortController();
+  const source = { close: () => controller.abort() };
   tab.native.eventSource = source;
-  source.addEventListener("ready", (e) => {
-    if (tab.native.generation !== generation) return;
-    const data = parseSsePayload(e);
+  void consumeNativeStream(tab, generation, controller, source);
+}
+
+async function consumeNativeStream(tab, generation, controller, source) {
+  let endedNormally = false;
+  let failureDetail = "";
+  try {
+    const res = await apiFetch(`/api/native/${encodeURIComponent(tab.native.id)}/stream`, {
+      headers: { accept: "text/event-stream" },
+      signal: controller.signal,
+    });
+    if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffered = "";
+    while (!controller.signal.aborted) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffered += decoder.decode(value, { stream: true });
+      buffered = buffered.replaceAll("\r\n", "\n");
+      let boundary;
+      while ((boundary = buffered.indexOf("\n\n")) >= 0) {
+        const block = buffered.slice(0, boundary);
+        buffered = buffered.slice(boundary + 2);
+        if (dispatchNativeSseBlock(tab, generation, block)) {
+          endedNormally = true;
+          await reader.cancel().catch(() => undefined);
+          return;
+        }
+      }
+    }
+    endedNormally = tab.native.closed;
+  } catch (err) {
+    if (controller.signal.aborted) return;
+    failureDetail = err?.message ?? String(err);
+  } finally {
+    if (tab.native.generation !== generation || controller.signal.aborted || endedNormally) return;
+    if (!tab.native.closed) {
+      paneLine(
+        tab,
+        `native shell stream disconnected${failureDetail ? `: ${failureDetail}` : ""}`,
+        "err",
+      );
+    }
+    tab.native.streamDisconnected = true;
+    tab.native.stopping = false;
+    updateNativeShellUi(tab);
+    scheduleNativeSessionsRefresh();
+    if (tab.native.eventSource === source) tab.native.eventSource = null;
+  }
+}
+
+function dispatchNativeSseBlock(tab, generation, block) {
+  if (tab.native.generation !== generation) return true;
+  let event = "message";
+  const dataLines = [];
+  for (const line of block.split("\n")) {
+    if (line.startsWith("event:")) event = line.slice(6).trim();
+    else if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
+  }
+  let data = {};
+  try {
+    data = JSON.parse(dataLines.join("\n") || "{}");
+  } catch {
+    data = {};
+  }
+  if (event === "ready") {
     applyNativeSessionInfo(tab, data, nativeTerminalSize(tab));
     updateNativeShellUi(tab);
-  });
-  source.addEventListener("data", (e) => {
-    if (tab.native.generation !== generation) return;
-    const data = parseSsePayload(e).data ?? "";
-    appendNativeOutput(tab, data);
-  });
-  source.addEventListener("exit", (e) => {
-    if (tab.native.generation !== generation) return;
-    const data = parseSsePayload(e);
+  } else if (event === "data") {
+    appendNativeOutput(tab, data.data ?? "");
+  } else if (event === "exit") {
     tab.native.closed = true;
     tab.native.stopping = false;
     tab.native.exitCode = data.code ?? null;
     paneLine(tab, `native shell exited${data.code == null ? "" : ` (${data.code})`}`, "muted");
     updateNativeShellUi(tab);
     scheduleNativeSessionsRefresh();
-    source.close();
-  });
-  source.addEventListener("done", () => source.close());
-  source.onerror = () => {
-    if (tab.native.generation !== generation) return;
-    if (!tab.native.closed) paneLine(tab, "native shell stream disconnected", "err");
-    tab.native.streamDisconnected = true;
-    tab.native.stopping = false;
-    updateNativeShellUi(tab);
-    scheduleNativeSessionsRefresh();
-    source.close();
-  };
-}
-
-function parseSsePayload(event) {
-  try {
-    return JSON.parse(event.data || "{}");
-  } catch {
-    return {};
+    return true;
+  } else if (event === "done") {
+    return true;
   }
+  return false;
 }
 
 function queueNativeInput(tab, data, immediate = false) {

@@ -28,6 +28,8 @@ import {
   RISK_ORDER,
   SAFETY_FLOORS,
   scanNative,
+  escapesCwd,
+  isHome,
 } from "./index.js";
 
 // ---------------------------------------------------------------------------
@@ -35,6 +37,35 @@ import {
 // ---------------------------------------------------------------------------
 
 const HOME = os.homedir();
+
+describe("Windows path comparison semantics", () => {
+  it("compares Windows home paths case-insensitively", () => {
+    expect(isHome("C:\\Users\\ALICE", "c:\\users\\alice")).toBe(true);
+    expect(isHome("\\\\Server\\Users\\ALICE", "\\\\server\\users\\alice")).toBe(
+      true,
+    );
+  });
+
+  it("compares Windows cwd containment case-insensitively cross-platform", () => {
+    expect(
+      escapesCwd(
+        "C:\\USERS\\Alice\\Project\\src\\index.ts",
+        "c:\\users\\alice\\project",
+      ),
+    ).toBe(false);
+    expect(
+      escapesCwd(
+        "C:\\Users\\Alice\\Project-Escape\\file.txt",
+        "c:\\users\\alice\\project",
+      ),
+    ).toBe(true);
+  });
+
+  it("preserves case-sensitive POSIX comparisons", () => {
+    expect(isHome("/Home/Alice", "/home/alice")).toBe(false);
+    expect(escapesCwd("/Work/Project/file", "/work/project")).toBe(true);
+  });
+});
 
 function makeAst(
   command: string,
@@ -219,12 +250,44 @@ describe("assessAst — destructive folder removal", () => {
     );
   });
 
-  it("destructive op outside cwd (not root/home) => MEDIUM (outside-cwd)", () => {
+  it("destructive op outside cwd (not root/home/system) => MEDIUM (outside-cwd)", () => {
     const a = assessAst(
-      makeAst("remove.folder", { name: "/var/tmp/scratch" }, { cwd: "/home/u/project" }),
+      makeAst("remove.folder", { name: "/srv/scratch" }, { cwd: "/home/u/project" }),
       removeFolderDef(),
     );
     expect(codes(a.findings)).toContain("outside-cwd");
+  });
+
+  it.each(["/etc", "/usr/bin", "/var/lib/app", "/System/Library", "/Library"])(
+    "destructive POSIX/macOS target %s has the protected-system HIGH floor",
+    (name) => {
+      const a = assessAst(makeAst("remove.folder", { name }), removeFolderDef());
+      expect(RISK_ORDER.indexOf(a.level)).toBeGreaterThanOrEqual(
+        RISK_ORDER.indexOf("HIGH"),
+      );
+      expect(codes(a.findings)).toContain("protected-system-path");
+    },
+  );
+
+  it.each([
+    "C:\\Windows",
+    "c:\\WINDOWS\\System32",
+    "D:\\Program Files\\Vendor",
+    "C:\\ProgramData",
+    "\\\\server\\c$\\Windows\\System32",
+  ])("destructive Windows target %s has the protected-system HIGH floor", (name) => {
+    const a = assessAst(makeAst("remove.folder", { name }), removeFolderDef());
+    expect(RISK_ORDER.indexOf(a.level)).toBeGreaterThanOrEqual(
+      RISK_ORDER.indexOf("HIGH"),
+    );
+    expect(codes(a.findings)).toContain("protected-system-path");
+  });
+
+  it("does not confuse similarly prefixed ordinary paths with system trees", () => {
+    for (const name of ["/etc-backup", "/variable", "C:\\Windows.old-app"] as const) {
+      const a = assessAst(makeAst("remove.folder", { name }), removeFolderDef());
+      expect(codes(a.findings)).not.toContain("protected-system-path");
+    }
   });
 });
 
@@ -319,6 +382,18 @@ describe("assessAst — device + low-risk", () => {
     expect(codes(a.findings)).toContain("device-write");
   });
 
+  it.each([
+    "/dev/mapper/vg-root",
+    "/dev/md0",
+    "/dev/dm-0",
+    "/dev/nvme0n1p2",
+    "/dev/mmcblk0p1",
+  ])("RAID/LVM/device-mapper target %s => CRITICAL", (name) => {
+    const a = assessAst(makeAst("remove.folder", { name }), removeFolderDef());
+    expect(a.level).toBe("CRITICAL");
+    expect(codes(a.findings)).toContain("device-write");
+  });
+
   it("read.file => LOW, no critical findings", () => {
     const a = assessAst(
       makeAst("read.file", { path: "src/index.ts" }),
@@ -361,6 +436,34 @@ describe("assessAst — network and firewall intent", () => {
     );
     expect(a.level).toBe("CRITICAL");
     expect(codes(a.findings)).toContain("network-allow-public-admin-port");
+  });
+
+  it.each(["0.0.0.0", "::"])(
+    "allow.network treats bare unspecified source %s as public for SSH",
+    (from) => {
+      const a = assessAst(
+        makeAst("allow.network", {
+          from,
+          to: "host",
+          port: "22",
+          protocol: "tcp",
+        }),
+        networkDef("allow.network"),
+      );
+      expect(a.level).toBe("CRITICAL");
+      expect(codes(a.findings)).toContain("network-allow-public-admin-port");
+    },
+  );
+
+  it("does not reinterpret a bare unspecified route destination as a default route", () => {
+    const a = assessAst(
+      makeAst("add.network.route", {
+        destination: "0.0.0.0",
+        gateway: "10.0.0.1",
+      }),
+      networkDef("add.network.route", "HIGH"),
+    );
+    expect(codes(a.findings)).not.toContain("network-add-default-route");
   });
 
   it("deny.network SSH => HIGH lockout risk", () => {
@@ -407,10 +510,56 @@ describe("native scanner", () => {
   it("native harmless `ls -la` => no CRITICAL findings", () => {
     const findings = scanNative("ls -la");
     expect(findings.some((f) => f.level === "CRITICAL")).toBe(false);
-    // The full ast assessment still has a MEDIUM passthrough baseline.
+    expect(codes(findings)).toContain("native-passthrough-untrusted");
+    // A missed signature must never make arbitrary shell source default-allow.
     const a = assessAst(makeNative("ls -la"));
-    expect(a.level).not.toBe("CRITICAL");
-    expect(a.level).not.toBe("HIGH");
+    expect(a.level).toBe("HIGH");
+  });
+
+  it.each([
+    "rm --recursive --force /etc",
+    "rm -r --force /home/user",
+    "rm --recursive -f /usr/local",
+  ])("native long/mixed rm flags are detected: %s", (line) => {
+    expect(codes(scanNative(line))).toContain("native-rm-rf-root");
+  });
+
+  it.each([
+    "rm --recursive --force /etc",
+    "shred /usr/bin/tool",
+    "rmdir /System/Library",
+  ])("native POSIX/macOS system-tree deletion is CRITICAL: %s", (line) => {
+    const findings = scanNative(line);
+    expect(codes(findings)).toContain("native-posix-system-delete");
+    expect(findings.find((f) => f.code === "native-posix-system-delete")?.level)
+      .toBe("CRITICAL");
+  });
+
+  it.each([
+    "del /f /s /q C:\\Windows\\System32",
+    "Remove-Item -Recurse -Force C:\\Windows",
+    "Remove-Item C:\\Windows\\System32 -Force -Recurse",
+    "rd /s C:\\ProgramData",
+  ])("native Windows system-tree deletion is CRITICAL: %s", (line) => {
+    expect(codes(scanNative(line))).toContain("native-windows-system-delete");
+  });
+
+  it.each([
+    "dd if=/dev/zero of=/dev/mapper/vg-root",
+    "dd if=/dev/zero of=/dev/md0",
+    "printf x > /dev/dm-0",
+  ])("native RAID/LVM/device-mapper writes are CRITICAL: %s", (line) => {
+    expect(scanNative(line).some((f) => f.level === "CRITICAL")).toBe(true);
+  });
+
+  it("flags find -delete but relies on the unconditional baseline for novel bypasses", () => {
+    expect(codes(scanNative("find /tmp -type f -delete"))).toContain(
+      "native-find-delete",
+    );
+    expect(scanNative("python -c 'novel spelling'")[0]).toMatchObject({
+      code: "native-passthrough-untrusted",
+      level: "HIGH",
+    });
   });
 });
 
@@ -444,6 +593,7 @@ describe("maxRisk + RISK_ORDER + floors", () => {
         "device-write",
         "recursive-chmod-777-broad",
         "empty-target",
+        "protected-system-path",
       ]),
     );
     expect(SAFETY_FLOORS.find((f) => f.code === "root-delete")?.level).toBe(

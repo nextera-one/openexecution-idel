@@ -20,10 +20,15 @@ load *.func.idel  ->  digest  ->  handles  ->  execute steps  ->  receipt
   A function with no write effect holds no write handle, so an undeclared
   write is unrepresentable rather than merely detected.
 - **Admission** (`runRequest`) runs nonce -> expiry -> digest -> capabilities
-  -> inputs, failing closed at the first gate. A nonce is consumed only after
-  authorization succeeds, so a denied request cannot burn a caller's nonce.
+  -> atomic nonce consumption -> inputs, failing closed at the first gate. A
+  nonce is consumed only after authorization succeeds, so a denied request
+  cannot burn it, while concurrent identical requests cannot both execute.
 - **Receipts** are IDEL Structure documents whose digest covers their own
-  canonical bytes; `verifyReceipt` recomputes it and detects tampering.
+  canonical bytes; all attacker-controlled strings use the Structure encoder,
+  and `verifyReceipt` recomputes the digest and detects tampering.
+- **Admission audit** is mandatory and independent of function-declared
+  effects. Every success or refusal appends its sealed receipt digest to the
+  caller-provided audit sink before `runRequest` returns.
 
 ## Adapters
 

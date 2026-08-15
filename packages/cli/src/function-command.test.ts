@@ -146,6 +146,19 @@ describe("idel run.function", () => {
     expect(JSON.parse(out.join("")).refusal).toBe("nonce_replayed");
   });
 
+  it("admits only one of two concurrent callers sharing a nonce file", async () => {
+    grant(["user.create"]);
+    const path = join(root, "r.run.idel");
+    writeFileSync(path, request(await digestOfFunction()));
+    const codes = await Promise.all([
+      runFunction(path, { json: true, root }),
+      runFunction(path, { json: true, root }),
+    ]);
+    expect(codes.sort()).toEqual([0, 4]);
+    const nonces = JSON.parse(readFileSync(join(root, ".idel", "nonces.json"), "utf8"));
+    expect(nonces).toHaveLength(1);
+  });
+
   it("refuses a digest that does not match published content", async () => {
     grant(["user.create"]);
     const path = join(root, "r.run.idel");

@@ -1,11 +1,20 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, statSync } from "node:fs";
-import { tmpdir } from "node:os";
+import {
+  copyFileSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { OpenLogRecord, ParamValue } from "@openexecution/types";
 
 import { redact, redactString, REDACTED } from "./redact.js";
+import { loadOrCreateKeypair } from "./keys.js";
 import { OpenLogWriter } from "./writer.js";
 
 // ---------------------------------------------------------------------------
@@ -108,6 +117,23 @@ describe("redact() by value shape", () => {
   it("redacts a long base64-ish token under an innocent key", () => {
     const out = redact(makeRecord({ comment: "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVox" }));
     expect(out.ast.params.comment).toBe(REDACTED);
+  });
+
+  it("redacts slash-bearing credential material instead of assuming it is a path", () => {
+    const secret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+    const out = redact(makeRecord({ comment: secret }));
+    expect(out.ast.params.comment).toBe(REDACTED);
+    expect(redactString(`credential ${secret}`)).toBe(
+      `credential ${REDACTED}`,
+    );
+  });
+
+  it("redacts a credential embedded in prose under a non-sensitive key", () => {
+    const key = "AKIAIOSFODNN7EXAMPLE";
+    const out = redact(makeRecord({ note: `production key is ${key} use it` }));
+    expect(out.ast.params.note).toBe(
+      `production key is ${REDACTED} use it`,
+    );
   });
 
   it("redacts an AWS access key id under an innocent key", () => {
@@ -290,6 +316,9 @@ describe("OpenLogWriter", () => {
     expect(onDisk).not.toContain("hunter2");
     expect(onDisk).not.toContain("abc123longvalueABCDEF");
     expect(onDisk).toContain(REDACTED);
+    const [signed] = await writer.readSigned();
+    expect(signed?.entry.event).toBe("idel.command");
+    expect((await writer.verify()).ok).toBe(true);
   });
 
   it("read(limit) returns only the last N records", async () => {
@@ -463,5 +492,290 @@ describe("OpenLogWriter signed chain", () => {
     await writer.append(makeRecord({ i: 1 }, "first"));
     if (process.platform === "win32") return;
     expect(statSync(keyPath).mode & 0o777).toBe(0o600);
+  });
+});
+
+describe("OpenLogWriter trust and durable continuity", () => {
+  it("can require pre-provisioned verifier trust instead of self-pinning", async () => {
+    const { path, keyPath } = freshPaths();
+    const writer = new OpenLogWriter({
+      path,
+      keyPath,
+      allowLocalDevelopmentTrustBootstrap: false,
+    });
+    await expect(writer.append(makeRecord({ i: 1 }, "first"))).rejects.toThrow(
+      /self-pinning is disabled/,
+    );
+    expect(() => readFileSync(path, "utf8")).toThrow();
+  });
+
+  it("keeps verifier trust separate from the signing private key and labels assurance", async () => {
+    const { path, keyPath } = freshPaths();
+    const writer = new OpenLogWriter({ path, keyPath });
+    await writer.append(makeRecord({ i: 1 }, "first"));
+
+    const trustPath = `${keyPath}.trust.json`;
+    const trustRaw = readFileSync(trustPath, "utf8");
+    expect(trustRaw).not.toContain("privateKey");
+    const trust = JSON.parse(trustRaw) as {
+      assurance: string;
+      trustedKeys: Array<{ kid: string; publicKeyHex: string }>;
+    };
+    expect(trust.assurance).toBe(
+      "local-development-self-pinned-not-externally-anchored",
+    );
+
+    // Verification is independent of the private key file. An explicitly
+    // configured verifier continues to work after the local trust file and
+    // signing private key are removed.
+    unlinkSync(keyPath);
+    unlinkSync(trustPath);
+    const verified = await new OpenLogWriter({
+      path,
+      keyPath,
+      trustedKeys: trust.trustedKeys,
+    }).verify();
+    expect(verified.ok).toBe(true);
+    expect(verified.assurance).toEqual({
+      signing: "local-development",
+      externalAnchoring: false,
+      trustSource: "explicit-verifier-configuration",
+    });
+
+    const withoutTrust = await new OpenLogWriter({ path, keyPath }).verify();
+    expect(withoutTrust.ok).toBe(false);
+    expect(withoutTrust.error).toMatch(/trust configuration is missing/);
+  });
+
+  it("persists the expected kid, record count and chain head with owner-only permissions", async () => {
+    const { path, keyPath } = freshPaths();
+    await new OpenLogWriter({ path, keyPath }).append(
+      makeRecord({ i: 1 }, "first"),
+    );
+    const statePath = `${path}.continuity.json`;
+    const state = JSON.parse(readFileSync(statePath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    const [record] = readFileSync(path, "utf8").trim().split("\n").map(JSON.parse);
+    expect(state).toMatchObject({
+      version: 1,
+      assurance: "local-development-not-externally-anchored",
+      expectedKid: record.sig.kid,
+      recordCount: 1,
+      chainHead: record.hash,
+    });
+    expect(state.expectedPublicKeyHex).toMatch(/^[0-9a-f]{64}$/);
+    if (process.platform !== "win32") {
+      expect(statSync(statePath).mode & 0o777).toBe(0o600);
+      expect(statSync(`${keyPath}.trust.json`).mode & 0o777).toBe(0o600);
+    }
+  });
+
+  it("fails verification and append after tail truncation", async () => {
+    const { path, keyPath } = freshPaths();
+    const writer = new OpenLogWriter({ path, keyPath });
+    await writer.append(makeRecord({ i: 1 }, "one"));
+    await writer.append(makeRecord({ i: 2 }, "two"));
+    await writer.append(makeRecord({ i: 3 }, "three"));
+    const lines = readFileSync(path, "utf8").trimEnd().split("\n");
+    writeFileSync(path, lines.slice(0, 2).join("\n") + "\n");
+
+    const verifier = new OpenLogWriter({ path, keyPath });
+    const result = await verifier.verify();
+    expect(result.ok).toBe(false);
+    expect(result.continuity.error).toMatch(/rollback\/truncation/);
+    await expect(
+      verifier.append(makeRecord({ i: 4 }, "four")),
+    ).rejects.toThrow(/rollback\/truncation/);
+  });
+
+  it("recovers a fully fsynced append left ahead of its checkpoint", async () => {
+    const { path, keyPath } = freshPaths();
+    const writer = new OpenLogWriter({ path, keyPath });
+    await writer.append(makeRecord({ i: 1 }, "one"));
+    const statePath = `${path}.continuity.json`;
+    const oldCheckpoint = readFileSync(statePath, "utf8");
+    await writer.append(makeRecord({ i: 2 }, "two"));
+
+    // This is the recoverable crash window: log fsync completed, but the
+    // atomic checkpoint replace did not. The old head must still be present at
+    // its exact count and the whole extension must remain cryptographically valid.
+    writeFileSync(statePath, oldCheckpoint);
+    expect((await new OpenLogWriter({ path, keyPath }).verify()).ok).toBe(true);
+    await new OpenLogWriter({ path, keyPath }).append(
+      makeRecord({ i: 3 }, "three"),
+    );
+    const state = JSON.parse(readFileSync(statePath, "utf8")) as {
+      recordCount: number;
+    };
+    expect(state.recordCount).toBe(3);
+  });
+
+  it.each([
+    ["empty log", (path: string) => writeFileSync(path, "")],
+    ["deleted log", (path: string) => unlinkSync(path)],
+  ])("fails closed after an established chain becomes an %s", async (_name, reset) => {
+    const { path, keyPath } = freshPaths();
+    const writer = new OpenLogWriter({ path, keyPath });
+    await writer.append(makeRecord({ i: 1 }, "one"));
+    reset(path);
+
+    const result = await new OpenLogWriter({ path, keyPath }).verify();
+    expect(result.ok).toBe(false);
+    expect(result.continuity.error).toMatch(/rollback\/truncation/);
+    await expect(
+      new OpenLogWriter({ path, keyPath }).append(makeRecord({ i: 2 }, "two")),
+    ).rejects.toThrow(/rollback\/truncation/);
+  });
+
+  it("fails closed when continuity evidence disappears", async () => {
+    const { path, keyPath } = freshPaths();
+    const writer = new OpenLogWriter({ path, keyPath });
+    await writer.append(makeRecord({ i: 1 }, "one"));
+    unlinkSync(`${path}.continuity.json`);
+
+    const result = await new OpenLogWriter({ path, keyPath }).verify();
+    expect(result.ok).toBe(false);
+    expect(result.continuity.error).toMatch(/checkpoint is missing/);
+    await expect(
+      new OpenLogWriter({ path, keyPath }).append(makeRecord({ i: 2 }, "two")),
+    ).rejects.toThrow(/checkpoint disappeared/);
+  });
+
+  it("refuses a fresh root when log and checkpoint disappear but trust remains", async () => {
+    const { path, keyPath } = freshPaths();
+    await new OpenLogWriter({ path, keyPath }).append(
+      makeRecord({ i: 1 }, "one"),
+    );
+    unlinkSync(path);
+    unlinkSync(`${path}.continuity.json`);
+
+    const resetWriter = new OpenLogWriter({ path, keyPath });
+    expect((await resetWriter.verify()).ok).toBe(false);
+    await expect(
+      resetWriter.append(makeRecord({ i: 2 }, "two")),
+    ).rejects.toThrow(/log and continuity evidence disappeared/);
+    expect(() => readFileSync(path, "utf8")).toThrow();
+  });
+
+  it("detects a replaced signing key before appending", async () => {
+    const { path, keyPath } = freshPaths();
+    await new OpenLogWriter({ path, keyPath }).append(
+      makeRecord({ i: 1 }, "one"),
+    );
+    const replacementPath = join(freshDir(), "replacement.key.json");
+    await loadOrCreateKeypair(replacementPath);
+    copyFileSync(replacementPath, keyPath);
+
+    // Existing evidence still verifies against independent trust.
+    expect((await new OpenLogWriter({ path, keyPath }).verify()).ok).toBe(true);
+    await expect(
+      new OpenLogWriter({ path, keyPath }).append(makeRecord({ i: 2 }, "two")),
+    ).rejects.toThrow(/not present in the independent verifier trust/);
+  });
+
+  it("does not regenerate over a corrupt existing signing key", async () => {
+    const { path, keyPath } = freshPaths();
+    await new OpenLogWriter({ path, keyPath }).append(
+      makeRecord({ i: 1 }, "one"),
+    );
+    writeFileSync(keyPath, '{"kid":"broken"}\n');
+
+    await expect(
+      new OpenLogWriter({ path, keyPath }).append(makeRecord({ i: 2 }, "two")),
+    ).rejects.toThrow(/signing key file is invalid; refusing replacement/);
+    expect(JSON.parse(readFileSync(keyPath, "utf8"))).toEqual({ kid: "broken" });
+  });
+
+  it("detects verifier trust replacement against the continuity pin", async () => {
+    const { path, keyPath } = freshPaths();
+    await new OpenLogWriter({ path, keyPath }).append(
+      makeRecord({ i: 1 }, "one"),
+    );
+    const replacement = freshPaths();
+    await new OpenLogWriter(replacement).append(makeRecord({ i: 9 }, "other"));
+    copyFileSync(`${replacement.keyPath}.trust.json`, `${keyPath}.trust.json`);
+
+    const result = await new OpenLogWriter({ path, keyPath }).verify();
+    expect(result.ok).toBe(false);
+    expect(result.continuity.error).toMatch(/trust replacement/);
+  });
+
+  it("detects a wholesale locally re-signed log reset while the checkpoint remains", async () => {
+    const original = freshPaths();
+    await new OpenLogWriter(original).append(makeRecord({ i: 1 }, "original"));
+    await new OpenLogWriter(original).append(makeRecord({ i: 2 }, "original-two"));
+
+    const replacement = freshPaths();
+    await new OpenLogWriter(replacement).append(makeRecord({ i: 9 }, "forged-reset"));
+    copyFileSync(replacement.path, original.path);
+    copyFileSync(replacement.keyPath, original.keyPath);
+    copyFileSync(
+      `${replacement.keyPath}.trust.json`,
+      `${original.keyPath}.trust.json`,
+    );
+
+    const result = await new OpenLogWriter(original).verify();
+    expect(result.ok).toBe(false);
+    expect(result.continuity.error).toMatch(/trust replacement/);
+  });
+
+  it("rejects malformed trailing bytes instead of silently skipping them", async () => {
+    const { path, keyPath } = freshPaths();
+    const writer = new OpenLogWriter({ path, keyPath });
+    await writer.append(makeRecord({ i: 1 }, "one"));
+    writeFileSync(path, '{"partial":', { flag: "a" });
+
+    const result = await writer.verify();
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/Malformed OpenLogs line 2/);
+    await expect(writer.append(makeRecord({ i: 2 }, "two"))).rejects.toThrow(
+      /malformed at line 2/,
+    );
+  });
+
+  it("reclaims a stale lock whose owner is gone", async () => {
+    const { path, keyPath } = freshPaths();
+    writeFileSync(
+      `${path}.lock`,
+      JSON.stringify({
+        version: 1,
+        token: "abandoned",
+        pid: 2_147_483_647,
+        hostname: hostname(),
+        createdAtMs: Date.now() - 60_000,
+      }) + "\n",
+      { mode: 0o600 },
+    );
+    const writer = new OpenLogWriter({
+      path,
+      keyPath,
+      lockStaleMs: 10,
+      lockWaitMs: 1_000,
+    });
+    await writer.append(makeRecord({ i: 1 }, "one"));
+    expect((await writer.verify()).ok).toBe(true);
+  });
+
+  it("serializes concurrent appends from independent writer instances", async () => {
+    const { path, keyPath } = freshPaths();
+    const writers = Array.from(
+      { length: 12 },
+      () => new OpenLogWriter({ path, keyPath }),
+    );
+    await Promise.all(
+      writers.map((writer, i) =>
+        writer.append(makeRecord({ i }, `parallel-${i}`)),
+      ),
+    );
+
+    const result = await new OpenLogWriter({ path, keyPath }).verify();
+    expect(result.ok).toBe(true);
+    expect(result.records).toBe(12);
+    const state = JSON.parse(
+      readFileSync(`${path}.continuity.json`, "utf8"),
+    ) as { recordCount: number };
+    expect(state.recordCount).toBe(12);
   });
 });

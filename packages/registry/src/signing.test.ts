@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import type { CommandDef } from "@openexecution/types";
 
@@ -7,20 +7,26 @@ import {
   sha256Hex,
   signDef,
   verifyDef,
+  type RegistryPromotionProvenance,
   type SignedRegistryEntry,
+  type SigningKey,
+  type TrustedRegistryKey,
 } from "./signing.js";
 
-/**
- * Signing unit tests for the promoted "official" layer. The crypto must be:
- *  - deterministic in its canonical bytes (independent of JSON key order, and
- *    excluding the loader-assigned `source` field), so a reformat keeps a
- *    signature but a semantic edit breaks it;
- *  - a true Ed25519 round-trip; and
- *  - fail-closed against tampering and malformed signatures.
- */
-
-// A throwaway 32-byte test seed. NOT a real key.
-const TEST_KEY = { privateKeyHex: "a".repeat(64), kid: "key:test:aaaaaaaaaaaaaaaa" };
+const TEST_KEY: SigningKey = {
+  privateKeyHex: "a".repeat(64),
+  kid: "key:registry:test-a",
+};
+const OTHER_KEY: SigningKey = {
+  privateKeyHex: "b".repeat(64),
+  kid: "key:registry:test-b",
+};
+const PROVENANCE: RegistryPromotionProvenance = {
+  promotedAt: "2026-06-15T00:00:00.000Z",
+  promotedBy: "tester",
+  promotedFrom: "custom",
+  signingMode: "development",
+};
 
 function baseDef(over: Partial<CommandDef> = {}): CommandDef {
   return {
@@ -43,26 +49,27 @@ function baseDef(over: Partial<CommandDef> = {}): CommandDef {
   };
 }
 
-async function entryFor(def: CommandDef): Promise<SignedRegistryEntry> {
-  const sig = await signDef(def, TEST_KEY);
+async function signed(
+  def = baseDef(),
+  key = TEST_KEY,
+  provenance = PROVENANCE,
+): Promise<{ entry: SignedRegistryEntry; pin: TrustedRegistryKey }> {
+  const result = await signDef(def, key, provenance);
   return {
-    id: def.id,
-    version: def.version,
-    sha256: sig.sha256,
-    signature: sig.signature,
-    kid: sig.kid,
-    publicKeyHex: sig.publicKeyHex,
-    promotedAt: "2026-06-15T00:00:00.000Z",
-    promotedBy: "tester",
-    promotedFrom: "custom",
+    entry: {
+      envelopeVersion: result.envelopeVersion,
+      payload: result.payload,
+      signature: result.signature,
+    },
+    pin: { kid: key.kid, publicKeyHex: result.signerPublicKeyHex },
   };
 }
 
 describe("canonicalizeDef", () => {
   it("is independent of object key order", () => {
-    const a = baseDef();
+    const def = baseDef();
     const reordered: CommandDef = {
-      adapters: a.adapters,
+      adapters: def.adapters,
       params: {},
       riskDefault: "LOW",
       category: "gh",
@@ -70,101 +77,143 @@ describe("canonicalizeDef", () => {
       version: "0.1.0",
       id: "show.gh.status",
     };
-    expect(canonicalizeDef(a)).toEqual(canonicalizeDef(reordered));
+    expect(canonicalizeDef(def)).toEqual(canonicalizeDef(reordered));
   });
 
   it("ignores the loader-assigned source field", () => {
-    const custom = baseDef({ source: "custom" });
-    const official = baseDef({ source: "official" });
-    const bare = baseDef();
-    expect(canonicalizeDef(custom)).toEqual(canonicalizeDef(bare));
-    expect(canonicalizeDef(official)).toEqual(canonicalizeDef(bare));
+    expect(canonicalizeDef(baseDef({ source: "custom" }))).toEqual(
+      canonicalizeDef(baseDef({ source: "official" })),
+    );
   });
 
-  it("changes when any semantic field changes", async () => {
-    const a = await sha256Hex(canonicalizeDef(baseDef()));
-    const b = await sha256Hex(canonicalizeDef(baseDef({ riskDefault: "CRITICAL" })));
-    expect(a).not.toEqual(b);
+  it("changes when semantic content changes", async () => {
+    const original = await sha256Hex(canonicalizeDef(baseDef()));
+    const changed = await sha256Hex(
+      canonicalizeDef(baseDef({ riskDefault: "CRITICAL" })),
+    );
+    expect(original).not.toEqual(changed);
   });
 });
 
-describe("signDef / verifyDef", () => {
-  it("round-trips a valid signature", async () => {
+describe("v2 signed registry envelope", () => {
+  it("round-trips only with a caller-supplied pinned key", async () => {
     const def = baseDef();
-    const entry = await entryFor(def);
-    expect(await verifyDef(def, entry)).toEqual({ ok: true });
+    const { entry, pin } = await signed(def);
+    expect(await verifyDef(def, entry, [pin])).toEqual({ ok: true });
+    expect(await verifyDef(def, entry, [])).toMatchObject({
+      ok: false,
+      reason: "untrusted-key",
+    });
   });
 
-  it("derives the public key from the private seed", async () => {
-    const sig = await signDef(baseDef(), TEST_KEY);
-    expect(sig.publicKeyHex).toMatch(/^[0-9a-f]{64}$/);
-    expect(sig.signature).toMatch(/^[0-9a-f]{128}$/);
+  it("does not embed a self-authenticating public key", async () => {
+    const { entry } = await signed();
+    expect(entry).not.toHaveProperty("publicKeyHex");
+    expect(entry.payload).not.toHaveProperty("publicKeyHex");
+    expect(entry.envelopeVersion).toBe(2);
   });
 
-  it("rejects a def whose risk was relaxed after signing (sha-mismatch)", async () => {
-    const entry = await entryFor(baseDef());
-    const tampered = baseDef({ riskDefault: "CRITICAL" });
-    const result = await verifyDef(tampered, entry);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe("sha-mismatch");
+  it("rejects an attacker self-signed definition against the legitimate pin", async () => {
+    const def = baseDef();
+    // The attacker deliberately reuses the trusted kid; verification still
+    // selects the independently pinned legitimate public key.
+    const attacker = await signed(def, { ...OTHER_KEY, kid: TEST_KEY.kid });
+    const legitimate = await signed(def, TEST_KEY);
+    expect(await verifyDef(def, attacker.entry, [legitimate.pin])).toMatchObject({
+      ok: false,
+      reason: "bad-signature",
+    });
   });
 
-  it("rejects a def whose adapter argv was changed after signing", async () => {
-    const entry = await entryFor(baseDef());
-    const tampered = baseDef({
+  it("rejects missing and wrong pinned keys", async () => {
+    const def = baseDef();
+    const legitimate = await signed(def);
+    const other = await signed(def, { ...OTHER_KEY, kid: TEST_KEY.kid });
+    expect(await verifyDef(def, legitimate.entry, [])).toMatchObject({
+      ok: false,
+      reason: "untrusted-key",
+    });
+    expect(await verifyDef(def, legitimate.entry, [other.pin])).toMatchObject({
+      ok: false,
+      reason: "bad-signature",
+    });
+  });
+
+  it("rejects promotion-provenance tampering", async () => {
+    const def = baseDef();
+    const { entry, pin } = await signed(def);
+    const tampered: SignedRegistryEntry = {
+      ...entry,
+      payload: {
+        ...entry.payload,
+        provenance: { ...entry.payload.provenance, promotedBy: "attacker" },
+      },
+    };
+    expect(await verifyDef(def, tampered, [pin])).toMatchObject({
+      ok: false,
+      reason: "bad-signature",
+    });
+  });
+
+  it("binds kid identity inside the signed envelope", async () => {
+    const def = baseDef();
+    const { entry, pin } = await signed(def);
+    const renamedKid = "key:registry:renamed";
+    const tampered: SignedRegistryEntry = {
+      ...entry,
+      payload: { ...entry.payload, kid: renamedKid },
+    };
+    expect(
+      await verifyDef(def, tampered, [{ ...pin, kid: renamedKid }]),
+    ).toMatchObject({ ok: false, reason: "bad-signature" });
+  });
+
+  it("rejects command and adapter tampering", async () => {
+    const original = baseDef();
+    const { entry, pin } = await signed(original);
+    const changed = baseDef({
       adapters: {
         posix: {
           command: "gh",
-          // someone swaps in a destructive subcommand under a signed id
           args: [{ kind: "literal", value: "repo" }, { kind: "literal", value: "delete" }],
         },
       },
     });
-    const result = await verifyDef(tampered, entry);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe("sha-mismatch");
+    expect(await verifyDef(changed, entry, [pin])).toMatchObject({
+      ok: false,
+      reason: "sha-mismatch",
+    });
   });
 
-  it("rejects a forged signature (right hash, wrong signature bytes)", async () => {
-    const def = baseDef();
-    const entry = await entryFor(def);
-    // Keep the (correct) sha but corrupt the signature so the hash pre-check
-    // passes and the Ed25519 check is what fails.
-    const forged: SignedRegistryEntry = {
-      ...entry,
-      signature: entry.signature.replace(/^../, "00"),
-    };
-    const result = await verifyDef(def, forged);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe("bad-signature");
+  it("rejects v1 unanchored entries instead of silently migrating them", async () => {
+    const legacy = {
+      id: "show.gh.status",
+      version: "0.1.0",
+      sha256: "0".repeat(64),
+      signature: "0".repeat(128),
+      kid: "attacker",
+      publicKeyHex: "0".repeat(64),
+      promotedAt: PROVENANCE.promotedAt,
+      promotedBy: PROVENANCE.promotedBy,
+      promotedFrom: PROVENANCE.promotedFrom,
+    } as unknown as SignedRegistryEntry;
+    expect(await verifyDef(baseDef(), legacy, [])).toMatchObject({
+      ok: false,
+      reason: "unsupported-envelope",
+    });
   });
 
-  it("rejects a signature made by a different key", async () => {
+  it("rejects malformed signatures and invalid schema without throwing", async () => {
     const def = baseDef();
-    const entry = await entryFor(def);
-    // Swap in an unrelated public key; the signature no longer verifies.
-    const otherSig = await signDef(def, { privateKeyHex: "b".repeat(64), kid: "key:test:b" });
-    const mixed: SignedRegistryEntry = { ...entry, publicKeyHex: otherSig.publicKeyHex };
-    const result = await verifyDef(def, mixed);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe("bad-signature");
-  });
-
-  it("rejects a def that no longer passes schema validation", async () => {
-    const def = baseDef();
-    const entry = await entryFor(def);
-    // Corrupt the def into something invalid (bad id) but keep the old entry.
-    const broken = { ...def, id: "NotAValidId" } as CommandDef;
-    const result = await verifyDef(broken, entry);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe("schema");
-  });
-
-  it("does not throw on malformed signature hex (fail-closed)", async () => {
-    const def = baseDef();
-    const entry = await entryFor(def);
-    const bad: SignedRegistryEntry = { ...entry, signature: "zz" };
-    const result = await verifyDef(def, bad);
-    expect(result.ok).toBe(false);
+    const { entry, pin } = await signed(def);
+    expect(await verifyDef(def, { ...entry, signature: "zz" }, [pin])).toMatchObject({
+      ok: false,
+      reason: "bad-signature",
+    });
+    const invalid = { ...def, id: "NotAValidId" } as CommandDef;
+    expect(await verifyDef(invalid, entry, [pin])).toMatchObject({
+      ok: false,
+      reason: "schema",
+    });
   });
 });

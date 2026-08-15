@@ -37,7 +37,9 @@ export async function startTerminal(
   });
 
   runtime.setApprovalHandler(async ({ command, risk, reason, approvers }) => {
-    if (opts.autoApprove) return true;
+    // `--yes` is convenience for ordinary approval-required work, never a
+    // substitute for an explicit human decision on CRITICAL operations.
+    if (opts.autoApprove && risk !== "CRITICAL") return true;
     const approverText = approvers?.length
       ? ` approvers: ${approvers.join(", ")}.`
       : "";

@@ -135,6 +135,79 @@ function canon(p: string): string {
   return unified.replace(/\/+$/g, "") || "/";
 }
 
+/** Windows paths compare case-insensitively even when classified on POSIX. */
+function isCanonicalWindowsPath(p: string): boolean {
+  return /^(?:[a-zA-Z]:|\/\/)/.test(p);
+}
+
+function comparablePair(left: string, right: string): [string, string] {
+  const l = canon(left);
+  const r = canon(right);
+  return isCanonicalWindowsPath(l) && isCanonicalWindowsPath(r)
+    ? [l.toLowerCase(), r.toLowerCase()]
+    : [l, r];
+}
+
+/** True when `candidate` is `root` itself or a descendant at a segment boundary. */
+function isAtOrBelow(candidate: string, root: string): boolean {
+  return candidate === root || candidate.startsWith(root + "/");
+}
+
+/**
+ * Does an already-normalized target lie in an operating-system-managed tree?
+ *
+ * This is deliberately cross-platform: safety classification may inspect a
+ * Windows-shaped command on POSIX (or the reverse). POSIX and macOS paths are
+ * case-sensitive here; drive-letter/UNC-shaped Windows paths are compared
+ * case-insensitively to match Windows filesystem semantics.
+ */
+export function isProtectedSystemPath(p: string): boolean {
+  const c = canon(p);
+
+  if (/^(?:[a-zA-Z]:|\/\/)/.test(c)) {
+    const lower = c.toLowerCase();
+    const driveMatch = lower.match(/^[a-z]:\/(.*)$/s);
+    const relative = driveMatch?.[1];
+    if (relative !== undefined) {
+      const windowsRoots = [
+        "windows",
+        "program files",
+        "program files (x86)",
+        "programdata",
+        "system volume information",
+        "$recycle.bin",
+      ] as const;
+      return windowsRoots.some((root) => isAtOrBelow(relative, root));
+    }
+
+    // Administrative-share form, e.g. //server/c$/Windows/System32.
+    const uncAdmin = lower.match(/^\/\/[^/]+\/[a-z]\$\/(.*)$/s);
+    if (uncAdmin?.[1] !== undefined) {
+      return ["windows", "program files", "program files (x86)", "programdata"]
+        .some((root) => isAtOrBelow(uncAdmin[1]!, root));
+    }
+    return false;
+  }
+
+  const posixRoots = [
+    "/etc",
+    "/usr",
+    "/bin",
+    "/sbin",
+    "/boot",
+    "/lib",
+    "/lib64",
+    "/var",
+    "/System",
+    "/Library",
+    "/Applications",
+    "/private/etc",
+    "/private/var",
+    "/private/db",
+  ] as const;
+  return posixRoots.some((root) => isAtOrBelow(c, root));
+}
+
 /**
  * Is `p` the filesystem root `/`? After normalization, root may render as ``
  * (path.resolve of `/` is `/` on POSIX), so we test the canonical form.
@@ -166,7 +239,8 @@ export function isDriveRoot(p: string): boolean {
  * We compare the canonical forms so `/home/u/` and `/home/u` match.
  */
 export function isHome(p: string, home: string = homeDir()): boolean {
-  return canon(p) === canon(home);
+  const [candidate, expected] = comparablePair(p, home);
+  return candidate === expected;
 }
 
 /**
@@ -181,7 +255,10 @@ export function isHome(p: string, home: string = homeDir()): boolean {
 export function isDevicePath(p: string): boolean {
   const c = canon(p);
   // POSIX block/char devices that map to real storage.
-  if (/^\/dev\/(sd[a-z]|nvme\d|hd[a-z]|vd[a-z]|mmcblk\d|disk\d|loop\d)/i.test(c)) {
+  if (
+    /^\/dev\/(?:sd[a-z]\d*|nvme\d+n\d+(?:p\d+)?|hd[a-z]\d*|vd[a-z]\d*|mmcblk\d+(?:p\d+)?|disk\d+(?:s\d+)?|loop\d+|md\d+|dm-\d+)(?:\/|$)/i.test(c) ||
+    /^\/dev\/mapper\/[^/]+(?:\/|$)/i.test(c)
+  ) {
     return true;
   }
   // Windows raw device namespace, e.g. \\.\PhysicalDrive0  ->  //./physicaldrive0
@@ -205,8 +282,10 @@ export function hasParentTraversal(rawTarget: string): boolean {
  * `cwd` itself and not contained within it. Both are canonicalized first.
  */
 export function escapesCwd(normalizedTarget: string, cwd: string): boolean {
-  const t = canon(normalizedTarget);
-  const c = canon(path.resolve(cwd));
+  const normalizedCwd = isWindowsRooted(stripWinPrefix(cwd).rest)
+    ? normalizeTarget(cwd, cwd)
+    : path.resolve(cwd);
+  const [t, c] = comparablePair(normalizedTarget, normalizedCwd);
   if (t === c) return false;
   return !t.startsWith(c + "/");
 }

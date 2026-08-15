@@ -230,7 +230,7 @@ the workspace declares `packageManager: pnpm`.
 
 The page at `/` explains the runtime; `/terminal.html` is a live terminal with an **IDEL** mode (registry completion, history, a live audit-log panel), an **Ask AI** mode that drives the embedded console over `/api/agent/stream`, and optional `sh` tabs for a native OS shell. Ask AI currently runs through the Claude provider on the `idel serve` process (see [Using Ask AI](#using-ask-ai)) — the credential never reaches the browser.
 
-Use IDEL tabs for the audited policy pipeline. Use a native `sh` tab only when you need interactive OS behavior such as `sudo apt install git`, package prompts, shell autocomplete, Ctrl+C, arrows, or full-screen terminal tools. Native shell tabs are backed by xterm.js and are intentionally direct shell sessions, so commands typed there are not converted into IDEL commands or risk-scanned command-by-command. When native tabs are explicitly enabled with `--enable-native-terminal`, their session start/close/signal/exit lifecycle events are still written to signed OpenLogs. Without that flag, `idel serve` leaves native shell tabs disabled by default.
+Use IDEL tabs for the audited policy pipeline. Use a native `sh` tab only when you need interactive OS behavior such as `sudo apt install git`, package prompts, shell autocomplete, Ctrl+C, arrows, or full-screen terminal tools. Native shell tabs are backed by xterm.js and are intentionally direct shell sessions, so commands typed there are not converted into IDEL commands or risk-scanned command-by-command. When native tabs are explicitly enabled with `--enable-native-terminal`, their session start/close/signal/exit lifecycle events are still written to signed OpenLogs. The CLI creates a fresh high-entropy bearer in memory and injects it only into the same-origin, no-store terminal page; every native API request must present it. For an API client, set `IDEL_NATIVE_TERMINAL_AUTH_TOKEN` to a private 32–256 character base64url value and send it as `Authorization: Bearer …`. The server never prints the token. Native cwd values remain inside the configured server workspace and clients may select only an explicitly allowed shell. Without the enable flag, native shell tabs remain disabled.
 
 Every command rendered in the terminal — typed or AI-proposed — shows what it **translates to**: the real adapter invocation (e.g. `remove.file name=x force=true` → `rm -f x`, `list.folder` → `ls`), so the mapping from intent to execution is visible at the call site. In the interactive `idel terminal`, a sensitive (HIGH/CRITICAL) command is previewed with its translation and risk and held for confirmation before any real run (and a `require_dry_run`-policy command is shown as dry-run-only, never silently promoted).
 
@@ -246,6 +246,28 @@ learn.cli cli=gh          # IDEL-shaped terminal form with autocomplete
 ```
 
 A learned def must clear **two** gates to be accepted: schema validation, and every declared test matching the runtime's actual classification (a schema-valid-but-misclassifying def is shown with its failures but not written). It is introspection-only (it never runs a real subcommand), draft-layer-only, and a learned destructive command is classified by the same two-phase safety engine as a hand-written one — so learning a tool weakens no guarantee. AI can improve draft quality later, including an on-device model, but the baseline learner does not require Claude.
+
+Promote reviewed drafts with `idel promote gh`. This emits a v2 development
+signature and prints its `kid` and public key, but does **not** trust them. To
+make an explicit local-development pin, independently check those values and
+create `~/.idel/trust/registry-keys.json`:
+
+```json
+{
+  "trustStoreVersion": 1,
+  "keys": [
+    {
+      "kid": "key:registry-development:<printed-id>",
+      "publicKeyHex": "<64 hex characters printed by promote>"
+    }
+  ]
+}
+```
+
+Then run `idel registry verify`. Set `IDEL_REGISTRY_TRUST_STORE` to an absolute
+team-managed trust-store path when pins are provisioned separately. Never copy
+a key from an untrusted `.sig.json`; v2 manifests intentionally contain no key,
+and v1 self-anchored manifests must be re-promoted.
 
 ---
 
@@ -417,13 +439,15 @@ A clean scan is not a safety guarantee — it only means none of the listed patt
 
 ## OpenLogs
 
-Every command produces exactly one record at `~/.idel/logs/openlogs.jsonl`, written through [`@nextera.one/openlogs-sdk`](https://github.com/nextera-one/openlogs) (**OpenLogs v2**). Each record is:
+Every successfully audited command produces one record at `~/.idel/logs/openlogs.jsonl`, written through [`@nextera.one/openlogs-sdk`](https://github.com/nextera-one/openlogs) (**OpenLogs v2**). Audit append failure stops the workflow by default with `AuditAppendError`; an explicit `warn-and-continue` mode reports every missed record. Each persisted record is:
 
 - **TPS-stamped** — a [TPS Reality String](https://github.com/nextera-one/tps) encodes the event time.
-- **Hash-chained** — SHA-256-linked to its predecessor, so the log is tamper-*evident*: break a link (edit, reorder, or delete a record) and verification flags the exact index.
-- **Ed25519-signed** — signed with a machine-local key (`~/.idel/keys/openlogs.key.json`, generated on first use, `0600`), so each record proves who recorded it.
+- **Hash-chained and continuity-checked** — SHA-256-linked to its predecessor, with a separate durable checkpoint binding the expected key, record count, and chain head. Corruption, tail truncation, reset, and missing continuity evidence fail closed.
+- **Ed25519-signed** — signed with a machine-local development key (`~/.idel/keys/openlogs.key.json`, generated on first use, `0600`). Verifier trust comes from a separate public configuration, never from the signing private-key file.
 
-The chain can be verified programmatically via `OpenLogWriter.verify()`, which returns the SDK's structured result (`integrity`, `signatures`, `trust`). The log remains append-only.
+The chain can be verified programmatically via `OpenLogWriter.verify()`, which returns the SDK's structured result (`integrity`, `signatures`, `trust`) plus `continuity` and an explicit assurance label. Local self-pinning can be disabled in favor of pre-provisioned `trustedKeys`.
+
+This is still **local-development evidence, not external anchoring**. Verification returns `externalAnchoring: false`; a principal able to replace the log, public trust file, and continuity checkpoint together can rewrite history. Production accountability requires an independently administered trust root and a remote append-only head anchor or transparency service.
 
 **Secret redaction runs _before_ signing** (the signed payload is immutable, so secrets must never enter it), and is two-pronged:
 
@@ -480,7 +504,7 @@ Coverage spans the parser (quoting/booleans/paths), registry schema validation, 
 
 **Explicitly deferred to V2 (not built):**
 
-- **AI translation** (`native.convert`) — draft-only, behind review/tests/signing. (Note: **CLI learning** ships as `idel learn <cli>`, and **promotion** of a learned draft to the **signed `official` layer** now ships as `idel promote <cli>` — re-verifies schema + replays `tests[]` through the runtime, gates on an explicit y/N, then Ed25519-signs each def; `idel registry verify` checks the signatures and fails closed on tamper. What remains is the *cross-machine* trust story: a managed team/CI key registry so a promoted def is trusted beyond the machine that signed it.)
+- **AI translation** (`native.convert`) — draft-only, behind review/tests/signing. (Note: **CLI learning** ships as `idel learn <cli>`, and **promotion** of a learned draft to the **signed `official` layer** now ships as `idel promote <cli>` — re-verifies schema + replays `tests[]`, then creates a v2 Ed25519 envelope binding command bytes, key identity, and promotion provenance. The development signer is **not trusted automatically**: `idel registry verify` and runtime loading accept only keys pinned independently in `~/.idel/trust/registry-keys.json` or `IDEL_REGISTRY_TRUST_STORE`, and reject legacy v1 self-anchored manifests. Production key custody, rotation/revocation, and authenticated cross-machine trust-store distribution remain deferred.)
 - Full **Git / Docker / Kubernetes** registries (many of those commands are already readable — or learnable via `idel learn`).
 - A **registry marketplace** (needs signing, trust, review, versioning, reputation).
 - **Remote / cloud execution** (comes after local safety and logs are proven).

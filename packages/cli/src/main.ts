@@ -1,4 +1,5 @@
 import { hostname, userInfo, platform, homedir } from "node:os";
+import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -19,7 +20,12 @@ import { ask } from "./ask.js";
 import { ASK_AI_USAGE, askAiIntent, isAskAiCommand } from "./ask-ai.js";
 import { learn, learnForHost } from "./learn.js";
 import { promote } from "./promote.js";
-import { verifyRegistry, verifyOfficialLayer } from "./registry-verify.js";
+import {
+  loadTrustedRegistryKeys,
+  registryTrustStorePath,
+  verifyRegistry,
+  verifyOfficialLayer,
+} from "./registry-verify.js";
 import { parseLearnCommand } from "./learn-command.js";
 import { runFunction, verifyExecution } from "./function-command.js";
 import { HELP_TEXT, VERSION } from "./help.js";
@@ -131,7 +137,7 @@ export async function main(argv: string[]): Promise<number> {
     // handles that). Here --yes simply auto-approves approval_required prompts.
     onApproval: inv.flags.ci
       ? undefined
-      : async () => inv.flags.yes,
+      : async ({ risk }) => inv.flags.yes && risk !== "CRITICAL",
   });
 
   if (inv.mode === "completion") {
@@ -294,6 +300,13 @@ async function serve(runtime: Runtime, flags: CliFlags): Promise<number> {
       : provider === "api"
         ? (service: TerminalService) => new IdelAgent({ service })
         : undefined;
+  // Native PTYs bypass command-level IDEL policy, so even a loopback server
+  // gives them a separate high-entropy bearer. Operators automating API access
+  // can pin it through the environment; otherwise it is generated in memory,
+  // injected only into the no-store same-origin terminal page, and never logged.
+  const nativeTerminalAuthToken = flags.enableNativeTerminal
+    ? process.env.IDEL_NATIVE_TERMINAL_AUTH_TOKEN || randomBytes(32).toString("base64url")
+    : undefined;
 
   const server = await startServer({
     runtime,
@@ -303,6 +316,7 @@ async function serve(runtime: Runtime, flags: CliFlags): Promise<number> {
     environment: flags.environment,
     noNative: flags.noNative,
     allowNativeTerminal: flags.enableNativeTerminal,
+    nativeTerminalAuthToken,
     agent: agentFactory,
     learn: async (req) => {
       const result = await learnForHost(req.cli ?? "", { write: req.write === true });
@@ -364,7 +378,10 @@ function userRegistryDirs(): { official: string; custom: string } {
 async function trustedOfficialDir(dir: string): Promise<string | undefined> {
   let report;
   try {
-    report = await verifyOfficialLayer(dir);
+    // Trust is supplied by independent configuration. A missing trust store is
+    // an empty pin set, never an instruction to trust keys found in manifests.
+    const trustedKeys = await loadTrustedRegistryKeys(registryTrustStorePath());
+    report = await verifyOfficialLayer(dir, trustedKeys);
   } catch {
     // A verification error (unreadable manifest, malformed file) is itself a
     // reason not to trust the layer.

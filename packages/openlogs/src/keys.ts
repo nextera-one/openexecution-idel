@@ -4,15 +4,15 @@
  * OpenLogs v2 records are Ed25519-signed and hash-chained. That requires a
  * stable signing keypair on the machine writing the log. We generate one on
  * first use and persist it under `~/.idel/keys/`, with the private key written
- * `0600` so it is not world-readable. The public key (and `kid`) are what a
- * verifier needs to trust the chain; the private key never leaves this file.
+ * `0600` so it is not world-readable. Verifiers do not derive trust from this
+ * file; OpenLogWriter loads a separate public trust configuration.
  *
  * This is intentionally local-only key management — no HSM, no rotation policy.
  * Those belong to the team/CI story (a managed `KeyRegistry`), which is future
  * work. See CONCERNS.md.
  */
 
-import { mkdir, readFile, writeFile, chmod } from "node:fs/promises";
+import { mkdir, readFile, open, unlink, chmod } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 
@@ -64,15 +64,22 @@ export async function loadOrCreateKeypair(
   try {
     const raw = await readFile(path, "utf8");
     const stored = JSON.parse(raw) as Partial<StoredKeypair>;
-    if (stored.publicKeyHex && stored.privateKeyHex && stored.kid) {
+    if (
+      stored.publicKeyHex &&
+      stored.privateKeyHex &&
+      stored.kid &&
+      /^[0-9a-f]{64}$/i.test(stored.publicKeyHex) &&
+      /^[0-9a-f]{64}$/i.test(stored.privateKeyHex) &&
+      stored.kid === `key:openlogs:${stored.publicKeyHex.slice(0, 16).toLowerCase()}`
+    ) {
       return {
         kid: stored.kid,
-        publicKeyHex: stored.publicKeyHex,
+        publicKeyHex: stored.publicKeyHex.toLowerCase(),
         privateKey: hexToBytes(stored.privateKeyHex),
         publicKey: hexToBytes(stored.publicKeyHex),
       };
     }
-    // Fall through to regenerate if the file is incomplete/corrupt.
+    throw new Error(`OpenLogs signing key file is invalid; refusing replacement: ${path}`);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
   }
@@ -84,17 +91,28 @@ export async function loadOrCreateKeypair(
   const stored: StoredKeypair = { kid, publicKeyHex, privateKeyHex };
 
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
   try {
-    await writeFile(path, JSON.stringify(stored, null, 2) + "\n", {
-      encoding: "utf8",
-      mode: 0o600,
-      flag: "wx",
-    });
+    handle = await open(path, "wx", 0o600);
+    await handle.writeFile(JSON.stringify(stored, null, 2) + "\n", "utf8");
+    await handle.sync();
   } catch (err) {
+    await handle?.close().catch(() => undefined);
     if ((err as NodeJS.ErrnoException).code === "EEXIST") {
       return loadOrCreateKeypair(keyPath);
     }
+    if (handle) await unlink(path).catch(() => undefined);
     throw err;
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
+  if (process.platform !== "win32") {
+    const directory = await open(dirname(path), "r");
+    try {
+      await directory.sync();
+    } finally {
+      await directory.close();
+    }
   }
   // Best-effort lock-down of the private key; chmod is a no-op semantics-wise
   // on Windows but harmless.

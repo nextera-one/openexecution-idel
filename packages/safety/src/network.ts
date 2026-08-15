@@ -92,7 +92,7 @@ function classifyAllow(input: {
 }): void {
   const { findings, from, to, port, protocol } = input;
 
-  if (isAnyAddress(from) && isAnyAddress(to) && isAnyPort(port)) {
+  if (isAnySourceAddress(from) && isAnyAddress(to) && isAnyPort(port)) {
     findings.push({
       code: "network-allow-any-any-any",
       level: "CRITICAL",
@@ -101,13 +101,13 @@ function classifyAllow(input: {
     return;
   }
 
-  if (isAnyAddress(from) && ADMIN_PORTS.has(normalizePort(port))) {
+  if (isAnySourceAddress(from) && ADMIN_PORTS.has(normalizePort(port))) {
     findings.push({
       code: "network-allow-public-admin-port",
       level: "CRITICAL",
       message: `Allowing public access to administrative port ${port} is CRITICAL.`,
     });
-  } else if (isAnyAddress(from) && SENSITIVE_PORTS.has(normalizePort(port))) {
+  } else if (isAnySourceAddress(from) && SENSITIVE_PORTS.has(normalizePort(port))) {
     findings.push({
       code: "network-allow-public-sensitive-port",
       level: "HIGH",
@@ -115,7 +115,7 @@ function classifyAllow(input: {
     });
   }
 
-  if (isAnyAddress(from) && isAnyProtocol(protocol)) {
+  if (isAnySourceAddress(from) && isAnyProtocol(protocol)) {
     findings.push({
       code: "network-allow-public-any-protocol",
       level: "HIGH",
@@ -132,7 +132,7 @@ function classifyDeny(input: {
   direction: string;
 }): void {
   const { findings, from, to, port, direction } = input;
-  if (isAnyAddress(from) && isAnyAddress(to) && isAnyPort(port)) {
+  if (isAnySourceAddress(from) && isAnyAddress(to) && isAnyPort(port)) {
     findings.push({
       code: "network-deny-any-any-any",
       level: "CRITICAL",
@@ -225,6 +225,18 @@ function isAnyAddress(value: string): boolean {
     v === "0.0.0.0/0" ||
     v === "::/0"
   );
+}
+
+/**
+ * Firewall source selectors commonly use the bare unspecified addresses as
+ * aliases for every remote source. Keep that interpretation scoped to `from=`:
+ * a bare 0.0.0.0 destination is not automatically a default route or an
+ * any-destination selector, and over-classifying it would hide malformed rule
+ * input behind the wrong safety explanation.
+ */
+function isAnySourceAddress(value: string): boolean {
+  const v = value.trim().toLowerCase();
+  return v === "0.0.0.0" || v === "::" || isAnyAddress(v);
 }
 
 function isAnyPort(port: string): boolean {

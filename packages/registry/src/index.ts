@@ -47,11 +47,18 @@ export {
   sha256Hex,
   signDef,
   verifyDef,
+  isSignedRegistryEntry,
+  REGISTRY_ENVELOPE_VERSION,
   REGISTRY_MANIFEST_VERSION,
+  REGISTRY_TRUST_STORE_VERSION,
 } from "./signing.js";
 export type {
   SignedRegistryEntry,
   SignedRegistryManifest,
+  SignedRegistryPayload,
+  RegistryPromotionProvenance,
+  RegistryTrustStore,
+  TrustedRegistryKey,
   SigningKey,
   DefSignature,
   VerifyDefResult,

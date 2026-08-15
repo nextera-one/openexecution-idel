@@ -11,6 +11,10 @@
  */
 
 export { renderArgv } from "./render.js";
-export { PosixAdapter, posixAdapter } from "./posix.js";
+export {
+  PosixAdapter,
+  posixAdapter,
+  UnsafePosixArgumentError,
+} from "./posix.js";
 export type { ResolveFn } from "./posix.js";
 export { NodeAdapter, nodeAdapter, SymlinkRefusedError } from "./node-adapter.js";

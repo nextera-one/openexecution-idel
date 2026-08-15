@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { TrustedRegistryKey } from "@openexecution/registry";
 import type { CommandDef } from "@openexecution/types";
 
 import { promote } from "./promote.js";
@@ -23,6 +24,7 @@ let customDir: string;
 let officialDir: string;
 const origHome = process.env["HOME"];
 const origUserProfile = process.env["USERPROFILE"];
+const origTrustStore = process.env["IDEL_REGISTRY_TRUST_STORE"];
 
 // A schema-valid, correctly-classified draft (a LOW gh status command whose
 // declared test matches what the runtime will classify it as).
@@ -81,10 +83,31 @@ async function readJson(path: string): Promise<unknown> {
   return JSON.parse(await readFile(path, "utf8"));
 }
 
+async function pinDevelopmentSigner(): Promise<TrustedRegistryKey> {
+  const manifest = (await readJson(
+    join(officialDir, "promoted-gh.sig.json"),
+  )) as { entries: { payload: { kid: string } }[] };
+  const key = (await readJson(
+    join(home, ".idel", "keys", "registry-development.key.json"),
+  )) as { publicKeyHex: string };
+  const pin = {
+    kid: manifest.entries[0]!.payload.kid,
+    publicKeyHex: key.publicKeyHex,
+  };
+  const trustDir = join(home, ".idel", "trust");
+  await mkdir(trustDir, { recursive: true });
+  await writeFile(
+    join(trustDir, "registry-keys.json"),
+    JSON.stringify({ trustStoreVersion: 1, keys: [pin] }, null, 2) + "\n",
+  );
+  return pin;
+}
+
 beforeEach(async () => {
   home = await mkdtemp(join(tmpdir(), "idel-promote-"));
   process.env["HOME"] = home;
   process.env["USERPROFILE"] = home;
+  delete process.env["IDEL_REGISTRY_TRUST_STORE"];
   customDir = join(home, ".idel", "registries", "custom");
   officialDir = join(home, ".idel", "registries", "official");
   // Silence the command's stdout/stderr writes during tests.
@@ -98,6 +121,8 @@ afterEach(async () => {
   else process.env["HOME"] = origHome;
   if (origUserProfile === undefined) delete process.env["USERPROFILE"];
   else process.env["USERPROFILE"] = origUserProfile;
+  if (origTrustStore === undefined) delete process.env["IDEL_REGISTRY_TRUST_STORE"];
+  else process.env["IDEL_REGISTRY_TRUST_STORE"] = origTrustStore;
   await rm(home, { recursive: true, force: true });
 });
 
@@ -116,23 +141,36 @@ describe("idel promote", () => {
 
     const manifest = (await readJson(join(officialDir, "promoted-gh.sig.json"))) as {
       manifestVersion: number;
-      entries: { id: string; signature: string; sha256: string; kid: string }[];
+      entries: {
+        envelopeVersion: number;
+        payload: { commandId: string; commandSha256: string; kid: string };
+        signature: string;
+        publicKeyHex?: string;
+      }[];
     };
-    expect(manifest.manifestVersion).toBe(1);
+    expect(manifest.manifestVersion).toBe(2);
     expect(manifest.entries).toHaveLength(1);
-    expect(manifest.entries[0]!.id).toBe("show.gh.status");
+    expect(manifest.entries[0]!.envelopeVersion).toBe(2);
+    expect(manifest.entries[0]!.payload.commandId).toBe("show.gh.status");
     expect(manifest.entries[0]!.signature).toMatch(/^[0-9a-f]{128}$/);
+    expect(manifest.entries[0]).not.toHaveProperty("publicKeyHex");
 
     // The promoted id was removed from the custom draft file.
     const remaining = (await readJson(join(customDir, "learned-gh.json"))) as CommandDef[];
     expect(remaining).toEqual([]);
   });
 
-  it("verifies the freshly-promoted official layer", async () => {
+  it("keeps a fresh development signature untrusted until explicitly pinned", async () => {
     await writeDrafts([goodDraft()]);
     await promote("gh", { yes: true, json: false });
 
-    const report = await verifyOfficialLayer(officialDir);
+    const unpinned = await verifyOfficialLayer(officialDir);
+    expect(unpinned.ok).toBe(false);
+    expect(unpinned.items[0]).toMatchObject({ status: "untrusted" });
+    expect(await verifyRegistry({ json: true })).toBe(1);
+
+    const pin = await pinDevelopmentSigner();
+    const report = await verifyOfficialLayer(officialDir, [pin]);
     expect(report.ok).toBe(true);
     expect(report.checked).toBe(1);
     expect(report.items[0]).toMatchObject({ id: "show.gh.status", status: "ok" });
@@ -187,6 +225,7 @@ describe("idel registry verify", () => {
   it("fails when an official def is edited after signing (tamper)", async () => {
     await writeDrafts([goodDraft()]);
     await promote("gh", { yes: true, json: false });
+    const pin = await pinDevelopmentSigner();
 
     // Tamper: relax the def on disk without re-signing.
     const path = join(officialDir, "promoted-gh.json");
@@ -194,7 +233,7 @@ describe("idel registry verify", () => {
     defs[0]!.riskDefault = "CRITICAL";
     await writeFile(path, JSON.stringify(defs, null, 2) + "\n");
 
-    const report = await verifyOfficialLayer(officialDir);
+    const report = await verifyOfficialLayer(officialDir, [pin]);
     expect(report.ok).toBe(false);
     expect(report.items[0]).toMatchObject({ id: "show.gh.status", status: "invalid" });
     expect(await verifyRegistry({ json: true })).toBe(1);
@@ -209,7 +248,7 @@ describe("idel registry verify", () => {
     );
     await writeFile(
       join(officialDir, "promoted-gh.sig.json"),
-      JSON.stringify({ manifestVersion: 1, entries: [] }, null, 2) + "\n",
+      JSON.stringify({ manifestVersion: 2, entries: [] }, null, 2) + "\n",
     );
 
     const report = await verifyOfficialLayer(officialDir);
@@ -226,5 +265,82 @@ describe("idel registry verify", () => {
     const report = await verifyOfficialLayer(officialDir);
     expect(report.ok).toBe(false);
     expect(report.items[0]).toMatchObject({ status: "unsigned" });
+  });
+
+  it("rejects signed promotion metadata tampering", async () => {
+    await writeDrafts([goodDraft()]);
+    await promote("gh", { yes: true, json: false });
+    const pin = await pinDevelopmentSigner();
+    const path = join(officialDir, "promoted-gh.sig.json");
+    const manifest = (await readJson(path)) as {
+      entries: { payload: { provenance: { promotedBy: string } } }[];
+    };
+    manifest.entries[0]!.payload.provenance.promotedBy = "attacker";
+    await writeFile(path, JSON.stringify(manifest, null, 2) + "\n");
+
+    const report = await verifyOfficialLayer(officialDir, [pin]);
+    expect(report.ok).toBe(false);
+    expect(report.items[0]).toMatchObject({ status: "invalid" });
+    expect(report.items[0]!.detail).toContain("bad-signature");
+  });
+
+  it("rejects a wrong pin even when its kid matches", async () => {
+    await writeDrafts([goodDraft()]);
+    await promote("gh", { yes: true, json: false });
+    const pin = await pinDevelopmentSigner();
+    const wrong = { ...pin, publicKeyHex: "00".repeat(32) };
+    const report = await verifyOfficialLayer(officialDir, [wrong]);
+    expect(report.ok).toBe(false);
+    expect(report.items[0]).toMatchObject({ status: "invalid" });
+    expect(report.items[0]!.detail).toContain("bad-signature");
+  });
+
+  it("rejects legacy v1 self-anchored manifests with a migration error", async () => {
+    await mkdir(officialDir, { recursive: true });
+    await writeFile(
+      join(officialDir, "promoted-gh.json"),
+      JSON.stringify([goodDraft()], null, 2) + "\n",
+    );
+    await writeFile(
+      join(officialDir, "promoted-gh.sig.json"),
+      JSON.stringify(
+        {
+          manifestVersion: 1,
+          entries: [
+            {
+              id: "show.gh.status",
+              sha256: "00".repeat(32),
+              signature: "00".repeat(64),
+              kid: "attacker",
+              publicKeyHex: "00".repeat(32),
+            },
+          ],
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    const report = await verifyOfficialLayer(officialDir, [
+      { kid: "attacker", publicKeyHex: "00".repeat(32) },
+    ]);
+    expect(report.ok).toBe(false);
+    expect(report.items[0]).toMatchObject({ status: "invalid" });
+    expect(report.items[0]!.detail).toContain("version 1 is unanchored");
+  });
+
+  it("rejects malformed and duplicate trust-store keys", async () => {
+    const trustDir = join(home, ".idel", "trust");
+    await mkdir(trustDir, { recursive: true });
+    await writeFile(
+      join(trustDir, "registry-keys.json"),
+      JSON.stringify({
+        trustStoreVersion: 1,
+        keys: [
+          { kid: "same", publicKeyHex: "11".repeat(32) },
+          { kid: "same", publicKeyHex: "22".repeat(32) },
+        ],
+      }),
+    );
+    expect(await verifyRegistry({ json: true })).toBe(1);
   });
 });

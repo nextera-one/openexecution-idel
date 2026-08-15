@@ -78,10 +78,13 @@ export function looksLikeSecretValue(value: string): boolean {
 
 function isLikelyNonSecretPath(value: string): boolean {
   if (/^[A-Za-z]:[\\/]/.test(value)) return true;
-  if (value.startsWith("/") || value.startsWith("./") || value.startsWith("../") || value.startsWith("~/")) {
-    return true;
-  }
-  if ((value.includes("/") || value.includes("\\")) && !/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(value)) {
+  if (
+    value.startsWith("/") ||
+    value.startsWith("./") ||
+    value.startsWith("../") ||
+    value.startsWith("~/") ||
+    value.startsWith("\\\\")
+  ) {
     return true;
   }
   return false;
@@ -94,7 +97,16 @@ function isLikelyNonSecretPath(value: string): boolean {
  */
 function redactParamValue(key: string, value: ParamValue): ParamValue {
   if (isSensitiveKey(key)) return REDACTED;
-  if (typeof value === "string" && looksLikeSecretValue(value)) return REDACTED;
+  if (typeof value === "string") {
+    if (looksLikeSecretValue(value)) return REDACTED;
+
+    // Param values are not necessarily atomic. Innocent-looking fields such as
+    // `note="production key is AKIA..."` can embed a credential in prose. Use
+    // the same token-aware scrubber as command/reason strings while preserving
+    // the non-secret context for useful audit evidence.
+    const scrubbed = redactString(value);
+    if (scrubbed !== value) return scrubbed;
+  }
   return value;
 }
 

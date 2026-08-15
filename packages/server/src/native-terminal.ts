@@ -1,7 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { platform } from "node:os";
-import { resolve } from "node:path";
+
+import { canonicalWorkspaceRoot, resolveWorkspaceCwd } from "./workspace-path.js";
 
 export interface NativeTerminalInfo {
   id: string;
@@ -23,6 +24,8 @@ export type NativeTerminalEvent =
 export interface NativeTerminalOptions {
   cwd?: string;
   disabled?: boolean;
+  /** Exact executable names/paths clients may select. Defaults to the server's shell only. */
+  allowedShells?: readonly string[];
 }
 
 export interface StartNativeTerminalRequest {
@@ -189,10 +192,22 @@ export class NativeTerminalManager {
   private readonly sessions = new Map<string, NativeTerminalSession>();
   private readonly cwd: string;
   private readonly disabled: boolean;
+  private readonly allowedShells: Map<string, string>;
 
   constructor(options: NativeTerminalOptions = {}) {
-    this.cwd = resolve(options.cwd ?? process.cwd());
+    this.cwd = canonicalWorkspaceRoot(options.cwd ?? process.cwd());
     this.disabled = options.disabled === true;
+    const isWindows = platform() === "win32";
+    const configured = options.allowedShells ?? [defaultShell(isWindows)];
+    this.allowedShells = new Map(
+      configured.map((shell) => {
+        const value = normalizeShell(shell);
+        return [shellPolicyKey(value, isWindows), value];
+      }),
+    );
+    if (!this.disabled && this.allowedShells.size === 0) {
+      throw new NativeTerminalError("native terminal shell allowlist must not be empty", 500);
+    }
   }
 
   get available(): boolean {
@@ -203,9 +218,18 @@ export class NativeTerminalManager {
     if (this.disabled) {
       throw new NativeTerminalError("native terminals are disabled for this server", 403);
     }
-    const cwd = req.cwd ? resolve(req.cwd) : this.cwd;
     const isWindows = platform() === "win32";
-    const shell = req.shell?.trim() || defaultShell(isWindows);
+    let cwd: string;
+    try {
+      cwd = resolveWorkspaceCwd(this.cwd, req.cwd);
+    } catch (err) {
+      throw new NativeTerminalError((err as Error)?.message ?? "invalid native terminal cwd", 403);
+    }
+    const requestedShell = normalizeShell(req.shell?.trim() || defaultShell(isWindows));
+    const shell = this.allowedShells.get(shellPolicyKey(requestedShell, isWindows));
+    if (!shell) {
+      throw new NativeTerminalError(`native terminal shell is not allowed: ${requestedShell}`, 403);
+    }
     const size = normalizeTerminalSize(req.cols, req.rows);
     const session = NativeTerminalSession.start({ cwd, shell, pty: !isWindows, ...size });
     this.sessions.set(session.id, session);
@@ -417,6 +441,18 @@ export class NativeTerminalError extends Error {
 function defaultShell(isWindows: boolean): string {
   if (isWindows) return "powershell.exe";
   return process.env.SHELL || "/bin/sh";
+}
+
+function normalizeShell(shell: string): string {
+  const value = shell.trim();
+  if (!value || value.includes("\0") || /[\r\n]/.test(value)) {
+    throw new NativeTerminalError("native terminal shell must be a non-empty executable name", 400);
+  }
+  return value;
+}
+
+function shellPolicyKey(shell: string, isWindows: boolean): string {
+  return isWindows ? shell.toLowerCase() : shell;
 }
 
 function normalizeTerminalSize(

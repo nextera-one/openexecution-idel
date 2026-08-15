@@ -1,7 +1,9 @@
-import { readdirSync, statSync } from "node:fs";
-import { resolve, sep } from "node:path";
+import { readdirSync, realpathSync, statSync } from "node:fs";
+import { isAbsolute, resolve, sep } from "node:path";
 
 import type { Registry } from "@openexecution/registry";
+
+import { isWithinWorkspace } from "./workspace-path.js";
 
 /**
  * Registry-driven autocomplete (spec §24, Module 3). Three completion contexts:
@@ -14,10 +16,10 @@ import type { Registry } from "@openexecution/registry";
  * sync with packages/cli/src/complete.ts — both derive everything from the
  * registry, so the command set drives completion automatically.
  */
-export function complete(input: string, registry: Registry, cwd: string): string[] {
+export function complete(input: string, registry: Registry, cwd: string, workspaceRoot = cwd): string[] {
   const segment = currentBatchSegment(input);
   const trimmed = segment.replace(/^\s+/, "");
-  if (trimmed.startsWith("!")) return completeNative(segment, cwd);
+  if (trimmed.startsWith("!")) return completeNative(segment, cwd, workspaceRoot);
   if (!trimmed) return completeCommand("", registry);
 
   const tokens = looseTokens(trimmed);
@@ -55,7 +57,7 @@ export function complete(input: string, registry: Registry, cwd: string): string
         .map((v) => `${key}=${v}`);
     }
     if (schema?.type === "path") {
-      return completePath(partial, cwd).map((p) => `${key}=${p}`);
+      return completePath(partial, cwd, workspaceRoot).map((p) => `${key}=${p}`);
     }
     return [];
   }
@@ -114,10 +116,11 @@ function completeCommand(partial: string, registry: Registry): string[] {
 }
 
 /** Local path suggestions for `path` params (spec §24 "local path suggestions"). */
-function completePath(partial: string, cwd: string): string[] {
+function completePath(partial: string, cwd: string, workspaceRoot: string): string[] {
   try {
     const parsed = unwrapQuote(partial);
     const pathPartial = parsed.value;
+    if (pathPartial.includes("\0") || isAbsolute(normalizeForPlatform(pathPartial))) return [];
     const trailingSep = endsWithPathSep(pathPartial);
     const dirText =
       pathPartial === ""
@@ -126,7 +129,11 @@ function completePath(partial: string, cwd: string): string[] {
           ? pathPartial
           : parentPathText(pathPartial) || ".";
     const prefix = pathPartial === "" || trailingSep ? "" : lastPathSegment(pathPartial);
-    const entries = readdirSync(resolve(cwd, normalizeForPlatform(dirText)));
+    const lexicalDir = resolve(cwd, normalizeForPlatform(dirText));
+    if (!isWithinWorkspace(workspaceRoot, lexicalDir)) return [];
+    const canonicalDir = realpathSync.native(lexicalDir);
+    if (!isWithinWorkspace(workspaceRoot, canonicalDir)) return [];
+    const entries = readdirSync(canonicalDir);
     const prefixCmp = process.platform === "win32" ? prefix.toLowerCase() : prefix;
     return entries
       .filter((e) => {
@@ -138,22 +145,25 @@ function completePath(partial: string, cwd: string): string[] {
         const base = pathPartial === "" || trailingSep
           ? `${pathPartial}${e}`
           : `${parentPathText(pathPartial)}${e}`;
-        const full = resolve(cwd, normalizeForPlatform(base));
+        const full = resolve(canonicalDir, e);
         let isDir = false;
         try {
-          isDir = statSync(full).isDirectory();
+          const canonical = realpathSync.native(full);
+          if (!isWithinWorkspace(workspaceRoot, canonical)) return undefined;
+          isDir = statSync(canonical).isDirectory();
         } catch {
-          isDir = false;
+          return undefined;
         }
         const candidate = isDir ? `${base}${preferredSep(pathPartial)}` : base;
         return rewrapPath(candidate, parsed.quote, isDir);
-      });
+      })
+      .filter((candidate): candidate is string => candidate !== undefined);
   } catch {
     return [];
   }
 }
 
-function completeNative(input: string, cwd: string): string[] {
+function completeNative(input: string, cwd: string, workspaceRoot: string): string[] {
   const body = input.replace(/^\s*!\s?/, "");
   const token = endsWithTokenSeparator(body) ? "" : currentToken(body);
   const value = unwrapQuote(token).value;
@@ -165,7 +175,7 @@ function completeNative(input: string, cwd: string): string[] {
     /^[A-Za-z]:/.test(value) ||
     value.includes("/") ||
     value.includes("\\");
-  return pathish ? completePath(token, cwd) : [];
+  return pathish ? completePath(token, cwd, workspaceRoot) : [];
 }
 
 function looseTokens(input: string): string[] {

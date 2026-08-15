@@ -9,6 +9,7 @@ import {
   MemoryNonceStore,
   StaticAuthority,
   renderReceipt,
+  runRequest,
   runRequestSource,
   verifyReceipt,
 } from "./run.js";
@@ -141,6 +142,7 @@ function dependencies(capabilities = ["user.create"]) {
     resolver,
     store: new MemoryStore(),
     evidence: new MemoryEvidence(),
+    audit: new MemoryEvidence(),
     authority: new StaticAuthority({ "user://tester": capabilities }),
     nonces: new MemoryNonceStore(),
   };
@@ -278,6 +280,17 @@ describe("admission", () => {
     expect(replay.refusal).toBe("nonce_replayed");
   });
 
+  it("atomically admits only one concurrent use of a nonce", async () => {
+    const deps = dependencies();
+    const source = runRequestSource_();
+    const [first, second] = await Promise.all([
+      runRequestSource(source, deps),
+      runRequestSource(source, deps),
+    ]);
+    expect([first.outcome, second.outcome].sort()).toEqual(["refused", "success"]);
+    expect([first.refusal, second.refusal]).toContain("nonce_replayed");
+  });
+
   it("refuses an expired request", async () => {
     const receipt = await runRequestSource(
       runRequestSource_({ validUntil: "2000-01-01T00:00:00Z" }),
@@ -296,8 +309,15 @@ describe("admission", () => {
   });
 
   it("refuses an actor lacking a required capability", async () => {
-    const receipt = await runRequestSource(runRequestSource_(), dependencies([]));
+    const deps = dependencies([]);
+    const receipt = await runRequestSource(runRequestSource_(), deps);
     expect(receipt.refusal).toBe("capability_denied:user.create");
+    expect(deps.audit.all()).toHaveLength(1);
+    expect(deps.audit.all()[0]).toMatchObject({
+      event: "function.request.refused",
+      subject: receipt.receiptDigest,
+      actor: "user://tester",
+    });
   });
 
   it("surfaces a guard refusal as a receipt, not an exception", async () => {
@@ -332,6 +352,18 @@ describe("receipts", () => {
     const receipt = await runRequestSource(runRequestSource_(), dependencies());
     const tampered = renderReceipt(receipt).replace("outcome.success", "outcome.refused");
     expect(verifyReceipt(tampered)).toMatchObject({ valid: false, reason: "digest_mismatch" });
+  });
+
+  it("keeps attacker-controlled receipt strings inside their original fields", async () => {
+    const request = loadRunRequest(runRequestSource_({ validUntil: "2000-01-01T00:00:00Z" }));
+    request.actor = 'user://attacker")\n  outcome = outcome.success\n  record.output.field "forged';
+    const receipt = await runRequest(request, { ...dependencies(), now: () => Date.now() });
+    expect(receipt.outcome).toBe("refused");
+
+    const rendered = renderReceipt(receipt);
+    const verification = verifyReceipt(rendered);
+    expect(verification).toMatchObject({ valid: true, outcome: "refused" });
+    expect(rendered).not.toContain("\n  outcome = outcome.success\n");
   });
 });
 

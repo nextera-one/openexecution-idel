@@ -21,8 +21,37 @@ import { renderArgv } from "./render.js";
 /** Commands whose `command` is a runtime sentinel handled elsewhere. */
 const NON_SPAWN_COMMANDS = new Set<string>(["@node", "@runtime"]);
 
-/** POSIX tools used by destructive defs that accept `--` before target values. */
-const END_OF_OPTIONS_COMMANDS = new Set<string>(["rm", "cp", "mv", "chmod", "chown"]);
+/** POSIX tools whose first positional slot accepts the standard `--` marker. */
+const END_OF_OPTIONS_COMMANDS = new Set<string>([
+  "rm",
+  "cp",
+  "mv",
+  "chmod",
+  "chown",
+  "touch",
+  "mkdir",
+  "cat",
+  "ls",
+]);
+
+/**
+ * Raised when a positional value begins with `-` but cannot be encoded without
+ * changing its meaning. Callers must treat this as a blocked input, not retry
+ * it through a shell or concatenate it into a command line.
+ */
+export class UnsafePosixArgumentError extends Error {
+  override readonly name = "UnsafePosixArgumentError";
+
+  constructor(
+    readonly commandId: string,
+    readonly param: string,
+  ) {
+    super(
+      `Refusing option-like positional value for ${commandId} param ${JSON.stringify(param)}; ` +
+        "use a non-option value or an explicitly modeled registry option.",
+    );
+  }
+}
 
 /** Resolves a command id to its def so capability checks can inspect adapters. */
 export type ResolveFn = (commandId: string) => ResolvedCommand | undefined;
@@ -66,7 +95,8 @@ export class PosixAdapter implements Adapter {
         `PosixAdapter cannot plan "${resolved.def.id}": no posix adapter spec`,
       );
     }
-    const argv = renderArgv(spec, ast.params, {
+    const hardenedParams = hardenPositionalValues(resolved, ast.params);
+    const argv = renderArgv(spec, hardenedParams, {
       endOfOptionsBeforeValues: shouldInsertEndOfOptions(resolved),
     });
     const describe = argv.length > 0
@@ -133,8 +163,53 @@ export class PosixAdapter implements Adapter {
 function shouldInsertEndOfOptions(resolved: ResolvedCommand): boolean {
   const spec = resolved.def.adapters.posix;
   if (!spec || !END_OF_OPTIONS_COMMANDS.has(spec.command)) return false;
-  if (resolved.def.safety?.destructive !== true) return false;
   return spec.args.some((arg) => arg.kind === "value");
+}
+
+/**
+ * Make every option-like positional value unambiguous before rendering.
+ *
+ * Path parameters retain their exact filesystem meaning by spelling a relative
+ * leading-dash path as `./-name`. Non-path positional values cannot be safely
+ * rewritten generically, so they fail closed. A value emitted by an `option`
+ * arg is already bound to its flag and never reaches this branch.
+ *
+ * A small number of declarative specs express an option operand as a literal
+ * immediately followed by a value (`-e <pattern>`, `-name <pattern>`). Those
+ * are data operands by structure and are safe to preserve verbatim.
+ */
+function hardenPositionalValues(
+  resolved: ResolvedCommand,
+  params: CommandAst["params"],
+): CommandAst["params"] {
+  const spec = resolved.def.adapters.posix;
+  if (!spec) return params;
+
+  let hardened: CommandAst["params"] | undefined;
+  for (let index = 0; index < spec.args.length; index += 1) {
+    const arg = spec.args[index];
+    if (arg?.kind !== "value") continue;
+    const value = params[arg.param];
+    if (value === undefined || !String(value).startsWith("-")) continue;
+
+    if (resolved.def.params[arg.param]?.type === "path") {
+      hardened ??= { ...params };
+      hardened[arg.param] = `./${String(value)}`;
+      continue;
+    }
+
+    const previous = index > 0 ? spec.args[index - 1] : undefined;
+    if (
+      previous?.kind === "literal" &&
+      previous.value.startsWith("-") &&
+      previous.value !== "--"
+    ) {
+      continue;
+    }
+
+    throw new UnsafePosixArgumentError(resolved.def.id, arg.param);
+  }
+  return hardened ?? params;
 }
 
 /** Convenience singleton; the runtime may also instantiate its own. */

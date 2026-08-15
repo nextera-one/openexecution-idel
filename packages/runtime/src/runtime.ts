@@ -13,6 +13,7 @@ import { OpenLogWriter } from "@openexecution/openlogs";
 import {
   PosixAdapter,
   NodeAdapter,
+  UnsafePosixArgumentError,
 } from "@openexecution/adapters-posix";
 import { PowerShellAdapter } from "@openexecution/adapters-powershell";
 
@@ -76,6 +77,11 @@ export interface RuntimeOptions {
   policy?: PolicyConfig;
   logWriter?: OpenLogWriter;
   /**
+   * Audit append failures throw by default. Hosts may explicitly choose
+   * `warn-and-continue`, in which case every missed record is reported.
+   */
+  auditFailureMode?: "fail-closed" | "warn-and-continue";
+  /**
    * Ordered adapter preference. The runtime picks the FIRST available adapter
    * that supports the resolved command. Node (in-process fs) is preferred for
    * `@node` commands because it never shells out — the safest executor.
@@ -93,15 +99,16 @@ export class Runtime {
   private readonly registry: Registry;
   private readonly policy: PolicyConfig;
   private readonly openLogWriter: OpenLogWriter | undefined;
+  private readonly auditFailureMode: "fail-closed" | "warn-and-continue";
   private readonly adapters: Adapter[];
   private onApproval: ApprovalHandler | undefined;
-  /** Set once an OpenLogs append has failed, so we warn only on the first miss. */
-  private logFailureWarned = false;
-
+  /** Latches the first fail-closed audit error so later runs stop pre-execution. */
+  private auditFailure: AuditAppendError | undefined;
   constructor(opts: RuntimeOptions) {
     this.registry = opts.registry;
     this.policy = opts.policy ?? defaultPolicy();
     this.openLogWriter = opts.logWriter;
+    this.auditFailureMode = opts.auditFailureMode ?? "fail-closed";
     this.onApproval = opts.onApproval;
     // Default adapter chain: Node fs first (safest), then platform shell.
     this.adapters =
@@ -160,12 +167,13 @@ export class Runtime {
    * Run a single IDEL (or native `!`) command end-to-end.
    *
    * Never throws on a *blocked* or *failed* command — those are outcomes,
-   * recorded and returned. It only throws on programmer/usage errors that
-   * happen before classification (e.g. a malformed parse with no context to
-   * log). Parse/registry errors after we have a context are returned as failed
-   * outcomes so they still get logged.
+   * recorded and returned. It throws when the default fail-closed audit writer
+   * cannot persist an outcome, and on programmer/usage errors that happen
+   * before classification. Parse/registry errors after we have a context are
+   * returned as failed outcomes so they still get logged.
    */
   async run(input: string, ctx: RuntimeContext): Promise<RuntimeOutcome> {
+    if (this.auditFailure) throw this.auditFailure;
     // Origin attribution: an explicit ctx.origin (e.g. "agent" for an
     // AI-proposed command) wins; otherwise infer ci vs interactive. This only
     // labels the audit record — risk and policy are origin-independent.
@@ -318,7 +326,22 @@ export class Runtime {
     const adapter = this.pickAdapter(resolved.def.id);
     let plan: ExecutionPlan | undefined;
     if (adapter) {
-      plan = adapter.plan(resolved, typedAst);
+      try {
+        plan = adapter.plan(resolved, typedAst);
+      } catch (err) {
+        if (err instanceof UnsafePosixArgumentError) {
+          return this.blockUnsafeAdapterArgument(
+            typedAst,
+            ctx,
+            effectiveRisk,
+            findings,
+            affected,
+            assessmentForBytes,
+            err,
+          );
+        }
+        throw err;
+      }
     }
 
     return this.enforceAndExecute({
@@ -480,7 +503,34 @@ export class Runtime {
     );
 
     const adapter = this.pickAdapter(resolved.def.id);
-    const plan = adapter ? adapter.plan(resolved, typedAst) : undefined;
+    let plan: ExecutionPlan | undefined;
+    if (adapter) {
+      try {
+        plan = adapter.plan(resolved, typedAst);
+      } catch (err) {
+        if (err instanceof UnsafePosixArgumentError) {
+          const blockedFindings = [
+            ...findings,
+            unsafeAdapterArgumentFinding(err),
+          ];
+          return this.buildPreview({
+            ast: typedAst,
+            risk: {
+              level: higherRisk(effectiveRisk, "HIGH"),
+              findings: blockedFindings,
+              affected,
+              assessment: assessmentForBytes,
+            },
+            decision: {
+              action: "block",
+              matchedRule: -1,
+              reason: err.message,
+            },
+          });
+        }
+        throw err;
+      }
+    }
 
     return this.buildPreview({
       ast: typedAst,
@@ -698,6 +748,34 @@ export class Runtime {
     return this.finish({ ast, ctx, risk, decision, plan, result, outcome });
   }
 
+  /** Fail closed when a structured POSIX value could be reinterpreted as an option. */
+  private blockUnsafeAdapterArgument(
+    ast: CommandAst,
+    ctx: RuntimeContext,
+    currentRisk: RiskLevel,
+    findings: RiskFinding[],
+    affected: number | undefined,
+    assessment: RiskAssessment | undefined,
+    err: UnsafePosixArgumentError,
+  ): Promise<RuntimeOutcome> {
+    return this.finish({
+      ast,
+      ctx,
+      risk: {
+        level: higherRisk(currentRisk, "HIGH"),
+        findings: [...findings, unsafeAdapterArgumentFinding(err)],
+        affected,
+        assessment,
+      },
+      decision: {
+        action: "block",
+        matchedRule: -1,
+        reason: err.message,
+      },
+      outcome: "blocked_before_execution",
+    });
+  }
+
   // -------------------------------------------------------------------------
   // Meta commands (list.registry, check.policy, list.logs, etc.)
   // -------------------------------------------------------------------------
@@ -888,19 +966,22 @@ export class Runtime {
     };
 
     if (this.openLogWriter) {
-      // Logging must never sink a command — a failed append cannot fail the
-      // command. But an accountability layer that silently stops recording is
-      // worse than one that complains, so surface the FIRST failure to stderr
-      // (once per runtime) instead of swallowing it entirely (CONCERNS §2).
-      await this.openLogWriter.append(record).catch((err: unknown) => {
-        if (!this.logFailureWarned) {
-          this.logFailureWarned = true;
-          const detail = (err as Error)?.message ?? String(err);
+      try {
+        await this.openLogWriter.append(record);
+      } catch (err) {
+        const detail = (err as Error)?.message ?? String(err);
+        if (this.auditFailureMode === "warn-and-continue") {
+          // This mode is intentionally noisy on every miss. A once-only warning
+          // would silently normalize an incomplete audit trail after failure 1.
           process.stderr.write(
-            `openlogs: failed to record this command — audit trail may be incomplete (${detail})\n`,
+            `openlogs: failed to record this command — audit trail is incomplete (${detail})\n`,
           );
+        } else {
+          const failure = new AuditAppendError(record, detail, err);
+          this.auditFailure = failure;
+          throw failure;
         }
-      });
+      }
     }
 
     // Build the returned assessment from the AUTHORITATIVE merged values
@@ -973,6 +1054,24 @@ export class Runtime {
   }
 }
 
+/**
+ * Raised when the default fail-closed audit contract cannot persist an outcome.
+ * Execution may already have completed, so callers must stop the workflow and
+ * surface the embedded record instead of retrying the command blindly.
+ */
+export class AuditAppendError extends Error {
+  readonly record: OpenLogRecord;
+
+  constructor(record: OpenLogRecord, detail: string, cause?: unknown) {
+    super(
+      `OpenLogs failed to persist the command outcome; workflow stopped and the command must not be retried blindly (${detail})`,
+      { cause },
+    );
+    this.name = "AuditAppendError";
+    this.record = record;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Free helpers
 // ---------------------------------------------------------------------------
@@ -992,6 +1091,16 @@ function mergeFindings(
     }
   }
   return out;
+}
+
+function unsafeAdapterArgumentFinding(
+  err: UnsafePosixArgumentError,
+): RiskFinding {
+  return {
+    code: "unsafe-posix-option-like-value",
+    level: "HIGH",
+    message: err.message,
+  };
 }
 
 function maxAffectedEstimate(assessments: readonly RiskAssessment[]): number | undefined {

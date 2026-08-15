@@ -12,7 +12,7 @@
 
 import { createHash } from "node:crypto";
 
-import { canonicalize, parseStructure } from "@openexecution/structure";
+import { canonicalize, parseStructure, quoteStructureString } from "@openexecution/structure";
 
 import { buildHandles, type EvidenceSink, type DataStore } from "./handles.js";
 import { executeFunction, type ExecutionTrace } from "./execute.js";
@@ -23,7 +23,8 @@ import { RefusalError, validateInputs, type IdelValue } from "./values.js";
 /** Records consumed nonces. A run request may be admitted at most once. */
 export interface NonceStore {
   seen(nonce: string): boolean | Promise<boolean>;
-  remember(nonce: string): void | Promise<void>;
+  /** Atomically records a nonce, returning false when it was already present. */
+  consume(nonce: string): boolean | Promise<boolean>;
 }
 
 export class MemoryNonceStore implements NonceStore {
@@ -31,8 +32,10 @@ export class MemoryNonceStore implements NonceStore {
   seen(nonce: string): boolean {
     return this.used.has(nonce);
   }
-  remember(nonce: string): void {
+  consume(nonce: string): boolean {
+    if (this.used.has(nonce)) return false;
     this.used.add(nonce);
+    return true;
   }
 }
 
@@ -59,8 +62,11 @@ export interface RunDependencies {
   resolver: FunctionResolver;
   store: DataStore;
   evidence: EvidenceSink;
+  /** Mandatory admission/refusal audit sink, independent of declared function effects. */
+  audit: EvidenceSink;
   authority: AuthorityProvider;
-  nonces?: NonceStore;
+  /** Required replay authority; callers choose its durable or in-memory scope. */
+  nonces: NonceStore;
   now?: () => number;
   timestamp?: () => string;
 }
@@ -105,7 +111,7 @@ export async function runRequest(
 ): Promise<ExecutionReceipt> {
   const now = dependencies.now ?? (() => Date.now());
   const timestamp = dependencies.timestamp ?? (() => new Date().toISOString());
-  const nonces = dependencies.nonces ?? new MemoryNonceStore();
+  const nonces = dependencies.nonces;
   const startedAt = timestamp();
 
   const base = {
@@ -117,8 +123,18 @@ export async function runRequest(
     evidenceRequired: request.evidenceRequired,
     startedAt,
   };
-  const refuse = (reason: string, version = "", digest = ""): ExecutionReceipt =>
-    sealReceipt({
+  const auditReceipt = async (receipt: ExecutionReceipt): Promise<ExecutionReceipt> => {
+    await dependencies.audit.append({
+      event: receipt.outcome === "success" ? "function.request.executed" : "function.request.refused",
+      subject: receipt.receiptDigest,
+      actor: receipt.actor,
+      resource: "openlogs://function-admission",
+      timestamp: receipt.completedAt,
+    });
+    return receipt;
+  };
+  const refuse = (reason: string, version = "", digest = ""): Promise<ExecutionReceipt> =>
+    auditReceipt(sealReceipt({
       ...base,
       version,
       digest,
@@ -127,7 +143,7 @@ export async function runRequest(
       outputs: {},
       trace: [],
       completedAt: timestamp(),
-    });
+    }));
 
   // 1. Replay protection.
   if (request.singleUse && (await nonces.seen(request.nonce))) return refuse("nonce_replayed");
@@ -155,7 +171,11 @@ export async function runRequest(
     }
   }
 
-  if (request.singleUse) await nonces.remember(request.nonce);
+  // `seen()` is an early rejection only. The atomic consume below closes the
+  // check/use race between concurrent requests that both passed that check.
+  if (request.singleUse && !(await nonces.consume(request.nonce))) {
+    return refuse("nonce_replayed", definition.version, definition.digest);
+  }
 
   // 4. Inputs, then execution.
   try {
@@ -186,7 +206,7 @@ export async function runRequest(
       ...(dependencies.timestamp ? { timestamp: dependencies.timestamp } : {}),
     });
 
-    return sealReceipt({
+    return auditReceipt(sealReceipt({
       ...base,
       version: definition.version,
       digest: definition.digest,
@@ -194,7 +214,7 @@ export async function runRequest(
       outputs: result.outputs,
       trace: result.trace,
       completedAt: timestamp(),
-    });
+    }));
   } catch (error) {
     if (error instanceof RefusalError) {
       return refuse(error.reason, definition.version, definition.digest);
@@ -224,25 +244,25 @@ function renderReceiptBody(receipt: Omit<ExecutionReceipt, "receiptDigest">): st
   const lines = [
     "@idel 1.0",
     "",
-    `define.execution.receipt "${receipt.request}" {`,
-    `  function = idel("${receipt.function}")`,
-    `  version = semver("${receipt.version}")`,
-    `  digest = digest("${receipt.digest}")`,
-    `  actor = idelkey("${receipt.actor}")`,
-    `  nonce = nonce("${receipt.nonce}")`,
-    `  input_digest = digest("${receipt.inputDigest}")`,
+    `define.execution.receipt ${quoteStructureString(receipt.request)} {`,
+    `  function = idel(${quoteStructureString(receipt.function)})`,
+    `  version = semver(${quoteStructureString(receipt.version)})`,
+    `  digest = digest(${quoteStructureString(receipt.digest)})`,
+    `  actor = idelkey(${quoteStructureString(receipt.actor)})`,
+    `  nonce = nonce(${quoteStructureString(receipt.nonce)})`,
+    `  input_digest = digest(${quoteStructureString(receipt.inputDigest)})`,
     `  outcome = outcome.${receipt.outcome}`,
   ];
-  if (receipt.refusal) lines.push(`  refusal = refuse("${receipt.refusal}")`);
-  lines.push(`  started_at = timestamp("${receipt.startedAt}")`);
-  lines.push(`  completed_at = timestamp("${receipt.completedAt}")`);
+  if (receipt.refusal) lines.push(`  refusal = refuse(${quoteStructureString(receipt.refusal)})`);
+  lines.push(`  started_at = timestamp(${quoteStructureString(receipt.startedAt)})`);
+  lines.push(`  completed_at = timestamp(${quoteStructureString(receipt.completedAt)})`);
   for (const [field, value] of Object.entries(receipt.outputs)) {
-    lines.push(`  record.output.field "${field}" {`);
-    lines.push(`    value = ${typeof value === "string" ? `"${value}"` : String(value)}`);
+    lines.push(`  record.output.field ${quoteStructureString(field)} {`);
+    lines.push(`    value = ${typeof value === "string" ? quoteStructureString(value) : String(value)}`);
     lines.push("  }");
   }
   for (const entry of receipt.trace) {
-    lines.push(`  record.execution.step "${entry.step}" {`);
+    lines.push(`  record.execution.step ${quoteStructureString(entry.step)} {`);
     lines.push(`    kind = step.${entry.kind}`);
     lines.push("  }");
   }

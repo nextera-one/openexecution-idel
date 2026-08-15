@@ -21,8 +21,9 @@ export interface EvaluationInput {
 /**
  * Does `pattern` match `command`?
  *
- * Two forms are supported (and ONLY these two — we deliberately do not pull in
+ * Three forms are supported (and ONLY these three — we deliberately do not pull in
  * a full glob engine):
+ *   - catch-all:     "*" matches every command.
  *   - exact:        "remove.folder" matches only "remove.folder".
  *   - prefix-glob:  a trailing ".*" is a prefix wildcard, so "remove.*" matches
  *                   "remove.folder", "remove.file", etc. The dot before `*` is
@@ -36,6 +37,7 @@ export interface EvaluationInput {
  * containing regex/glob metacharacters can never be misinterpreted.
  */
 export function commandMatches(pattern: string, command: string): boolean {
+  if (pattern === "*") return true;
   if (pattern.endsWith(".*")) {
     // Keep the trailing dot in the prefix ("remove." ) so the wildcard only
     // expands a full dotted segment, never a partial token.

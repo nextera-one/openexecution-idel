@@ -1,4 +1,5 @@
 import { hostname, userInfo, platform } from "node:os";
+import { relative } from "node:path";
 
 import { splitBatch } from "@openexecution/parser";
 import type { Runtime } from "@openexecution/runtime";
@@ -19,6 +20,11 @@ import type {
 } from "@openexecution/types";
 
 import { complete } from "./complete.js";
+import {
+  canonicalWorkspaceRoot,
+  resolveWorkspaceCwd,
+  resolveWorkspaceFile,
+} from "./workspace-path.js";
 
 /**
  * Transport-agnostic service layer over the OpenExecution Runtime.
@@ -158,7 +164,7 @@ export class TerminalService {
 
   constructor(opts: ServiceOptions) {
     this.runtime = opts.runtime;
-    this.baseCwd = opts.cwd ?? process.cwd();
+    this.baseCwd = canonicalWorkspaceRoot(opts.cwd ?? process.cwd());
     this.environment = opts.environment;
     this.noNative = opts.noNative ?? false;
   }
@@ -234,15 +240,18 @@ export class TerminalService {
 
   /** Registry-driven completion for the current input. */
   complete(req: CompleteRequest): string[] {
-    return complete(req.input, this.runtime.reg, req.cwd ?? this.baseCwd);
+    const cwd = this.workspaceCwd(req.cwd);
+    return complete(req.input, this.runtime.reg, cwd, this.baseCwd);
   }
 
   /** Load a file for the browser editor via the audited runtime read path. */
   async openEditor(req: EditorOpenRequest): Promise<EditorOpenResponse> {
     const file = normalizeEditorFile(req.file);
+    const cwd = this.workspaceCwd(req.cwd);
+    const target = this.workspaceFile(cwd, file, "open");
     const outcome = await this.run({
-      command: `read.file name=${quoteParamValue(file)}`,
-      cwd: req.cwd,
+      command: `read.file name=${quoteParamValue(relative(this.baseCwd, target))}`,
+      cwd: this.baseCwd,
       origin: "api",
     });
     if (outcome.record.result !== "success") {
@@ -263,9 +272,11 @@ export class TerminalService {
   async saveEditor(req: EditorSaveRequest): Promise<RuntimeOutcome> {
     const file = normalizeEditorFile(req.file);
     const content = req.content ?? "";
+    const cwd = this.workspaceCwd(req.cwd);
+    const target = this.workspaceFile(cwd, file, "save");
     return await this.run({
-      command: `write.file name=${quoteParamValue(file)} content=${quoteParamValue(content)}`,
-      cwd: req.cwd,
+      command: `write.file name=${quoteParamValue(relative(this.baseCwd, target))} content=${quoteParamValue(content)}`,
+      cwd: this.baseCwd,
       origin: "api",
     });
   }
@@ -376,6 +387,22 @@ export class TerminalService {
       noNative: this.noNative,
       origin,
     };
+  }
+
+  private workspaceCwd(requested: string | undefined): string {
+    try {
+      return resolveWorkspaceCwd(this.baseCwd, requested);
+    } catch (err) {
+      throw new ServiceError((err as Error)?.message ?? "invalid workspace cwd", 403);
+    }
+  }
+
+  private workspaceFile(cwd: string, file: string, mode: "open" | "save"): string {
+    try {
+      return resolveWorkspaceFile(this.baseCwd, cwd, file, mode);
+    } catch (err) {
+      throw new ServiceError((err as Error)?.message ?? "invalid editor file", 403);
+    }
   }
 
   private toEntry(def: CommandDef): RegistryEntry {

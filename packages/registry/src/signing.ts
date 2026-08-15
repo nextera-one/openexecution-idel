@@ -1,62 +1,59 @@
 /**
- * Detached Ed25519 signing for promoted registry definitions (spec §16 "official
- * layer", README "promote a learned draft to the signed official layer").
+ * Pinned-key Ed25519 envelopes for promoted registry definitions.
  *
- * The `idel learn` flow drafts commands into the *custom* layer. `idel promote`
- * moves a reviewed draft up to the *official* layer — and the official layer is
- * the one a team is meant to trust, so its defs are signed. This module is the
- * crypto seam:
+ * A registry signature is useful only when its verification key comes from a
+ * trust decision outside the signed artifact. Version 2 therefore deliberately
+ * carries no public key in the manifest. Callers must supply pinned
+ * `{ kid, publicKeyHex }` records, and verification fails closed when a key is
+ * missing, ambiguous, malformed, or wrong.
  *
- *  - {@link canonicalizeDef} renders a def to STABLE bytes (sorted keys, no
- *    `source` field — that is loader-assigned, not content). The same def always
- *    hashes/signs to the same bytes regardless of JSON key order on disk, so a
- *    signature survives a reformat but breaks on any semantic edit.
- *  - {@link signDef} / {@link verifyDef} sign and check those bytes with
- *    Ed25519 (`@noble/ed25519`, the same pure-JS primitive OpenLogs uses — no
- *    Node builtin, so it works on every target including the ESM build).
- *  - A {@link SignedRegistryManifest} is the sidecar written next to a promoted
- *    JSON file: one entry per def (id, version, content sha-256, signature,
- *    `kid`, who/when). `idel registry verify` reads it back and fails closed on
- *    any official-layer def whose bytes no longer match its signature, or which
- *    has no signature at all.
- *
- * Trust model (honest scope): the signing key is the machine-local Ed25519 key
- * under `~/.idel/keys/` — the same local-only key as OpenLogs. There is no team
- * key registry or out-of-band public-key distribution yet (CONCERNS §5); this
- * proves *integrity since promotion on this machine*, and is the seam where a
- * managed `KeyRegistry` will plug in. We do not overclaim it as multi-party
- * trust.
+ * The signature covers a domain-separated canonical envelope containing the
+ * complete canonical command, its digest and version, the signing `kid`, and
+ * all promotion provenance. Editing any of those fields invalidates the
+ * signature. Version-1 manifests are not compatible and must be re-promoted;
+ * they are never silently treated as trusted.
  */
 
-import { signAsync, verifyAsync, getPublicKeyAsync } from "@noble/ed25519";
+import { getPublicKeyAsync, signAsync, verifyAsync } from "@noble/ed25519";
 
 import type { CommandDef } from "@openexecution/types";
 
 import { checkCommandDef } from "./schema.js";
 
-/** Current manifest format version, so a future change can migrate cleanly. */
-export const REGISTRY_MANIFEST_VERSION = 1 as const;
+/** Current detached-manifest and signed-envelope versions. */
+export const REGISTRY_MANIFEST_VERSION = 2 as const;
+export const REGISTRY_ENVELOPE_VERSION = 2 as const;
+export const REGISTRY_TRUST_STORE_VERSION = 1 as const;
 
-/** One signed entry in a {@link SignedRegistryManifest}. */
-export interface SignedRegistryEntry {
-  /** The def id this signature covers. */
-  id: string;
-  /** The def version at signing time (a version bump re-signs). */
-  version: string;
-  /** Hex SHA-256 of the canonical bytes — a fast pre-check before verify. */
-  sha256: string;
-  /** Hex Ed25519 signature over the canonical bytes. */
-  signature: string;
-  /** Key id of the signing key (matches the OpenLogs `kid` scheme). */
-  kid: string;
-  /** Hex Ed25519 public key, so a verifier can check without the private key. */
-  publicKeyHex: string;
-  /** ISO-8601 promotion time (provenance, not part of the signed payload). */
+const ENVELOPE_DOMAIN = "openexecution.registry.signed-envelope.v2";
+
+/** Signed provenance for the deliberate promotion event. */
+export interface RegistryPromotionProvenance {
+  /** ISO-8601 promotion time. */
   promotedAt: string;
-  /** Who promoted it (provenance). */
+  /** Account or automation identity that performed the promotion. */
   promotedBy: string;
-  /** The layer the def was promoted FROM (provenance), e.g. "custom". */
+  /** Source layer, normally `custom`. */
   promotedFrom: string;
+  /** Makes local development signatures distinguishable from release signing. */
+  signingMode: "development" | "release";
+}
+
+/** The payload metadata covered by an entry signature. */
+export interface SignedRegistryPayload {
+  commandId: string;
+  commandVersion: string;
+  commandSha256: string;
+  kid: string;
+  provenance: RegistryPromotionProvenance;
+}
+
+/** One versioned, signed registry envelope. No verification key is embedded. */
+export interface SignedRegistryEntry {
+  envelopeVersion: typeof REGISTRY_ENVELOPE_VERSION;
+  payload: SignedRegistryPayload;
+  /** Hex Ed25519 signature over the domain-separated canonical envelope. */
+  signature: string;
 }
 
 /** The sidecar file written next to a promoted-`<cli>`.json. */
@@ -65,26 +62,28 @@ export interface SignedRegistryManifest {
   entries: SignedRegistryEntry[];
 }
 
+/** A public key trusted by caller configuration, never by the manifest. */
+export interface TrustedRegistryKey {
+  kid: string;
+  publicKeyHex: string;
+}
+
+/** On-disk shape for an independently managed pinned-key configuration. */
+export interface RegistryTrustStore {
+  trustStoreVersion: typeof REGISTRY_TRUST_STORE_VERSION;
+  keys: TrustedRegistryKey[];
+}
+
 /**
- * Render a {@link CommandDef} to canonical bytes for signing/hashing.
- *
- * Rules that make the bytes stable and meaningful:
- *  - Object keys are emitted in sorted order, recursively, so JSON key order on
- *    disk does not change the signature.
- *  - The loader-assigned `source` field is stripped — it is not content, and a
- *    def signed in `custom` must verify unchanged once it lives in `official`.
- *  - Arrays keep their order (argv order is semantic).
- *
- * Any edit to the actual command — a changed flag, a relaxed risk, an added
- * param — changes these bytes and therefore invalidates the signature. That is
- * the point: a signature attests to exactly these semantics.
+ * Render a command to stable bytes. Object keys are sorted recursively, array
+ * order is retained, and the loader-assigned `source` field is removed.
  */
 export function canonicalizeDef(def: CommandDef): Uint8Array {
   const { source: _source, ...content } = def;
   return new TextEncoder().encode(canonicalJson(content));
 }
 
-/** Deterministic JSON: sorted object keys (recursive), arrays left in order. */
+/** Deterministic JSON: sorted object keys recursively, arrays left in order. */
 function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== "object") {
     return JSON.stringify(value) ?? "null";
@@ -94,130 +93,199 @@ function canonicalJson(value: unknown): string {
   }
   const obj = value as Record<string, unknown>;
   const keys = Object.keys(obj)
-    .filter((k) => obj[k] !== undefined)
+    .filter((key) => obj[key] !== undefined)
     .sort();
-  const body = keys
-    .map((k) => `${JSON.stringify(k)}:${canonicalJson(obj[k])}`)
-    .join(",");
-  return `{${body}}`;
+  return `{${keys
+    .map((key) => `${JSON.stringify(key)}:${canonicalJson(obj[key])}`)
+    .join(",")}}`;
 }
 
 function bytesToHex(bytes: Uint8Array): string {
   let out = "";
-  for (const b of bytes) out += b.toString(16).padStart(2, "0");
+  for (const byte of bytes) out += byte.toString(16).padStart(2, "0");
   return out;
 }
 
-function hexToBytes(hex: string): Uint8Array {
-  const clean = hex.startsWith("0x") ? hex.slice(2) : hex;
-  if (clean.length % 2 !== 0) {
-    throw new Error(`invalid hex (odd length): ${hex.slice(0, 16)}…`);
+function hexToBytes(hex: string, expectedBytes: number, label: string): Uint8Array {
+  if (!new RegExp(`^[0-9a-fA-F]{${expectedBytes * 2}}$`).test(hex)) {
+    throw new Error(`${label} must be exactly ${expectedBytes} bytes of hexadecimal`);
   }
-  const out = new Uint8Array(clean.length / 2);
-  for (let i = 0; i < out.length; i++) {
-    out[i] = Number.parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+  const out = new Uint8Array(expectedBytes);
+  for (let i = 0; i < expectedBytes; i += 1) {
+    out[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
   }
   return out;
 }
 
-/** Hex SHA-256 of arbitrary bytes via Web Crypto (available on every target). */
+/** Hex SHA-256 of arbitrary bytes via Web Crypto. */
 export async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  // Copy into a fresh ArrayBuffer-backed view so the type is the exact
-  // `ArrayBuffer` (not `ArrayBufferLike`) that `crypto.subtle.digest` wants
-  // under @types/node, without pulling in the DOM `BufferSource` lib type.
-  const buf = new Uint8Array(bytes);
-  const digest = await crypto.subtle.digest("SHA-256", buf);
+  const digest = await crypto.subtle.digest("SHA-256", new Uint8Array(bytes));
   return bytesToHex(new Uint8Array(digest));
 }
 
-/** Material needed to sign: the private seed and a stable key id. */
+/** Material needed to sign: a 32-byte Ed25519 seed and stable key identity. */
 export interface SigningKey {
-  /** 32-byte Ed25519 private seed (hex), as stored by the OpenLogs key file. */
   privateKeyHex: string;
-  /** Key id, e.g. `key:openlogs:<pub16>`. */
   kid: string;
 }
 
-/** The signature + identifiers produced for one def. */
-export interface DefSignature {
-  sha256: string;
-  signature: string;
-  publicKeyHex: string;
-  kid: string;
+/** Result of signing one complete registry envelope. */
+export interface DefSignature extends SignedRegistryEntry {
+  /** Derived for display or an explicit pinning operation, never for verification. */
+  signerPublicKeyHex: string;
+}
+
+function envelopeBytes(
+  def: CommandDef,
+  payload: SignedRegistryPayload,
+): Uint8Array {
+  const canonicalCommand = new TextDecoder().decode(canonicalizeDef(def));
+  const envelope = canonicalJson({
+    domain: ENVELOPE_DOMAIN,
+    envelopeVersion: REGISTRY_ENVELOPE_VERSION,
+    payload,
+    command: JSON.parse(canonicalCommand) as unknown,
+  });
+  return new TextEncoder().encode(envelope);
 }
 
 /**
- * Sign a def's canonical bytes with an Ed25519 private seed. Returns the hex
- * signature, the content hash, and the public key (derived from the seed) so a
- * verifier never needs the private key.
+ * Sign the command, key identity, and complete promotion provenance together.
+ * The returned public key is informational and intentionally excluded from the
+ * persisted envelope type.
  */
 export async function signDef(
   def: CommandDef,
   key: SigningKey,
+  provenance: RegistryPromotionProvenance,
 ): Promise<DefSignature> {
-  const bytes = canonicalizeDef(def);
-  const priv = hexToBytes(key.privateKeyHex);
-  const signature = await signAsync(bytes, priv);
-  const publicKey = await getPublicKeyAsync(priv);
-  return {
-    sha256: await sha256Hex(bytes),
-    signature: bytesToHex(signature),
-    publicKeyHex: bytesToHex(publicKey),
+  const privateKey = hexToBytes(key.privateKeyHex, 32, "private key");
+  const commandSha256 = await sha256Hex(canonicalizeDef(def));
+  const payload: SignedRegistryPayload = {
+    commandId: def.id,
+    commandVersion: def.version,
+    commandSha256,
     kid: key.kid,
+    provenance,
+  };
+  const signature = await signAsync(envelopeBytes(def, payload), privateKey);
+  const publicKey = await getPublicKeyAsync(privateKey);
+  return {
+    envelopeVersion: REGISTRY_ENVELOPE_VERSION,
+    payload,
+    signature: bytesToHex(signature),
+    signerPublicKeyHex: bytesToHex(publicKey),
   };
 }
 
-/** Why a def failed verification, for precise reporting. */
+/** Why a def failed verification, for precise fail-closed reporting. */
 export type VerifyDefFailure =
   | { ok: false; reason: "schema"; detail: string }
+  | { ok: false; reason: "unsupported-envelope"; detail: string }
+  | { ok: false; reason: "metadata-mismatch"; detail: string }
   | { ok: false; reason: "sha-mismatch"; detail: string }
+  | { ok: false; reason: "untrusted-key"; detail: string }
+  | { ok: false; reason: "invalid-trust-config"; detail: string }
   | { ok: false; reason: "bad-signature"; detail: string };
 
 export type VerifyDefResult = { ok: true } | VerifyDefFailure;
 
 /**
- * Verify that `entry` is a valid signature for `def`. Checks, in order:
- *  1. the def still passes schema validation (a def that no longer validates is
- *     not trustworthy even if its bytes match an old signature),
- *  2. the content hash matches (fast tamper pre-check),
- *  3. the Ed25519 signature verifies against the embedded public key.
- *
- * Fail-closed: any error (bad hex, malformed signature) is reported as a
- * failure, never thrown to the caller.
+ * Verify a v2 entry against caller-supplied pinned keys. There is intentionally
+ * no default key and no fallback to manifest metadata.
  */
 export async function verifyDef(
   def: CommandDef,
   entry: SignedRegistryEntry,
+  trustedKeys: readonly TrustedRegistryKey[],
 ): Promise<VerifyDefResult> {
   const schema = checkCommandDef({ ...def, source: undefined });
   if (!schema.ok) {
     return { ok: false, reason: "schema", detail: schema.errors.join("; ") };
   }
-  let bytes: Uint8Array;
-  let actualSha: string;
-  try {
-    bytes = canonicalizeDef(def);
-    actualSha = await sha256Hex(bytes);
-  } catch (err) {
-    return { ok: false, reason: "sha-mismatch", detail: (err as Error).message };
+
+  if (!isSignedRegistryEntry(entry)) {
+    return {
+      ok: false,
+      reason: "unsupported-envelope",
+      detail: "expected registry signed-envelope version 2; re-promote legacy entries",
+    };
   }
-  if (actualSha !== entry.sha256) {
+  if (
+    entry.payload.commandId !== def.id ||
+    entry.payload.commandVersion !== def.version
+  ) {
+    return {
+      ok: false,
+      reason: "metadata-mismatch",
+      detail: "signed command id/version does not match the registry definition",
+    };
+  }
+
+  const actualSha = await sha256Hex(canonicalizeDef(def));
+  if (actualSha !== entry.payload.commandSha256) {
     return {
       ok: false,
       reason: "sha-mismatch",
-      detail: `content hash ${actualSha.slice(0, 12)}… != signed ${entry.sha256.slice(0, 12)}…`,
+      detail: `content hash ${actualSha.slice(0, 12)}… != signed ${entry.payload.commandSha256.slice(0, 12)}…`,
     };
   }
+
+  const pins = trustedKeys.filter((key) => key.kid === entry.payload.kid);
+  if (pins.length === 0) {
+    return {
+      ok: false,
+      reason: "untrusted-key",
+      detail: `no pinned registry key for kid ${entry.payload.kid}`,
+    };
+  }
+  const distinctKeys = new Set(pins.map((key) => key.publicKeyHex.toLowerCase()));
+  if (distinctKeys.size !== 1) {
+    return {
+      ok: false,
+      reason: "invalid-trust-config",
+      detail: `conflicting pinned public keys for kid ${entry.payload.kid}`,
+    };
+  }
+
   try {
+    const publicKeyHex = pins[0]?.publicKeyHex;
+    if (!publicKeyHex) throw new Error("missing pinned public key");
     const ok = await verifyAsync(
-      hexToBytes(entry.signature),
-      bytes,
-      hexToBytes(entry.publicKeyHex),
+      hexToBytes(entry.signature, 64, "signature"),
+      envelopeBytes(def, entry.payload),
+      hexToBytes(publicKeyHex, 32, "pinned public key"),
     );
     return ok
       ? { ok: true }
-      : { ok: false, reason: "bad-signature", detail: "Ed25519 signature does not verify" };
-  } catch (err) {
-    return { ok: false, reason: "bad-signature", detail: (err as Error).message };
+      : {
+          ok: false,
+          reason: "bad-signature",
+          detail: "Ed25519 signature does not verify against the pinned key",
+        };
+  } catch (error) {
+    return { ok: false, reason: "bad-signature", detail: (error as Error).message };
   }
+}
+
+/** Strict structural check used before any untrusted manifest fields are read. */
+export function isSignedRegistryEntry(value: unknown): value is SignedRegistryEntry {
+  if (!value || typeof value !== "object") return false;
+  const entry = value as Partial<SignedRegistryEntry>;
+  if (entry.envelopeVersion !== REGISTRY_ENVELOPE_VERSION) return false;
+  if (typeof entry.signature !== "string") return false;
+  const payload = entry.payload as Partial<SignedRegistryPayload> | undefined;
+  const provenance = payload?.provenance as Partial<RegistryPromotionProvenance> | undefined;
+  return Boolean(
+    payload &&
+      typeof payload.commandId === "string" &&
+      typeof payload.commandVersion === "string" &&
+      typeof payload.commandSha256 === "string" &&
+      typeof payload.kid === "string" &&
+      provenance &&
+      typeof provenance.promotedAt === "string" &&
+      typeof provenance.promotedBy === "string" &&
+      typeof provenance.promotedFrom === "string" &&
+      (provenance.signingMode === "development" || provenance.signingMode === "release"),
+  );
 }

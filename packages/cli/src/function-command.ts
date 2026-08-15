@@ -13,7 +13,18 @@
  *   from the last record on disk.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 
@@ -75,9 +86,42 @@ class FileNonceStore implements NonceStore {
     return this.used.has(nonce);
   }
 
-  remember(nonce: string): void {
-    this.used.add(nonce);
-    writeJson(this.path, [...this.used]);
+  consume(nonce: string): boolean {
+    mkdirSync(dirname(this.path), { recursive: true });
+    const lockPath = `${this.path}.lock`;
+    const temporaryPath = `${this.path}.${process.pid}.tmp`;
+    const lock = openSync(lockPath, "wx", 0o600);
+    let temporary: number | undefined;
+    try {
+      // Re-read under the cross-process lock. The constructor snapshot is only
+      // an optimization and is never the replay authority.
+      const current = new Set(readJson<string[]>(this.path, []));
+      if (current.has(nonce)) {
+        this.used.add(nonce);
+        return false;
+      }
+      current.add(nonce);
+      temporary = openSync(temporaryPath, "wx", 0o600);
+      writeFileSync(temporary, `${JSON.stringify([...current], null, 2)}\n`, "utf8");
+      fsyncSync(temporary);
+      closeSync(temporary);
+      temporary = undefined;
+      renameSync(temporaryPath, this.path);
+      // Persist the directory entry as well as the file contents before any
+      // function side effect can execute.
+      if (process.platform !== "win32") {
+        const directory = openSync(dirname(this.path), "r");
+        try { fsyncSync(directory); } finally { closeSync(directory); }
+      }
+      this.used.clear();
+      for (const value of current) this.used.add(value);
+      return true;
+    } finally {
+      if (temporary !== undefined) closeSync(temporary);
+      try { unlinkSync(temporaryPath); } catch { /* no temporary file */ }
+      closeSync(lock);
+      unlinkSync(lockPath);
+    }
   }
 }
 
@@ -206,6 +250,7 @@ export async function runFunction(
     resolver,
     store,
     evidence,
+    audit: evidence,
     authority,
     nonces: new FileNonceStore(noncePath),
   });

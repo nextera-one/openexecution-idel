@@ -10,7 +10,7 @@ import type {
   ResolvedCommand,
 } from "@openexecution/types";
 import { NodeAdapter } from "./node-adapter.js";
-import { PosixAdapter } from "./posix.js";
+import { PosixAdapter, UnsafePosixArgumentError } from "./posix.js";
 import { renderArgv } from "./render.js";
 
 // ---------------------------------------------------------------------------
@@ -187,22 +187,110 @@ describe("PosixAdapter", () => {
     );
     expect(plan.adapter).toBe("posix");
     expect(plan.command).toBe("rm");
-    expect(plan.argv).toEqual(["-r", "-f", "dist"]);
-    expect(plan.describe).toBe("rm -r -f dist");
+    expect(plan.argv).toEqual(["-r", "-f", "--", "dist"]);
+    expect(plan.describe).toBe("rm -r -f -- dist");
   });
 
   it("plan() inserts -- for destructive POSIX targets that start with dashes", () => {
     const d = resolved({
       ...def("remove.folder", { posix: removeFolderSpec }),
       riskDefault: "HIGH",
+      params: { path: { type: "path", required: true } },
       safety: { destructive: true, targetParam: "path" },
     });
     const plan = adapter.plan(
       d,
       ast("remove.folder", { recursive: true, force: true, path: "--preserve-root=all" }, "/tmp"),
     );
-    expect(plan.argv).toEqual(["-r", "-f", "--", "--preserve-root=all"]);
-    expect(plan.describe).toBe("rm -r -f -- --preserve-root=all");
+    expect(plan.argv).toEqual(["-r", "-f", "--", "./--preserve-root=all"]);
+    expect(plan.describe).toBe("rm -r -f -- ./--preserve-root=all");
+  });
+
+  it("makes find's option-like path a relative path rather than an action", () => {
+    const findSpec: AdapterSpec = {
+      command: "find",
+      args: [
+        { kind: "value", param: "path" },
+        { kind: "literal", value: "-name" },
+        { kind: "value", param: "name" },
+      ],
+    };
+    const d = resolved({
+      ...def("find.files", { posix: findSpec }),
+      params: {
+        path: { type: "path", required: true },
+        name: { type: "string", required: true },
+      },
+    });
+    const plan = adapter.plan(
+      d,
+      ast("find.files", { path: "-delete", name: "x" }, "/tmp"),
+    );
+    expect(plan.argv).toEqual(["./-delete", "-name", "x"]);
+  });
+
+  it("permits an option-like value only when structurally bound as an option operand", () => {
+    const d = resolved({
+      ...def("find.files", {
+        posix: {
+          command: "find",
+          args: [
+            { kind: "value", param: "path" },
+            { kind: "literal", value: "-name" },
+            { kind: "value", param: "name" },
+          ],
+        },
+      }),
+      params: {
+        path: { type: "path", required: true },
+        name: { type: "string", required: true },
+      },
+    });
+    expect(
+      adapter.plan(d, ast("find.files", { path: ".", name: "-delete" }, "/tmp")).argv,
+    ).toEqual([".", "-name", "-delete"]);
+  });
+
+  it("rejects an ambiguous leading-option non-path positional", () => {
+    const d = resolved({
+      ...def("install.apt.package", {
+        posix: {
+          command: "sudo",
+          args: [
+            { kind: "literal", value: "apt" },
+            { kind: "literal", value: "install" },
+            { kind: "value", param: "name" },
+          ],
+        },
+      }),
+      params: { name: { type: "string", required: true } },
+    });
+    expect(() =>
+      adapter.plan(d, ast("install.apt.package", { name: "--purge" }, "/tmp")),
+    ).toThrow(UnsafePosixArgumentError);
+  });
+
+  it("inserts -- for chmod/chown even when a def omitted destructive=true", () => {
+    const d = resolved({
+      ...def("set.file.permission", {
+        posix: {
+          command: "chmod",
+          args: [
+            { kind: "value", param: "mode" },
+            { kind: "value", param: "path" },
+          ],
+        },
+      }),
+      params: {
+        mode: { type: "mode", required: true },
+        path: { type: "path", required: true },
+      },
+    });
+    const plan = adapter.plan(
+      d,
+      ast("set.file.permission", { mode: "755", path: "-victim" }, "/tmp"),
+    );
+    expect(plan.argv).toEqual(["--", "755", "./-victim"]);
   });
 
   it("execute() dryRun returns a simulated result and does NOT spawn", async () => {

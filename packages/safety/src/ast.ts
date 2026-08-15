@@ -30,6 +30,7 @@ import {
   isHidden,
   isHome,
   isOutsideCwd,
+  isProtectedSystemPath,
   isRoot,
   normalizeTarget,
 } from "./paths.js";
@@ -181,6 +182,19 @@ export function classifyTarget(input: ClassifyInput): RiskFinding[] {
       });
     }
 
+    // --- OS-managed system trees — HIGH floor --------------------------
+    // Unlike root/home sentinels, these are useful subtrees, but destructive
+    // access can still make the machine unbootable or remove its security
+    // configuration. Catch both the tree itself and descendants, including
+    // Windows paths regardless of case.
+    if (isProtectedSystemPath(normalized)) {
+      findings.push({
+        code: "protected-system-path",
+        level: "HIGH",
+        message: `Destructive target lies in an operating-system-managed tree (${normalized}).`,
+      });
+    }
+
     // --- Permission recursive 777 on a broad target — CRITICAL ----------
     if (permission && recursive && isMode777(mode)) {
       const broad = isRoot(normalized) || isDriveRoot(normalized) || isHome(normalized);
@@ -279,15 +293,6 @@ export function assessAst(ast: AnyAst, def?: CommandDef): RiskAssessment {
 
   if (isNativeAst(ast)) {
     findings.push(...scanNative(ast.native));
-    // Native commands also get a baseline: an unmatched native command is
-    // MEDIUM by convention (passthrough is inherently less audited), unless a
-    // catastrophe pattern already pushed it higher.
-    const baseline: RiskFinding = {
-      code: "native-passthrough",
-      level: "MEDIUM",
-      message: "Native passthrough command (not registry-classified).",
-    };
-    findings.push(baseline);
     return finalize("ast", findings, def);
   }
 

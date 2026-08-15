@@ -1,8 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { extname, join, normalize, resolve, sep } from "node:path";
-import type { AddressInfo } from "node:net";
+import { isIP, type AddressInfo } from "node:net";
 import { platform } from "node:os";
 
 import { TerminalService, ServiceError, batchStepSucceeded } from "./service.js";
@@ -76,6 +76,13 @@ export interface ServerOptions extends ServiceOptions {
   /** Enable raw native shell sessions and native API passthrough. Default false. */
   allowNativeTerminal?: boolean;
   /**
+   * Bearer secret required by every native-terminal route when enabled. Must be
+   * 32-256 base64url characters; it is never returned by the health endpoint.
+   */
+  nativeTerminalAuthToken?: string;
+  /** Exact native shell executables clients may request. Defaults to the host shell only. */
+  allowedNativeShells?: readonly string[];
+  /**
    * Factory for the embedded AI agent, given the server's TerminalService.
    * Injected (not imported) so the dependency-free server core never pulls in
    * `@anthropic-ai/sdk`; the host (`idel serve`) wires it. When omitted,
@@ -141,6 +148,9 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
     );
   }
   const nativeEnabled = opts.allowNativeTerminal === true && opts.noNative !== true;
+  const nativeTerminalAuthToken = nativeEnabled
+    ? validateNativeTerminalAuthToken(opts.nativeTerminalAuthToken)
+    : undefined;
   const service = new TerminalService({ ...opts, noNative: !nativeEnabled });
   const cors = opts.cors ?? true;
   const staticDir = opts.staticDir ? resolve(opts.staticDir) : undefined;
@@ -151,13 +161,22 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
   const nativeTerminals = new NativeTerminalManager({
     cwd: opts.cwd,
     disabled: !nativeEnabled,
+    allowedShells: opts.allowedNativeShells,
   });
   // Coordinates the async approval round-trip: an agent stream that proposes a
   // real run parks here on an id; POST /api/agent/approve resolves it.
   const approvals = new PendingApprovals();
 
   const httpServer = createServer((req, res) => {
-    handle(req, res, service, { cors, staticDir, agent, learn, approvals, nativeTerminals }).catch((err) => {
+    handle(req, res, service, {
+      cors,
+      staticDir,
+      agent,
+      learn,
+      approvals,
+      nativeTerminals,
+      nativeTerminalAuthToken,
+    }).catch((err) => {
       // A ServiceError carries the intended HTTP status (e.g. 413 for an
       // oversized body thrown while reading the request stream); honor it here
       // so transport-level failures don't all collapse to 500.
@@ -219,9 +238,10 @@ async function handle(
     learn: LearnRunner | undefined;
     approvals: PendingApprovals;
     nativeTerminals: NativeTerminalManager;
+    nativeTerminalAuthToken: string | undefined;
   },
 ): Promise<void> {
-  const { cors, staticDir, agent, learn, approvals, nativeTerminals } = cfg;
+  const { cors, staticDir, agent, learn, approvals, nativeTerminals, nativeTerminalAuthToken } = cfg;
   const method = req.method ?? "GET";
   const url = new URL(req.url ?? "/", "http://localhost");
   const path = url.pathname;
@@ -230,6 +250,16 @@ async function handle(
     return sendJson(res, 403, { error: boundary.error }, false);
   }
   if (cors && boundary.origin) setCors(res, boundary.origin);
+
+  // Native PTYs intentionally bypass IDEL parsing and command-level policy.
+  // Enabling the feature therefore also requires a separate bearer boundary;
+  // loopback binding and Host/Origin validation are defense in depth, not auth.
+  if (nativeTerminals.available && method !== "OPTIONS" && isNativeApiPath(path)) {
+    if (!hasNativeTerminalAuthorization(req, nativeTerminalAuthToken)) {
+      res.setHeader("www-authenticate", 'Bearer realm="idel-native-terminal"');
+      return sendJson(res, 401, { error: "native terminal authorization required" }, false);
+    }
+  }
 
   // Preflight.
   if (method === "OPTIONS") {
@@ -480,7 +510,7 @@ async function handle(
 
   // --- Static UI (optional) ----------------------------------------------
   if (staticDir && method === "GET") {
-    const served = await serveStatic(res, staticDir, path, cors);
+    const served = await serveStatic(res, staticDir, path, cors, nativeTerminalAuthToken);
     if (served) return;
   }
 
@@ -905,30 +935,75 @@ function isLoopbackBindHost(host: string): boolean {
 
 function isLoopbackHostHeader(hostHeader: string): boolean {
   const host = stripHostPort(hostHeader);
-  return isLoopbackHost(host);
+  return host !== undefined && isLoopbackHost(host);
 }
 
 function isLoopbackHost(host: string): boolean {
   const value = stripIpv6Brackets(host.trim().toLowerCase());
-  return value === "localhost" ||
-    value === "127.0.0.1" ||
-    value === "::1" ||
-    value.startsWith("127.");
+  if (value === "localhost" || value === "::1") return true;
+  return isIP(value) === 4 && value.split(".", 1)[0] === "127";
 }
 
-function stripHostPort(hostHeader: string): string {
+function stripHostPort(hostHeader: string): string | undefined {
   const value = hostHeader.trim();
+  if (!value || /[\s/@\\]/.test(value)) return undefined;
   if (value.startsWith("[")) {
-    const end = value.indexOf("]");
-    return end === -1 ? value : value.slice(1, end);
+    const match = /^\[([^\]]+)\](?::([0-9]+))?$/.exec(value);
+    if (!match || !validOptionalPort(match[2])) return undefined;
+    return match[1];
   }
-  const colon = value.lastIndexOf(":");
-  if (colon > -1 && value.indexOf(":") === colon) return value.slice(0, colon);
+  const firstColon = value.indexOf(":");
+  const lastColon = value.lastIndexOf(":");
+  if (firstColon !== -1 && firstColon === lastColon) {
+    const host = value.slice(0, firstColon);
+    const port = value.slice(firstColon + 1);
+    return host && validOptionalPort(port) ? host : undefined;
+  }
+  // An unbracketed IPv6 address is accepted only without an appended port.
+  if (firstColon !== -1 && isIP(value) !== 6) return undefined;
   return value;
+}
+
+function validOptionalPort(port: string | undefined): boolean {
+  if (port === undefined) return true;
+  if (!/^[0-9]{1,5}$/.test(port)) return false;
+  const value = Number(port);
+  return value >= 1 && value <= 65_535;
 }
 
 function stripIpv6Brackets(value: string): string {
   return value.startsWith("[") && value.endsWith("]") ? value.slice(1, -1) : value;
+}
+
+function validateNativeTerminalAuthToken(token: string | undefined): string {
+  if (!token || token.length < 32 || token.length > 256 || !/^[A-Za-z0-9_-]+$/.test(token)) {
+    throw new ServiceError(
+      "enabling native terminals requires nativeTerminalAuthToken as a 32-256 character base64url secret",
+      400,
+    );
+  }
+  return token;
+}
+
+function isNativeApiPath(path: string): boolean {
+  return path === "/api/native" || path.startsWith("/api/native/");
+}
+
+function hasNativeTerminalAuthorization(
+  req: IncomingMessage,
+  expected: string | undefined,
+): boolean {
+  if (!expected) return false;
+  const header = req.headers.authorization;
+  return typeof header === "string" &&
+    header.startsWith("Bearer ") &&
+    constantTimeTextEqual(header.slice("Bearer ".length), expected);
+}
+
+function constantTimeTextEqual(supplied: string, expected: string): boolean {
+  const expectedBytes = Buffer.from(expected, "utf8");
+  const suppliedBytes = Buffer.from(supplied, "utf8");
+  return suppliedBytes.length === expectedBytes.length && timingSafeEqual(suppliedBytes, expectedBytes);
 }
 
 function nativeTerminalParams(
@@ -999,7 +1074,7 @@ function setCors(res: ServerResponse, origin?: string): void {
   if (origin) res.setHeader("access-control-allow-origin", origin);
   res.setHeader("vary", "Origin");
   res.setHeader("access-control-allow-methods", "GET, POST, OPTIONS");
-  res.setHeader("access-control-allow-headers", "content-type");
+  res.setHeader("access-control-allow-headers", "content-type, authorization");
 }
 
 const MIME: Record<string, string> = {
@@ -1024,6 +1099,7 @@ async function serveStatic(
   dir: string,
   urlPath: string,
   cors: boolean,
+  nativeTerminalAuthToken?: string,
 ): Promise<boolean> {
   const rel = urlPath === "/" ? "index.html" : urlPath.replace(/^\/+/, "");
   // Resolve and confirm the target stays inside `dir` (traversal guard).
@@ -1049,11 +1125,41 @@ async function serveStatic(
   } catch {
     return false;
   }
-  if (cors) setCors(res);
+  const isHtml = extname(filePath) === ".html";
+  const hasNativeBootstrap = isHtml && data.includes(NATIVE_TERMINAL_BOOTSTRAP_MARKER);
+  if (hasNativeBootstrap) {
+    const rendered = data.toString("utf8").replaceAll(
+      NATIVE_TERMINAL_BOOTSTRAP_MARKER,
+      escapeHtmlAttribute(nativeTerminalAuthToken ?? ""),
+    );
+    data = Buffer.from(rendered, "utf8");
+  }
+  // A boot document carrying the in-memory native bearer is never CORS-readable
+  // and never cacheable. Same-origin navigation remains unaffected.
+  if (hasNativeBootstrap) {
+    res.removeHeader("access-control-allow-origin");
+    res.removeHeader("access-control-allow-credentials");
+  } else if (cors) {
+    setCors(res);
+  }
   res.writeHead(200, {
     "content-type": MIME[extname(filePath)] ?? "application/octet-stream",
     "content-length": data.length,
+    "x-content-type-options": "nosniff",
+    ...(hasNativeBootstrap
+      ? { "cache-control": "no-store", "referrer-policy": "no-referrer" }
+      : {}),
   });
   res.end(data);
   return true;
+}
+
+const NATIVE_TERMINAL_BOOTSTRAP_MARKER = "__IDEL_NATIVE_TERMINAL_AUTH_TOKEN__";
+
+function escapeHtmlAttribute(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
 }

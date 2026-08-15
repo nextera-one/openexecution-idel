@@ -171,8 +171,19 @@ class Tokenizer {
             }
             const escaped = this.advance();
             if (escaped === '"' || escaped === "\\") value += escaped;
+            else if (escaped === "b") value += "\b";
+            else if (escaped === "f") value += "\f";
             else if (escaped === "n") value += "\n";
+            else if (escaped === "r") value += "\r";
             else if (escaped === "t") value += "\t";
+            else if (escaped === "u") {
+              const hex = this.source.slice(this.offset, this.offset + 4);
+              if (!/^[0-9a-fA-F]{4}$/.test(hex)) {
+                throw new StructureError("invalid unicode string escape", start);
+              }
+              for (let index = 0; index < 4; index += 1) this.advance();
+              value += String.fromCharCode(Number.parseInt(hex, 16));
+            }
             else throw new StructureError(`unsupported string escape "\\${escaped}"`, start);
             continue;
           }
@@ -478,7 +489,7 @@ export function canonicalize(document: StructureDocument): string {
   const writeValue = (value: StructureValue): string => {
     switch (value.kind) {
       case "string":
-        return `"${value.value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\t/g, "\\t")}"`;
+        return quoteStructureString(value.value);
       case "number":
         return String(value.value);
       case "boolean":
@@ -506,7 +517,7 @@ export function canonicalize(document: StructureDocument): string {
       lines.push(`${indent}${entry.key} = ${writeValue(entry.value)}`);
       return;
     }
-    const label = entry.label === null ? "" : ` "${entry.label}"`;
+    const label = entry.label === null ? "" : ` ${quoteStructureString(entry.label)}`;
     if (entry.entries.length === 0) {
       lines.push(`${indent}${entry.verb}${label} {}`);
       return;
@@ -517,6 +528,31 @@ export function canonicalize(document: StructureDocument): string {
   };
   for (const entry of document.entries) writeEntry(entry, 0);
   return `${lines.join("\n")}\n`;
+}
+
+/**
+ * Encode one arbitrary JavaScript string as a single IDEL Structure string
+ * token. The returned token cannot terminate its surrounding assignment,
+ * call, or block label.
+ */
+export function quoteStructureString(value: string): string {
+  let encoded = '"';
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index] as string;
+    const code = value.charCodeAt(index);
+    switch (character) {
+      case '"': encoded += '\\"'; break;
+      case "\\": encoded += "\\\\"; break;
+      case "\b": encoded += "\\b"; break;
+      case "\f": encoded += "\\f"; break;
+      case "\n": encoded += "\\n"; break;
+      case "\r": encoded += "\\r"; break;
+      case "\t": encoded += "\\t"; break;
+      default:
+        encoded += code < 0x20 ? `\\u${code.toString(16).padStart(4, "0")}` : character;
+    }
+  }
+  return `${encoded}"`;
 }
 
 /**
