@@ -27,7 +27,7 @@
   "files": [
     "dist"
   ],
-  "description": "Claude-backed agent loop that proposes IDEL commands through the OpenExecution Runtime.",
+  "description": "Multi-provider AI agent loop that proposes IDEL commands through the OpenExecution Runtime.",
   "license": "MIT",
   "author": "Nextera One",
   "repository": {

@@ -3,34 +3,24 @@ import { spawn } from "node:child_process";
 import type { TerminalService } from "@openexecution/server";
 
 import { IdelAgent, type AgentApproval, type AgentEvent } from "./agent.js";
+import { GeminiApiProvider, OpenAiApiProvider } from "./api-providers.js";
 import { IdelCliAgent } from "./cli-agent.js";
+import { cliSystemPrompt } from "./tools.js";
 
-/**
- * Picks how the embedded console reaches Claude, and builds the matching agent.
- *
- * Both agents expose the SAME `ask(intent, approve?)` event stream, so callers
- * (the CLI REPL, `idel ask`, the server) don't care which one they got.
- *
- * Precedence (chosen by the user): prefer the SUBSCRIPTION `claude` CLI over the
- * per-token API key. The CLI uses the user's Pro/Max plan and is the headline
- * "use the Claude console with IDEL" path. The API key is the fallback for
- * environments without the CLI (CI, servers). Order:
- *
- *   1. `IDEL_CLAUDE_PROVIDER=cli|api` forces a provider (explicit override).
- *   2. else if the `claude` CLI is installed → subscription CLI.
- *   3. else if ANTHROPIC_API_KEY is set → API.
- *   4. else → none (caller prints guidance).
- *
- * Note: when the CLI path is chosen, a stray ANTHROPIC_API_KEY is unset in the
- * spawned child (see provider.ts) so it never silently bills per-token.
- */
-
-/** The common surface both agents satisfy. */
+/** The common surface every hosted AI provider satisfies. */
 export interface AgentLike {
   ask(intent: string, approve?: AgentApproval): AsyncGenerator<AgentEvent, void, unknown>;
 }
 
-export type ProviderKind = "cli" | "api";
+/** Legacy names `cli` and `api` mean Claude CLI and Anthropic API. */
+export type ProviderKind = "cli" | "api" | "openai" | "gemini";
+
+export const PROVIDER_LABELS: Readonly<Record<ProviderKind, string>> = {
+  cli: "Claude Code subscription",
+  api: "Anthropic Claude API",
+  openai: "OpenAI API",
+  gemini: "Google Gemini API",
+};
 
 export interface SelectOptions {
   service: TerminalService;
@@ -47,54 +37,81 @@ export interface Selection {
   agent: AgentLike;
 }
 
-/**
- * Resolve which provider to use WITHOUT building an agent — useful for showing
- * the user what will happen (e.g. in `idel serve` startup output) and for the
- * "is Claude available at all?" check. Returns null when neither is available.
- */
+/** Return every provider that is configured on this host. */
+export async function detectProviders(bin = "claude"): Promise<ProviderKind[]> {
+  const providers: ProviderKind[] = [];
+  if (await claudeCliAvailable(bin)) providers.push("cli");
+  if (process.env["ANTHROPIC_API_KEY"]) providers.push("api");
+  if (process.env["OPENAI_API_KEY"]) providers.push("openai");
+  if (process.env["GEMINI_API_KEY"] || process.env["GOOGLE_API_KEY"]) providers.push("gemini");
+  return providers;
+}
+
+/** Resolve the selected provider, respecting IDEL_AI_PROVIDER when present. */
 export async function detectProvider(
   bin = "claude",
   force?: ProviderKind,
 ): Promise<ProviderKind | null> {
-  const forced = force ?? envProvider();
-  if (forced === "cli") return (await claudeCliAvailable(bin)) ? "cli" : null;
-  if (forced === "api") return process.env["ANTHROPIC_API_KEY"] ? "api" : null;
-  if (await claudeCliAvailable(bin)) return "cli";
-  if (process.env["ANTHROPIC_API_KEY"]) return "api";
-  return null;
+  const selected = force ?? envProvider();
+  const available = await detectProviders(bin);
+  if (selected) return available.includes(selected) ? selected : null;
+  return available[0] ?? null;
 }
 
-/**
- * Build the agent for the detected/forced provider, or return null if Claude is
- * not reachable (no CLI installed and no API key).
- */
-export async function createAgent(opts: SelectOptions): Promise<Selection | null> {
-  const kind = await detectProvider(opts.bin, opts.force);
-  if (!kind) return null;
+/** Build an agent for a specific configured provider. */
+export function createAgentForProvider(opts: SelectOptions & { force: ProviderKind }): AgentLike | null {
+  const { force: kind } = opts;
+  if (!providerHasCredentials(kind, opts.bin ?? "claude")) return null;
   if (kind === "cli") {
-    return {
-      kind,
-      agent: new IdelCliAgent({
-        service: opts.service,
-        approve: opts.approve,
-        model: opts.model,
-        bin: opts.bin,
-      }),
-    };
+    return new IdelCliAgent({
+      service: opts.service,
+      approve: opts.approve,
+      model: opts.model,
+      bin: opts.bin,
+    });
   }
-  return {
-    kind,
-    agent: new IdelAgent({
+  if (kind === "api") {
+    return new IdelAgent({
       service: opts.service,
       approve: opts.approve,
       ...(opts.model ? { model: opts.model } : {}),
-    }),
-  };
+    });
+  }
+  const system = cliSystemPrompt(opts.service);
+  const provider = kind === "openai"
+    ? new OpenAiApiProvider({ system, model: opts.model })
+    : new GeminiApiProvider({
+        system,
+        model: opts.model,
+        apiKey: process.env["GEMINI_API_KEY"] ?? process.env["GOOGLE_API_KEY"],
+      });
+  return new IdelCliAgent({ service: opts.service, approve: opts.approve, provider });
+}
+
+/** Build the selected agent, or return null when its credentials are unavailable. */
+export async function createAgent(opts: SelectOptions): Promise<Selection | null> {
+  const kind = await detectProvider(opts.bin, opts.force);
+  if (!kind) return null;
+  const agent = createAgentForProvider({ ...opts, force: kind });
+  return agent ? { kind, agent } : null;
 }
 
 function envProvider(): ProviderKind | undefined {
-  const v = process.env["IDEL_CLAUDE_PROVIDER"]?.trim().toLowerCase();
-  return v === "cli" || v === "api" ? v : undefined;
+  const current = process.env["IDEL_AI_PROVIDER"]?.trim().toLowerCase();
+  if (current === "openai" || current === "chatgpt") return "openai";
+  if (current === "gemini" || current === "google") return "gemini";
+  if (current === "anthropic" || current === "claude-api" || current === "api") return "api";
+  if (current === "claude-cli" || current === "claude-code" || current === "cli") return "cli";
+
+  const legacy = process.env["IDEL_CLAUDE_PROVIDER"]?.trim().toLowerCase();
+  return legacy === "cli" || legacy === "api" ? legacy : undefined;
+}
+
+function providerHasCredentials(kind: ProviderKind, bin: string): boolean {
+  if (kind === "cli") return bin.length > 0;
+  if (kind === "api") return Boolean(process.env["ANTHROPIC_API_KEY"]);
+  if (kind === "openai") return Boolean(process.env["OPENAI_API_KEY"]);
+  return Boolean(process.env["GEMINI_API_KEY"] || process.env["GOOGLE_API_KEY"]);
 }
 
 /** True if `<bin> --version` runs and exits 0 — i.e. Claude Code is installed. */

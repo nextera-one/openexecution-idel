@@ -1175,6 +1175,73 @@ describe("startServer — static UI", () => {
 });
 
 describe("startServer — injected agent", () => {
+  it("publishes configured providers and routes a request to the selected one", async () => {
+    const runtime = new Runtime({ registry, policy: defaultPolicy() });
+    const provider = (name: string) => () => ({
+      async *ask(): AsyncGenerator<unknown> {
+        yield { type: "text", text: name };
+        yield { type: "done", reason: "end_turn" };
+      },
+    });
+    const server = await startServer({
+      runtime,
+      port: 0,
+      cwd: tmpdir(),
+      authRequired: false,
+      agents: {
+        default: "openai",
+        providers: {
+          openai: provider("from-openai"),
+          gemini: provider("from-gemini"),
+        },
+      },
+    });
+    try {
+      const health = await (await fetch(`${server.url}/api/health`)).json() as {
+        agentProvider: string;
+        agentProviders: string[];
+      };
+      expect(health.agentProvider).toBe("openai");
+      expect(health.agentProviders).toEqual(["openai", "gemini"]);
+
+      const res = await fetch(`${server.url}/api/agent/stream`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ intent: "hello", provider: "gemini" }),
+      });
+      expect(await res.text()).toContain("from-gemini");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("rejects a provider that is not configured", async () => {
+    const runtime = new Runtime({ registry, policy: defaultPolicy() });
+    const server = await startServer({
+      runtime,
+      port: 0,
+      cwd: tmpdir(),
+      authRequired: false,
+      agents: {
+        default: "openai",
+        providers: {
+          openai: () => ({ async *ask(): AsyncGenerator<unknown> { yield { type: "done" }; } }),
+        },
+      },
+    });
+    try {
+      const res = await fetch(`${server.url}/api/agent/stream`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ intent: "hello", provider: "gemini" }),
+      });
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toMatch(/not configured/i);
+    } finally {
+      await server.close();
+    }
+  });
+
   it("drives an injected agent and streams its events over SSE", async () => {
     const runtime = new Runtime({ registry, policy: defaultPolicy() });
     // A fake agent runner: structurally an AgentRunner, no Anthropic dependency.

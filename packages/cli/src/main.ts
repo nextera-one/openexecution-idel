@@ -7,7 +7,13 @@ import { Runtime } from "@openexecution/runtime";
 import { OpenLogWriter } from "@openexecution/openlogs";
 import { loadPolicy, defaultPolicy } from "@openexecution/policy";
 import { startServer, type TerminalService } from "@openexecution/server";
-import { IdelAgent, IdelCliAgent, detectProvider } from "@openexecution/agent";
+import {
+  createAgentForProvider,
+  detectProvider,
+  detectProviders,
+  PROVIDER_LABELS,
+  type ProviderKind,
+} from "@openexecution/agent";
 import type { PolicyConfig, RuntimeContext, RuntimeOutcome } from "@openexecution/runtime";
 
 import { parseArgv, type CliFlags } from "./argv.js";
@@ -285,20 +291,19 @@ async function runBatch(
  * to a CLI command.
  */
 async function serve(runtime: Runtime, flags: CliFlags): Promise<number> {
-  // Pick how the embedded AI console reaches Claude: the user's Pro/Max
-  // SUBSCRIPTION via the installed `claude` CLI (preferred), else the API key.
-  // Detected once at startup so the (synchronous) agent factory can build the
-  // matching agent per request. The hosted agent can run for real, but only
+  // Detect every configured AI provider once at startup. The hosted agent can
+  // run for real, but only
   // behind the browser approval round-trip (`allowReal` + POST
   // /api/agent/approve) — it never touches disk without an explicit "Approve."
+  const providers = await detectProviders();
   const provider = await detectProvider();
   const registryDirs = userRegistryDirs();
-  const agentFactory =
-    provider === "cli"
-      ? (service: TerminalService) => new IdelCliAgent({ service })
-      : provider === "api"
-        ? (service: TerminalService) => new IdelAgent({ service })
-        : undefined;
+  const agentFactories = Object.fromEntries(
+    providers.map((kind) => [
+      kind,
+      (service: TerminalService) => createAgentForProvider({ service, force: kind })!,
+    ]),
+  ) as Record<ProviderKind, (service: TerminalService) => NonNullable<ReturnType<typeof createAgentForProvider>>>;
   const apiAuthToken =
     process.env.IDEL_SERVER_AUTH_TOKEN || process.env.IDEL_NATIVE_TERMINAL_AUTH_TOKEN;
   if (!flags.staticDir && !apiAuthToken) {
@@ -316,7 +321,9 @@ async function serve(runtime: Runtime, flags: CliFlags): Promise<number> {
     noNative: flags.noNative,
     ...(apiAuthToken ? { authToken: apiAuthToken } : {}),
     allowNativeTerminal: flags.enableNativeTerminal,
-    agent: agentFactory,
+    ...(provider
+      ? { agents: { default: provider, providers: agentFactories } }
+      : {}),
     learn: async (req) => {
       const result = await learnForHost(req.cli ?? "", { write: req.write === true });
       if (result.path) await runtime.reg.loadLayer(registryDirs.custom, "custom");
@@ -330,18 +337,15 @@ async function serve(runtime: Runtime, flags: CliFlags): Promise<number> {
       color.blue(server.url) +
       "\n",
   );
-  const claudeNote =
-    provider === "cli"
-      ? "(AI console enabled — your subscription, via the claude CLI)\n"
-      : provider === "api"
-        ? "(AI console enabled — Anthropic API)\n"
-        : "(disabled — install Claude Code + `claude login`, or set ANTHROPIC_API_KEY)\n";
+  const providerNote = provider
+    ? `(AI console enabled — ${PROVIDER_LABELS[provider]}; ${providers.length} configured)\n`
+    : "(disabled — configure Claude Code, ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY)\n";
   process.stdout.write(
     color.gray(
       `  API:  ${server.url}/api/health · /api/registry · /api/run · /api/complete · /api/logs\n` +
         `  Auth: bearer required (health excluded; secret is never printed)\n` +
         `  Ask:  ${server.url}/api/agent/stream  ` +
-        claudeNote +
+        providerNote +
         (flags.staticDir
           ? `  UI:   serving ${flags.staticDir} at ${server.url}/\n`
           : `  UI:   none (pass --static <dir> to serve a built terminal UI)\n`) +

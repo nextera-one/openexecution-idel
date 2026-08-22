@@ -51,12 +51,12 @@ import type {
  * used deliberately — it needs no extra dependency and matches Javelle's own
  * patch-stream contract (`EventSource`), so the desktop/web bridge is uniform.
  *
- * Agent: `POST /api/agent/stream` {intent, allowReal?} — the embedded AI
+ * Agent: `POST /api/agent/stream` {intent, allowReal?, provider?} — the embedded AI
  * console. It drives the injected agent, streaming one SSE event per AgentEvent
  * (`text`, `proposed`, `blocked`, `approval_request`, ... then `done`). Each
  * command the agent proposes flows through the same TerminalService.run pipeline
  * (audited as `source: "agent"`). Returns 501 when no agent was wired. The
- * Anthropic key stays server-side; loopback-only bind keeps it off the network.
+ * Provider credentials stay server-side; loopback-only bind keeps them off the network.
  *
  * Real-run approval: with `allowReal: true`, a real run pauses on an
  * `approval_request` SSE event and the stream parks until the client posts
@@ -99,6 +99,15 @@ export interface ServerOptions extends ServiceOptions {
    */
   agent?: (service: TerminalService) => AgentRunner;
   /**
+   * Optional selectable provider catalog. Each factory is built once at server
+   * startup; requests may select one configured id without ever receiving its
+   * credential. `default` is used when a request omits `provider`.
+   */
+  agents?: {
+    default: string;
+    providers: Record<string, (service: TerminalService) => AgentRunner>;
+  };
+  /**
    * Optional host-provided CLI learning surface. The server does not import the
    * agent package directly; `idel serve` injects this when available.
    */
@@ -140,7 +149,7 @@ const DEFAULT_PORT = 7878;
 const MAX_BODY_BYTES = 1_000_000; // 1MB — command lines are tiny; cap abuse.
 const ASK_AI_USAGE = 'ask.ai prompt="what you want to do"';
 const AGENT_UNAVAILABLE =
-  "Ask AI is not configured on this server (install Claude Code + run `claude login`, or set ANTHROPIC_API_KEY)";
+  "Ask AI is not configured on this server (configure Claude Code, ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY)";
 
 export interface RunningServer {
   url: string;
@@ -174,9 +183,16 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
   const service = new TerminalService({ ...opts, noNative: !nativeEnabled });
   const cors = opts.cors ?? false;
   const staticDir = opts.staticDir ? resolve(opts.staticDir) : undefined;
-  // Build the agent once and share it (its system prompt — the registry catalog
-  // — is cached by Anthropic across turns). Undefined when the host didn't wire one.
-  const agent = opts.agent ? opts.agent(service) : undefined;
+  // Build configured agents once. Provider credentials remain in these host-side
+  // instances and are never serialized into health or agent responses.
+  const agents = new Map<string, AgentRunner>();
+  for (const [id, factory] of Object.entries(opts.agents?.providers ?? {})) {
+    agents.set(id, factory(service));
+  }
+  const agentProvider = opts.agents?.default && agents.has(opts.agents.default)
+    ? opts.agents.default
+    : agents.keys().next().value as string | undefined;
+  const agent = agentProvider ? agents.get(agentProvider) : opts.agent?.(service);
   const learn = opts.learn;
   const nativeTerminals = new NativeTerminalManager({
     cwd: opts.cwd,
@@ -193,6 +209,8 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
       cors,
       staticDir,
       agent,
+      agents,
+      agentProvider,
       learn,
       approvals,
       runApprovals,
@@ -260,6 +278,8 @@ async function handle(
     cors: boolean;
     staticDir: string | undefined;
     agent: AgentRunner | undefined;
+    agents: Map<string, AgentRunner>;
+    agentProvider: string | undefined;
     learn: LearnRunner | undefined;
     approvals: PendingApprovals;
     runApprovals: PendingRunApprovals;
@@ -272,6 +292,8 @@ async function handle(
     cors,
     staticDir,
     agent,
+    agents,
+    agentProvider,
     learn,
     approvals,
     runApprovals,
@@ -330,6 +352,8 @@ async function handle(
         version: VERSION,
         platform: platform(),
         agentAvailable: Boolean(agent),
+        agentProvider,
+        agentProviders: [...agents.keys()],
         nativeAvailable: nativeTerminals.available,
       },
       cors,
@@ -482,11 +506,16 @@ async function handle(
   }
 
   if (path === "/api/agent/stream" && method === "POST") {
-    if (!agent) {
+    const body = await readJsonBody<{ intent?: string; allowReal?: boolean; provider?: string }>(req);
+    const requestedProvider = body.provider?.trim();
+    const selectedAgent = requestedProvider ? agents.get(requestedProvider) : agent;
+    if (!selectedAgent) {
+      if (requestedProvider && agents.size > 0) {
+        return sendJson(res, 400, { error: `AI provider is not configured: ${requestedProvider}` }, cors);
+      }
       return sendJson(res, 501, { error: AGENT_UNAVAILABLE }, cors);
     }
-    const body = await readJsonBody<{ intent?: string; allowReal?: boolean }>(req);
-    return agentStream(res, agent, body.intent ?? "", cors, body.allowReal ?? false, approvals);
+    return agentStream(res, selectedAgent, body.intent ?? "", cors, body.allowReal ?? false, approvals);
   }
 
   // Resolve a pending real-run approval the agent stream is parked on. The

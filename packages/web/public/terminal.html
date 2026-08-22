@@ -1481,16 +1481,23 @@ learn.cli cli=apt</code></pre>
         <section class="setup-body">
           <p>
             Ask AI runs inside the local <code>idel serve</code> process.
-            Enable one provider, then restart the UI server.
+            API keys stay in that host process and are never sent to this page.
           </p>
 
           <div class="setup-option">
             <strong>Provider catalog</strong>
-            <span>Supported now: Claude. Planned provider adapters:</span>
+            <span>Choose among the providers configured when this server started:</span>
+            <label class="ai-provider-picker" for="ai-provider-select">
+              <span>Provider for new Ask AI requests</span>
+              <select id="ai-provider-select" aria-label="Ask AI provider">
+                <option value="">No configured provider</option>
+              </select>
+            </label>
             <ul class="ai-provider-list">
-              <li><span>Claude</span><em>Supported</em></li>
-              <li><span>ChatGPT / OpenAI</span><em>Planned</em></li>
-              <li><span>Gemini</span><em>Planned</em></li>
+              <li data-ai-provider="cli"><span>Claude Code</span><em>Supported</em></li>
+              <li data-ai-provider="api"><span>Claude API</span><em>Supported</em></li>
+              <li data-ai-provider="openai"><span>ChatGPT / OpenAI</span><em>Supported</em></li>
+              <li data-ai-provider="gemini"><span>Google Gemini</span><em>Supported</em></li>
               <li><span>Microsoft Copilot</span><em>Planned</em></li>
               <li><span>Perplexity</span><em>Planned</em></li>
               <li><span>Mistral</span><em>Planned</em></li>
@@ -1509,15 +1516,20 @@ learn.cli cli=apt</code></pre>
           </div>
 
           <div class="setup-option">
-            <strong>Use an Anthropic API key</strong>
-            <span>Start the UI server with the key in its environment:</span>
-            <pre><code>export ANTHROPIC_API_KEY=your_key_here
-scripts/run-ui.sh</code></pre>
+            <strong>Use an API provider</strong>
+            <span>Export one or more keys before starting the desktop or UI:</span>
+            <pre><code>export ANTHROPIC_API_KEY=your_anthropic_key
+export OPENAI_API_KEY=your_openai_key
+export GEMINI_API_KEY=your_gemini_key
+
+# optional default: cli | api | openai | gemini
+export IDEL_AI_PROVIDER=openai</code></pre>
           </div>
 
           <p class="setup-note">
-            After changing PATH or environment variables, stop and restart
-            <code>scripts/run-ui.sh</code>.
+            Restart Electron or <code>scripts/run-ui.sh</code> after changing
+            environment variables. Model overrides: <code>IDEL_OPENAI_MODEL</code>
+            and <code>IDEL_GEMINI_MODEL</code>.
           </p>
         </section>
 

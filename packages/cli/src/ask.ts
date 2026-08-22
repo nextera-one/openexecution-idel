@@ -11,10 +11,9 @@ import { color, render } from "./render.js";
  * in the terminal. Natural language goes to the agent, which proposes IDEL
  * commands; each one runs through the same runtime pipeline as a typed command,
  * so safety/policy/OpenLogs are identical and AI-run commands are audited as
- * `source: "agent"`. The Claude credential stays in this process.
+ * `source: "agent"`. Provider credentials stay in this process.
  *
- * Claude is reached via the user's SUBSCRIPTION (the installed `claude` CLI,
- * preferred) or the ANTHROPIC_API_KEY (fallback) — {@link createAgent} picks.
+ * Claude Code, Anthropic, OpenAI, and Gemini are selected by {@link createAgent}.
  *
  * `allowReal` controls whether a proposed command may run for real after the
  * dry run. The CLI prompts the human (readline); declining leaves the dry-run
@@ -46,9 +45,7 @@ export async function ask(
   }
   process.stderr.write(
     color.gray(
-      selection.kind === "cli"
-        ? "Using your Claude subscription (claude CLI).\n"
-        : "Using the Anthropic API (ANTHROPIC_API_KEY).\n",
+      `Using AI provider: ${selection.kind}.\n`,
     ),
   );
   const agent = selection.agent;
@@ -122,7 +119,7 @@ export function noClaudeMessage(): string {
     color.gray(
       "To use `ask.ai` / `idel ask` / `?`, enable one provider:\n" +
         "  • install Claude Code and run `claude login` (uses your Pro/Max subscription), or\n" +
-        "  • set ANTHROPIC_API_KEY (uses the pay-per-token API).\n",
+        "  • set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY.\n",
     )
   );
 }

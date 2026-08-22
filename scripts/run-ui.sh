@@ -7,9 +7,8 @@
 #   2. starts `idel serve` bound to loopback with authenticated APIs,
 #   3. prints the URL (and opens it when --open is passed).
 #
-# The AI console in the UI lights up automatically when ANTHROPIC_API_KEY is
-# set in the environment; otherwise the terminal still runs every IDEL command
-# through the full safety/policy/OpenLogs pipeline, just without "Ask AI".
+# The AI console lights up when Claude Code or an Anthropic, OpenAI, or Gemini
+# API key is configured. Credentials remain in this host process.
 #
 # Usage:
 #   scripts/run-ui.sh                 # serve on http://127.0.0.1:7878
@@ -66,10 +65,8 @@ if [[ ! -f "$STATIC/index.html" ]]; then
   exit 1
 fi
 
-if [[ -z "${ANTHROPIC_API_KEY:-}" ]] && ! command -v claude >/dev/null 2>&1; then
-  echo "run-ui: note — no claude CLI and ANTHROPIC_API_KEY not set; the Ask AI console will be disabled." >&2
-elif [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
-  echo "run-ui: note — ANTHROPIC_API_KEY not set; Ask AI will use Claude Code if 'claude login' is active." >&2
+if [[ -z "${ANTHROPIC_API_KEY:-}" && -z "${OPENAI_API_KEY:-}" && -z "${GEMINI_API_KEY:-${GOOGLE_API_KEY:-}}" ]] && ! command -v claude >/dev/null 2>&1; then
+  echo "run-ui: note — no Ask AI provider configured; use Claude Code, ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY." >&2
 fi
 
 echo "run-ui: serving the IDEL web terminal from $STATIC"

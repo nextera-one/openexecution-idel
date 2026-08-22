@@ -6,7 +6,7 @@ import {
   isModelProposedNative,
   MODEL_NATIVE_REJECTION,
 } from "./command-boundary.js";
-import { ClaudeCliProvider, type ProviderTurn } from "./provider.js";
+import { ClaudeCliProvider, type PlanProvider, type ProviderTurn } from "./provider.js";
 import { cliSystemPrompt } from "./tools.js";
 
 /**
@@ -32,15 +32,15 @@ export interface CliAgentOptions {
   approve?: AgentApproval;
   /** Cap on round-trips per ask(). Default 12. */
   maxSteps?: number;
-  /** Injectable provider (tests pass a fake). Defaults to a real ClaudeCliProvider. */
-  provider?: ClaudeCliProvider;
+  /** Injectable structured-plan provider. Defaults to a real ClaudeCliProvider. */
+  provider?: PlanProvider;
 }
 
 export class IdelCliAgent {
   private readonly service: TerminalService;
   private readonly approve: AgentApproval | undefined;
   private readonly maxSteps: number;
-  private readonly provider: ClaudeCliProvider;
+  private readonly provider: PlanProvider;
 
   constructor(opts: CliAgentOptions) {
     this.service = opts.service;

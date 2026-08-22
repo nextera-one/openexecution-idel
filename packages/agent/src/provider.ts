@@ -50,12 +50,15 @@ export interface ProviderStep {
   priorOutcomes: { command: string; outcomeJson: string }[];
 }
 
-export interface ClaudeProvider {
-  /** Stable name for diagnostics ("claude-cli" | "anthropic-api"). */
+export interface PlanProvider {
+  /** Stable provider name for diagnostics. */
   readonly name: string;
   /** Advance the conversation one turn. */
   next(step: ProviderStep): Promise<ProviderTurn>;
 }
+
+/** Backwards-compatible name retained for callers that imported it directly. */
+export type ClaudeProvider = PlanProvider;
 
 // ---------------------------------------------------------------------------
 // Claude CLI (subscription) provider
@@ -97,7 +100,7 @@ export interface ClaudeCliOptions {
  * subscription. Carries the conversation across turns with the CLI's own
  * `--resume <session_id>` so the model adapts to each command's outcome.
  */
-export class ClaudeCliProvider implements ClaudeProvider {
+export class ClaudeCliProvider implements PlanProvider {
   readonly name = "claude-cli";
   private readonly bin: string;
   private readonly model: string | undefined;
@@ -159,7 +162,7 @@ export class ClaudeCliProvider implements ClaudeProvider {
  * done }`. We tolerate a fenced block or bare JSON; a reply with no parseable
  * commands is treated as a final text answer (done).
  */
-function parsePlan(resultText: string): ProviderTurn {
+export function parsePlan(resultText: string): ProviderTurn {
   const fenced = resultText.match(/```(?:json)?\s*([\s\S]*?)```/);
   const body = (fenced?.[1] ?? resultText).trim();
   let plan: ClaudePlan | undefined;

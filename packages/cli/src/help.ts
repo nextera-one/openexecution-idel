@@ -45,12 +45,11 @@ EXAMPLES
   idel connect http://127.0.0.1:8787         (use IDEL through that tunnel)
 
 ASK AI
-  The AI console (ask.ai, idel ask, \`?\` in terminal, the web "Ask AI") reaches
-  the currently supported Claude provider via — in order — the installed \`claude\` CLI (your Pro/Max SUBSCRIPTION;
-  run \`claude login\` once), else ANTHROPIC_API_KEY (pay-per-token API). Force one
-  with IDEL_CLAUDE_PROVIDER=cli|api.
-  Provider roadmap: ChatGPT/OpenAI, Gemini, Microsoft Copilot, Perplexity,
-  Mistral, Grok, and Llama/local models.
+  The AI console supports Claude Code (subscription), ANTHROPIC_API_KEY,
+  OPENAI_API_KEY, and GEMINI_API_KEY. Select a default with
+  IDEL_AI_PROVIDER=cli|api|openai|gemini. Keys stay in the host process; every
+  model proposal still crosses the same policy, approval, and audit boundary.
+  Provider roadmap: Microsoft Copilot, Perplexity, Mistral, Grok, and local models.
 
 FLAGS
   --dry-run        plan + classify, never touch the filesystem

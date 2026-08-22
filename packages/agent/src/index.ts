@@ -22,13 +22,22 @@ export { IdelAgent } from "./agent.js";
 export type { AgentEvent, AgentApproval, AgentOptions } from "./agent.js";
 export { IdelCliAgent } from "./cli-agent.js";
 export type { CliAgentOptions } from "./cli-agent.js";
-export { createAgent, detectProvider } from "./select.js";
+export {
+  createAgent,
+  createAgentForProvider,
+  detectProvider,
+  detectProviders,
+  PROVIDER_LABELS,
+} from "./select.js";
 export type { AgentLike, ProviderKind, Selection, SelectOptions } from "./select.js";
 export {
   ClaudeCliProvider,
   AnthropicApiProvider,
+  parsePlan,
 } from "./provider.js";
+export { OpenAiApiProvider, GeminiApiProvider } from "./api-providers.js";
 export type {
+  PlanProvider,
   ClaudeProvider,
   ClaudeCliOptions,
   ProviderTurn,

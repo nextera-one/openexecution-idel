@@ -212,7 +212,7 @@ function electronAppPackage(platform) {
 function electronLauncherSource(config) {
   return `#!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 
@@ -301,8 +301,11 @@ function startElectron(url) {
     IDEL_DESKTOP_URL: url,
   };
   delete electronEnv.ELECTRON_RUN_AS_NODE;
+  delete electronEnv.ELECTRON_NO_ATTACH_CONSOLE;
+  const electronArgs = [appDir];
+  prepareLinuxDesktopEnvironment(electronEnv, electronArgs);
 
-  electronChild = spawn(electron, [appDir], {
+  electronChild = spawn(electron, electronArgs, {
     cwd: CONFIG.sourceRoot,
     env: electronEnv,
     stdio: "inherit",
@@ -319,6 +322,60 @@ function startElectron(url) {
     stopServer();
     process.exit(1);
   });
+}
+
+function prepareLinuxDesktopEnvironment(env, args) {
+  if (process.platform !== "linux") return;
+
+  // Launchers invoked from sandboxed/Snap editors can inherit private GTK and
+  // schema paths that are incompatible with the checkout's Electron binary.
+  const snapInjected = [
+    env.GTK_PATH,
+    env.GTK_EXE_PREFIX,
+    env.GDK_PIXBUF_MODULEDIR,
+    env.GDK_PIXBUF_MODULE_FILE,
+    env.XDG_DATA_HOME,
+  ].some((value) => typeof value === "string" && value.includes("/snap/"));
+  if (snapInjected) {
+    for (const key of [
+      "GTK_PATH",
+      "GTK_EXE_PREFIX",
+      "GTK_MODULES",
+      "GTK_IM_MODULE_FILE",
+      "GDK_PIXBUF_MODULEDIR",
+      "GDK_PIXBUF_MODULE_FILE",
+      "XDG_DATA_HOME",
+    ]) delete env[key];
+    if (env.XDG_DATA_DIRS_VSCODE_SNAP_ORIG) {
+      env.XDG_DATA_DIRS = env.XDG_DATA_DIRS_VSCODE_SNAP_ORIG;
+    }
+    if (env.XDG_CONFIG_DIRS_VSCODE_SNAP_ORIG) {
+      env.XDG_CONFIG_DIRS = env.XDG_CONFIG_DIRS_VSCODE_SNAP_ORIG;
+    }
+  }
+
+  // Electron/Chromium currently has a GNOME Wayland schema crash on affected
+  // systems. Prefer the active XWayland bridge when one is available.
+  const xAuthority = resolveXAuthority(env);
+  if (env.DISPLAY && xAuthority) {
+    env.XAUTHORITY = xAuthority;
+    env.GDK_BACKEND = "x11";
+    env.ELECTRON_OZONE_PLATFORM_HINT = "x11";
+    delete env.WAYLAND_DISPLAY;
+    args.unshift("--ozone-platform=x11");
+  }
+}
+
+function resolveXAuthority(env) {
+  if (env.XAUTHORITY && existsSync(env.XAUTHORITY)) return env.XAUTHORITY;
+  const runtime = env.XDG_RUNTIME_DIR;
+  if (!runtime || !existsSync(runtime)) return undefined;
+  try {
+    const file = readdirSync(runtime).find((name) => name.startsWith(".mutter-Xwaylandauth."));
+    return file ? resolve(runtime, file) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function stopServer() {
@@ -404,21 +461,34 @@ let quitting = false;
 let startupTimer = null;
 
 app.setName(CONFIG.appName);
+// Electron defaults to GTK 4 on recent GNOME releases. Some supported Linux
+// desktops and inherited Snap environments expose incompatible GTK schemas;
+// Electron documents GTK 3 as the compatibility fallback.
+if (process.platform === "linux") app.commandLine.appendSwitch("gtk-version", "3");
 app.on("window-all-closed", () => app.quit());
 app.on("before-quit", () => {
   quitting = true;
   stopServer();
 });
 
-await app.whenReady();
-Menu.setApplicationMenu(buildMenu());
-mainWindow = createWindow();
-loadStartupScreen();
-if (desktopUrl) {
-  serverReady = true;
-  void loadTerminal(desktopUrl);
-} else {
-  startServer();
+// Register readiness without top-level await. Electron completes app startup
+// only after the ESM entry module has evaluated; awaiting readiness at module
+// scope therefore deadlocks before a renderer/window can be created.
+void app.whenReady().then(startDesktop).catch((err) => {
+  console.error(CONFIG.appName + ": desktop startup failed: " + err.message);
+  app.quit();
+});
+
+function startDesktop() {
+  Menu.setApplicationMenu(buildMenu());
+  mainWindow = createWindow();
+  loadStartupScreen();
+  if (desktopUrl) {
+    serverReady = true;
+    void loadTerminal(desktopUrl);
+  } else {
+    startServer();
+  }
 }
 
 app.on("activate", () => {
@@ -543,6 +613,7 @@ function loadStartupScreen() {
 <html>
   <head>
     <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'" />
     <title>\${CONFIG.appName}</title>
     <style>
       body {

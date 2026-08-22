@@ -120,6 +120,8 @@ const claudeSetupDialog = $("claude-setup-dialog");
 const claudeSetupClose = $("claude-setup-close");
 const claudeSetupCheck = $("claude-setup-check");
 const claudeSetupStatus = $("claude-setup-status");
+const aiProviderSelect = $("ai-provider-select");
+const aiProviderItems = Array.from(document.querySelectorAll("[data-ai-provider]"));
 const showLogsInput = $("pref-show-logs");
 const blockPasteInput = $("pref-block-paste");
 const blockCopyInput = $("pref-block-copy");
@@ -179,6 +181,8 @@ let screenshotScope = "visible";
 let screenshotSource = null;
 let agentAvailable = true;
 let agentStatusKnown = false;
+let activeAiProvider = "";
+let configuredAiProviders = [];
 let switchToAskAfterSetup = false;
 let dictionaryEntries = [];
 let dictionaryLoaded = false;
@@ -246,6 +250,13 @@ const AUTO_APPROVE_RISK_KEY = "idel.autoApprove.maxRisk";
 const WORKFLOW_KEY = "idel.workflows";
 const SETUP_DISMISSED_KEY = "idel.setup.dismissed";
 const API_BASE_KEY = "idel.apiBase";
+const AI_PROVIDER_KEY = "idel.ai.provider";
+const AI_PROVIDER_LABELS = {
+  cli: "Claude Code subscription",
+  api: "Anthropic Claude API",
+  openai: "OpenAI API",
+  gemini: "Google Gemini API",
+};
 const PAGE_EXIT_MESSAGE =
   "Refresh or leave IDEL terminal? Current terminal output, running commands, and unsaved editor changes may be lost.";
 const DEFAULT_PREFERENCES = {
@@ -762,6 +773,12 @@ function initClaudeSetupDialog() {
     if (e.target === claudeSetupDialog) closeClaudeSetupDialog();
   });
   claudeSetupCheck?.addEventListener("click", () => void checkClaudeSetup());
+  aiProviderSelect?.addEventListener("change", () => {
+    selectAiProvider(aiProviderSelect.value);
+    setClaudeSetupStatus(activeAiProvider
+      ? `${AI_PROVIDER_LABELS[activeAiProvider] ?? activeAiProvider} selected for new requests.`
+      : "No AI provider is configured on this server.");
+  });
 }
 
 function initDictionary() {
@@ -2220,7 +2237,11 @@ function quoteDictionaryValue(value) {
 
 function openClaudeSetupDialog({ switchToAsk = false, message = "" } = {}) {
   switchToAskAfterSetup = switchToAsk;
-  setClaudeSetupStatus(message || "Ask AI is not configured on this server.");
+  syncAiProviderUi();
+  const providerLabel = AI_PROVIDER_LABELS[activeAiProvider] ?? activeAiProvider;
+  setClaudeSetupStatus(message || (providerLabel
+    ? `Ready · ${providerLabel}`
+    : "Ask AI is not configured on this server."));
   if (!claudeSetupDialog) return;
   if (typeof claudeSetupDialog.showModal === "function") claudeSetupDialog.showModal();
   else claudeSetupDialog.setAttribute("open", "");
@@ -2244,11 +2265,12 @@ async function checkClaudeSetup() {
     const available = await refreshAgentAvailability();
     if (available) {
       const shouldSwitchToAsk = switchToAskAfterSetup;
-      setClaudeSetupStatus("Ask AI is ready.");
+      const providerLabel = AI_PROVIDER_LABELS[activeAiProvider] ?? activeAiProvider;
+      setClaudeSetupStatus(providerLabel ? `Ask AI is ready · ${providerLabel}` : "Ask AI is ready.");
       closeClaudeSetupDialog();
       if (shouldSwitchToAsk) activateAskMode();
     } else {
-      setClaudeSetupStatus("Still not configured. Restart this UI after installing Claude Code or setting ANTHROPIC_API_KEY.");
+      setClaudeSetupStatus("Still not configured. Restart after configuring Claude Code, Anthropic, OpenAI, or Gemini.");
     }
   } finally {
     if (claudeSetupCheck) claudeSetupCheck.disabled = false;
@@ -2265,6 +2287,53 @@ function setAgentAvailability(available) {
     ? "Ask AI in natural language"
     : "Ask AI is not set up. Click for setup instructions.";
   if (!available && mode === "ask") setMode("idel", { suppressSetup: true });
+}
+
+function setAiProviderCatalog(providers, serverDefault = "") {
+  configuredAiProviders = Array.isArray(providers)
+    ? providers.filter((id) => typeof id === "string" && AI_PROVIDER_LABELS[id])
+    : [];
+  const saved = storageGet(AI_PROVIDER_KEY) || "";
+  activeAiProvider = configuredAiProviders.includes(saved)
+    ? saved
+    : configuredAiProviders.includes(serverDefault)
+      ? serverDefault
+      : configuredAiProviders[0] || "";
+  if (activeAiProvider) storageSet(AI_PROVIDER_KEY, activeAiProvider);
+  else storageRemove(AI_PROVIDER_KEY);
+  syncAiProviderUi();
+}
+
+function selectAiProvider(provider) {
+  activeAiProvider = configuredAiProviders.includes(provider) ? provider : "";
+  if (activeAiProvider) storageSet(AI_PROVIDER_KEY, activeAiProvider);
+  else storageRemove(AI_PROVIDER_KEY);
+  syncAiProviderUi();
+}
+
+function syncAiProviderUi() {
+  if (aiProviderSelect) {
+    aiProviderSelect.replaceChildren();
+    if (!configuredAiProviders.length) {
+      aiProviderSelect.add(new Option("No configured provider", ""));
+      aiProviderSelect.disabled = true;
+    } else {
+      for (const id of configuredAiProviders) {
+        aiProviderSelect.add(new Option(AI_PROVIDER_LABELS[id] ?? id, id));
+      }
+      aiProviderSelect.disabled = false;
+      aiProviderSelect.value = activeAiProvider;
+    }
+  }
+  for (const item of aiProviderItems) {
+    const id = item.dataset.aiProvider;
+    const configured = configuredAiProviders.includes(id);
+    item.classList.toggle("configured", configured);
+    const status = item.querySelector("em");
+    if (status) status.textContent = configured
+      ? id === activeAiProvider ? "Selected" : "Ready"
+      : "Not configured";
+  }
 }
 
 function setNativeAvailability(available) {
@@ -2306,6 +2375,9 @@ async function refreshServerHealth() {
       sawHealthAgentStatus = true;
       setAgentAvailability(d.agentAvailable !== false);
     }
+    if (Object.prototype.hasOwnProperty.call(d, "agentProviders")) {
+      setAiProviderCatalog(d.agentProviders, d.agentProvider);
+    }
     if (Object.prototype.hasOwnProperty.call(d, "nativeAvailable")) {
       setNativeAvailability(d.nativeAvailable !== false);
     }
@@ -2336,6 +2408,9 @@ async function refreshAgentAvailability() {
         setNativeAvailability(d.nativeAvailable !== false);
       }
       setAgentAvailability(d.agentAvailable !== false);
+      if (Object.prototype.hasOwnProperty.call(d, "agentProviders")) {
+        setAiProviderCatalog(d.agentProviders, d.agentProvider);
+      }
       renderSetupChecklist();
       return agentAvailable;
     }
@@ -6303,7 +6378,11 @@ async function runAsk(intent, displayLine) {
   // server-side until this client posts either a manual or user-configured
   // automatic approval decision.
   try {
-    await postSse("/api/agent/stream", { intent: requestIntent, allowReal: true }, (event, data) => {
+    await postSse("/api/agent/stream", {
+      intent: requestIntent,
+      allowReal: true,
+      ...(activeAiProvider ? { provider: activeAiProvider } : {}),
+    }, (event, data) => {
       sawAgent = true;
       switch (event) {
         case "text":
