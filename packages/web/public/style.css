@@ -309,6 +309,7 @@ a:hover {
 .setup-checks,
 .dictionary-results,
 .knowledge-body,
+.claude-setup-dialog .setup-body,
 .preferences-dialog .preferences-panel,
 .completions,
 .logs,
@@ -328,6 +329,7 @@ a:hover {
 .setup-checks:hover,
 .dictionary-results:hover,
 .knowledge-body:hover,
+.claude-setup-dialog .setup-body:hover,
 .preferences-dialog .preferences-panel:hover,
 .completions:hover,
 .logs:hover,
@@ -345,6 +347,7 @@ a:hover {
 .setup-checks::-webkit-scrollbar,
 .dictionary-results::-webkit-scrollbar,
 .knowledge-body::-webkit-scrollbar,
+.claude-setup-dialog .setup-body::-webkit-scrollbar,
 .preferences-dialog .preferences-panel::-webkit-scrollbar,
 .completions::-webkit-scrollbar,
 .logs::-webkit-scrollbar,
@@ -363,6 +366,7 @@ a:hover {
 .setup-checks::-webkit-scrollbar-track,
 .dictionary-results::-webkit-scrollbar-track,
 .knowledge-body::-webkit-scrollbar-track,
+.claude-setup-dialog .setup-body::-webkit-scrollbar-track,
 .preferences-dialog .preferences-panel::-webkit-scrollbar-track,
 .completions::-webkit-scrollbar-track,
 .logs::-webkit-scrollbar-track,
@@ -380,6 +384,7 @@ a:hover {
 .setup-checks::-webkit-scrollbar-thumb,
 .dictionary-results::-webkit-scrollbar-thumb,
 .knowledge-body::-webkit-scrollbar-thumb,
+.claude-setup-dialog .setup-body::-webkit-scrollbar-thumb,
 .preferences-dialog .preferences-panel::-webkit-scrollbar-thumb,
 .completions::-webkit-scrollbar-thumb,
 .logs::-webkit-scrollbar-thumb,
@@ -401,6 +406,7 @@ a:hover {
 .setup-checks::-webkit-scrollbar-thumb:hover,
 .dictionary-results::-webkit-scrollbar-thumb:hover,
 .knowledge-body::-webkit-scrollbar-thumb:hover,
+.claude-setup-dialog .setup-body::-webkit-scrollbar-thumb:hover,
 .preferences-dialog .preferences-panel::-webkit-scrollbar-thumb:hover,
 .completions::-webkit-scrollbar-thumb:hover,
 .logs::-webkit-scrollbar-thumb:hover,
@@ -419,6 +425,7 @@ a:hover {
 .setup-checks::-webkit-scrollbar-thumb:active,
 .dictionary-results::-webkit-scrollbar-thumb:active,
 .knowledge-body::-webkit-scrollbar-thumb:active,
+.claude-setup-dialog .setup-body::-webkit-scrollbar-thumb:active,
 .preferences-dialog .preferences-panel::-webkit-scrollbar-thumb:active,
 .completions::-webkit-scrollbar-thumb:active,
 .logs::-webkit-scrollbar-thumb:active,
@@ -436,6 +443,7 @@ a:hover {
 .setup-checks::-webkit-scrollbar-corner,
 .dictionary-results::-webkit-scrollbar-corner,
 .knowledge-body::-webkit-scrollbar-corner,
+.claude-setup-dialog .setup-body::-webkit-scrollbar-corner,
 .preferences-dialog .preferences-panel::-webkit-scrollbar-corner,
 .completions::-webkit-scrollbar-corner,
 .logs::-webkit-scrollbar-corner,
@@ -2192,6 +2200,12 @@ body.logs-hidden .term-side {
 .preferences-dialog .preferences-panel {
   overflow-y: auto;
 }
+.claude-setup-dialog .preferences-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  height: min(46rem, calc(100dvh - 1.5rem));
+  overflow: hidden;
+}
 .preferences-dialog .preferences-head {
   position: sticky;
   top: 0;
@@ -3021,6 +3035,12 @@ body.logs-hidden .term-side {
   display: grid;
   gap: 0.85rem;
   padding: 0.95rem;
+}
+.claude-setup-dialog .setup-body {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .setup-body p {
   margin: 0;
