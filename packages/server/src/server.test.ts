@@ -907,6 +907,31 @@ describe("startServer — authenticated API boundary", () => {
     }
   });
 
+  it("protects API-key configuration with the generated bearer", async () => {
+    const runtime = new Runtime({ registry, policy: defaultPolicy() });
+    let configured = false;
+    const server = await startServer({
+      runtime,
+      port: 0,
+      cwd: await sandbox(),
+      configureAgentProvider: () => {
+        configured = true;
+        return { async *ask(): AsyncGenerator<unknown> { yield { type: "done" }; } };
+      },
+    });
+    try {
+      const res = await fetch(`${server.url}/api/agent/configure`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ provider: "openai", apiKey: "secret-test-key" }),
+      });
+      expect(res.status).toBe(401);
+      expect(configured).toBe(false);
+    } finally {
+      await server.close();
+    }
+  });
+
   it("rejects cross-origin loopback requests unless development CORS is enabled", async () => {
     const runtime = new Runtime({ registry, policy: defaultPolicy() });
     const server = await startServer({ runtime, port: 0, cwd: await sandbox() });
@@ -1175,6 +1200,81 @@ describe("startServer — static UI", () => {
 });
 
 describe("startServer — injected agent", () => {
+  it("configures an API provider in memory without returning its key", async () => {
+    const runtime = new Runtime({ registry, policy: defaultPolicy() });
+    let received: { provider: string; apiKey: string } | undefined;
+    const server = await startServer({
+      runtime,
+      port: 0,
+      cwd: tmpdir(),
+      authRequired: false,
+      configureAgentProvider: (request) => {
+        received = request;
+        return {
+          async *ask(): AsyncGenerator<unknown> {
+            yield { type: "text", text: `from-${request.provider}` };
+            yield { type: "done", reason: "end_turn" };
+          },
+        };
+      },
+    });
+    try {
+      const secret = "openai-session-secret";
+      const configured = await fetch(`${server.url}/api/agent/configure`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ provider: "openai", apiKey: secret }),
+      });
+      const responseText = await configured.text();
+      expect(configured.status).toBe(200);
+      expect(responseText).not.toContain(secret);
+      expect(received).toEqual({ provider: "openai", apiKey: secret });
+
+      const healthText = await (await fetch(`${server.url}/api/health`)).text();
+      expect(healthText).not.toContain(secret);
+      expect(JSON.parse(healthText)).toMatchObject({
+        agentAvailable: true,
+        agentProvider: "openai",
+        agentProviders: ["openai"],
+      });
+
+      const stream = await fetch(`${server.url}/api/agent/stream`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ intent: "hello" }),
+      });
+      expect(await stream.text()).toContain("from-openai");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("rejects malformed in-dialog credentials before invoking the host", async () => {
+    const runtime = new Runtime({ registry, policy: defaultPolicy() });
+    let configured = false;
+    const server = await startServer({
+      runtime,
+      port: 0,
+      cwd: tmpdir(),
+      authRequired: false,
+      configureAgentProvider: () => {
+        configured = true;
+        return { async *ask(): AsyncGenerator<unknown> { yield { type: "done" }; } };
+      },
+    });
+    try {
+      const res = await fetch(`${server.url}/api/agent/configure`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ provider: "openai", apiKey: "short" }),
+      });
+      expect(res.status).toBe(400);
+      expect(configured).toBe(false);
+    } finally {
+      await server.close();
+    }
+  });
+
   it("publishes configured providers and routes a request to the selected one", async () => {
     const runtime = new Runtime({ registry, policy: defaultPolicy() });
     const provider = (name: string) => () => ({

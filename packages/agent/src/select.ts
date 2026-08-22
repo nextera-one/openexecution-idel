@@ -26,6 +26,8 @@ export interface SelectOptions {
   service: TerminalService;
   approve?: AgentApproval;
   model?: string;
+  /** Explicit in-memory API credential supplied by an authenticated host UI. */
+  apiKey?: string;
   /** Override the claude binary name/path. */
   bin?: string;
   /** Force a provider, bypassing detection. */
@@ -61,7 +63,7 @@ export async function detectProvider(
 /** Build an agent for a specific configured provider. */
 export function createAgentForProvider(opts: SelectOptions & { force: ProviderKind }): AgentLike | null {
   const { force: kind } = opts;
-  if (!providerHasCredentials(kind, opts.bin ?? "claude")) return null;
+  if (!providerHasCredentials(kind, opts.bin ?? "claude", opts.apiKey)) return null;
   if (kind === "cli") {
     return new IdelCliAgent({
       service: opts.service,
@@ -74,16 +76,17 @@ export function createAgentForProvider(opts: SelectOptions & { force: ProviderKi
     return new IdelAgent({
       service: opts.service,
       approve: opts.approve,
+      apiKey: opts.apiKey,
       ...(opts.model ? { model: opts.model } : {}),
     });
   }
   const system = cliSystemPrompt(opts.service);
   const provider = kind === "openai"
-    ? new OpenAiApiProvider({ system, model: opts.model })
+    ? new OpenAiApiProvider({ system, model: opts.model, apiKey: opts.apiKey })
     : new GeminiApiProvider({
         system,
         model: opts.model,
-        apiKey: process.env["GEMINI_API_KEY"] ?? process.env["GOOGLE_API_KEY"],
+        apiKey: opts.apiKey ?? process.env["GEMINI_API_KEY"] ?? process.env["GOOGLE_API_KEY"],
       });
   return new IdelCliAgent({ service: opts.service, approve: opts.approve, provider });
 }
@@ -107,8 +110,9 @@ function envProvider(): ProviderKind | undefined {
   return legacy === "cli" || legacy === "api" ? legacy : undefined;
 }
 
-function providerHasCredentials(kind: ProviderKind, bin: string): boolean {
+function providerHasCredentials(kind: ProviderKind, bin: string, apiKey?: string): boolean {
   if (kind === "cli") return bin.length > 0;
+  if (apiKey) return true;
   if (kind === "api") return Boolean(process.env["ANTHROPIC_API_KEY"]);
   if (kind === "openai") return Boolean(process.env["OPENAI_API_KEY"]);
   return Boolean(process.env["GEMINI_API_KEY"] || process.env["GOOGLE_API_KEY"]);

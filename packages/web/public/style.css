@@ -3092,6 +3092,48 @@ body.logs-hidden .term-side {
   color: var(--fg);
   font: inherit;
 }
+.ai-key-form {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 0.3rem;
+}
+.ai-key-field {
+  display: grid;
+  gap: 0.3rem;
+}
+.ai-key-field > span:first-child,
+.ai-key-form small {
+  color: var(--fg-dim);
+  font-size: 0.74rem;
+}
+.ai-key-field select,
+.ai-secret-field input {
+  width: 100%;
+  min-height: 2.35rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  outline: none;
+  background: var(--field-bg);
+  color: var(--fg);
+  font: inherit;
+}
+.ai-key-field select:focus-visible,
+.ai-secret-field input:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+.ai-secret-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.4rem;
+}
+.ai-key-visibility {
+  min-width: 4rem;
+}
+.ai-key-connect {
+  justify-self: start;
+}
 .ai-provider-list li.configured {
   border-color: color-mix(in srgb, var(--green) 55%, var(--border));
 }

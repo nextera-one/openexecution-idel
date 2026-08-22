@@ -1463,7 +1463,7 @@ learn.cli cli=apt</code></pre>
         <div class="preferences-head">
           <div>
             <h2 id="claude-setup-title">Set Up Ask AI</h2>
-            <p id="claude-setup-status">
+            <p id="claude-setup-status" aria-live="polite">
               Ask AI is not configured on this server.
             </p>
           </div>
@@ -1481,7 +1481,8 @@ learn.cli cli=apt</code></pre>
         <section class="setup-body">
           <p>
             Ask AI runs inside the local <code>idel serve</code> process.
-            API keys stay in that host process and are never sent to this page.
+            Keys entered below cross only the authenticated loopback connection,
+            then remain in that host process for this session.
           </p>
 
           <div class="setup-option">
@@ -1516,8 +1517,56 @@ learn.cli cli=apt</code></pre>
           </div>
 
           <div class="setup-option">
-            <strong>Use an API provider</strong>
-            <span>Export one or more keys before starting the desktop or UI:</span>
+            <strong>Connect an API provider</strong>
+            <span>
+              The key is sent over the authenticated local connection, kept only
+              in the running IDEL host, and cleared from this form immediately.
+            </span>
+            <form class="ai-key-form" id="ai-key-form" autocomplete="off">
+              <label class="ai-key-field" for="ai-key-provider">
+                <span>Provider</span>
+                <select id="ai-key-provider" aria-label="API key provider">
+                  <option value="openai">ChatGPT / OpenAI</option>
+                  <option value="api">Claude API</option>
+                  <option value="gemini">Google Gemini</option>
+                </select>
+              </label>
+              <label class="ai-key-field" for="ai-api-key">
+                <span>API key</span>
+                <span class="ai-secret-field">
+                  <input
+                    id="ai-api-key"
+                    type="password"
+                    autocomplete="off"
+                    autocapitalize="off"
+                    spellcheck="false"
+                    maxlength="4096"
+                    placeholder="Paste API key"
+                    aria-describedby="ai-key-privacy"
+                  />
+                  <button
+                    class="editor-btn ai-key-visibility"
+                    id="ai-key-visibility"
+                    type="button"
+                    aria-controls="ai-api-key"
+                    aria-pressed="false"
+                  >
+                    Show
+                  </button>
+                </span>
+              </label>
+              <small id="ai-key-privacy">
+                Session only. The key is never returned by the API or written to IDEL storage.
+              </small>
+              <button class="editor-btn ai-key-connect" id="ai-key-connect" type="submit" disabled>
+                Connect provider
+              </button>
+            </form>
+          </div>
+
+          <div class="setup-option">
+            <strong>Environment variable alternative</strong>
+            <span>Keys can still be provided before starting the desktop or UI:</span>
             <pre><code>export ANTHROPIC_API_KEY=your_anthropic_key
 export OPENAI_API_KEY=your_openai_key
 export GEMINI_API_KEY=your_gemini_key
@@ -1527,9 +1576,9 @@ export IDEL_AI_PROVIDER=openai</code></pre>
           </div>
 
           <p class="setup-note">
-            Restart Electron or <code>scripts/run-ui.sh</code> after changing
-            environment variables. Model overrides: <code>IDEL_OPENAI_MODEL</code>
-            and <code>IDEL_GEMINI_MODEL</code>.
+            Dialog-provided keys last until the IDEL host exits. Restart only
+            when changing environment variables. Model overrides:
+            <code>IDEL_OPENAI_MODEL</code> and <code>IDEL_GEMINI_MODEL</code>.
           </p>
         </section>
 

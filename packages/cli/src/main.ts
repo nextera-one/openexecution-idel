@@ -6,7 +6,7 @@ import { splitBatch } from "@openexecution/parser";
 import { Runtime } from "@openexecution/runtime";
 import { OpenLogWriter } from "@openexecution/openlogs";
 import { loadPolicy, defaultPolicy } from "@openexecution/policy";
-import { startServer, type TerminalService } from "@openexecution/server";
+import { ServiceError, startServer, type TerminalService } from "@openexecution/server";
 import {
   createAgentForProvider,
   detectProvider,
@@ -324,6 +324,18 @@ async function serve(runtime: Runtime, flags: CliFlags): Promise<number> {
     ...(provider
       ? { agents: { default: provider, providers: agentFactories } }
       : {}),
+    configureAgentProvider: ({ provider: requested, apiKey }, service) => {
+      if (requested !== "api" && requested !== "openai" && requested !== "gemini") {
+        throw new ServiceError(`AI provider cannot be configured with an API key: ${requested}`, 400);
+      }
+      const configured = createAgentForProvider({
+        service,
+        force: requested,
+        apiKey,
+      });
+      if (!configured) throw new ServiceError(`Could not configure AI provider: ${requested}`, 400);
+      return configured;
+    },
     learn: async (req) => {
       const result = await learnForHost(req.cli ?? "", { write: req.write === true });
       if (result.path) await runtime.reg.loadLayer(registryDirs.custom, "custom");
@@ -339,7 +351,7 @@ async function serve(runtime: Runtime, flags: CliFlags): Promise<number> {
   );
   const providerNote = provider
     ? `(AI console enabled — ${PROVIDER_LABELS[provider]}; ${providers.length} configured)\n`
-    : "(disabled — configure Claude Code, ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY)\n";
+    : "(disabled — open Ask AI setup, configure Claude Code, or provide an API key environment variable)\n";
   process.stdout.write(
     color.gray(
       `  API:  ${server.url}/api/health · /api/registry · /api/run · /api/complete · /api/logs\n` +

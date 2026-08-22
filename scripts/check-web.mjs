@@ -23,6 +23,14 @@ for (const page of pages) {
   }
 }
 
+const terminalSource = await readFile(resolve(publicDir, "terminal.html"), "utf8");
+if (!/<input\b[^>]*\bid="ai-api-key"[^>]*\btype="password"/isu.test(terminalSource)) {
+  failures.push("terminal.html: Ask AI API key control must be a password input");
+}
+if (!terminalSource.includes('id="ai-key-form"') || !terminalSource.includes('autocomplete="off"')) {
+  failures.push("terminal.html: Ask AI API key form is missing secure autocomplete behavior");
+}
+
 for (const asset of (await readdir(publicDir)).filter((name) => name.endsWith(".js"))) {
   const syntax = spawnSync(process.execPath, ["--check", resolve(publicDir, asset)], {
     encoding: "utf8",

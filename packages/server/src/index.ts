@@ -1,7 +1,7 @@
 /**
  * @openexecution/server — a local HTTP boundary over the OpenExecution Runtime.
  *
- * This is the shared core the web and desktop (Javelle/Electron) terminals talk
+ * This is the shared core the web and desktop (Electron) terminals talk
  * to. It does NOT re-implement any safety/policy/logging: every command flows
  * through {@link @openexecution/runtime#Runtime.run}, so a command typed in the
  * GUI gets exactly the same two-phase safety scan, policy decision, and signed
@@ -35,6 +35,8 @@ export { startServer } from "./server.js";
 export type {
   AgentApprovalGate,
   AgentRunner,
+  AgentProviderConfiguration,
+  AgentProviderConfigurator,
   LearnRequest,
   LearnRunner,
   ServerOptions,

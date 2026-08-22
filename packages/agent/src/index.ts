@@ -13,9 +13,9 @@
  *   - the user's Pro/Max SUBSCRIPTION via the installed `claude` CLI (preferred;
  *     no API key — uses the Claude Code login), and
  *   - the developer API via `@anthropic-ai/sdk` (fallback; ANTHROPIC_API_KEY).
- * Both expose the same `ask()` event stream and the same enforcement path. The
- * Anthropic credential lives only in the host process (CLI or `idel serve`),
- * never the browser.
+ * Both expose the same `ask()` event stream and the same enforcement path.
+ * After construction, provider credentials live only in the host process. The
+ * authenticated setup UI clears its session-only key field after transmission.
  */
 
 export { IdelAgent } from "./agent.js";

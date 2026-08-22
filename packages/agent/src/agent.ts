@@ -40,6 +40,8 @@ export interface AgentOptions {
   service: TerminalService;
   /** Anthropic client. Reads ANTHROPIC_API_KEY from the env by default. */
   client?: Anthropic;
+  /** Explicit host-side key, used by the authenticated terminal setup dialog. */
+  apiKey?: string;
   /** Override the planning model. Defaults to claude-opus-4-8. */
   model?: string;
   /**
@@ -58,8 +60,9 @@ export interface AgentOptions {
  * Every command Claude proposes is run through `service.run(..., origin:"agent")`
  * — the same pipeline the CLI and web terminal use — so safety, policy, and
  * signed OpenLogs are byte-identical to a human-typed command, and the audit
- * trail records `source:"agent"`. The Anthropic API key lives only here (server
- * or CLI process), never in the browser.
+ * trail records `source:"agent"`. After setup, the Anthropic credential lives
+ * only in this host-side instance. A setup form may transmit it once over the
+ * authenticated loopback boundary, then clears its input without persisting it.
  */
 export class IdelAgent {
   private readonly service: TerminalService;
@@ -71,7 +74,7 @@ export class IdelAgent {
 
   constructor(opts: AgentOptions) {
     this.service = opts.service;
-    this.client = opts.client ?? new Anthropic();
+    this.client = opts.client ?? new Anthropic(opts.apiKey ? { apiKey: opts.apiKey } : undefined);
     this.model = opts.model ?? DEFAULT_MODEL;
     this.approve = opts.approve;
     this.maxSteps = opts.maxSteps ?? 12;

@@ -122,6 +122,11 @@ const claudeSetupCheck = $("claude-setup-check");
 const claudeSetupStatus = $("claude-setup-status");
 const aiProviderSelect = $("ai-provider-select");
 const aiProviderItems = Array.from(document.querySelectorAll("[data-ai-provider]"));
+const aiKeyForm = $("ai-key-form");
+const aiKeyProvider = $("ai-key-provider");
+const aiApiKey = $("ai-api-key");
+const aiKeyVisibility = $("ai-key-visibility");
+const aiKeyConnect = $("ai-key-connect");
 const showLogsInput = $("pref-show-logs");
 const blockPasteInput = $("pref-block-paste");
 const blockCopyInput = $("pref-block-copy");
@@ -779,6 +784,68 @@ function initClaudeSetupDialog() {
       ? `${AI_PROVIDER_LABELS[activeAiProvider] ?? activeAiProvider} selected for new requests.`
       : "No AI provider is configured on this server.");
   });
+  aiApiKey?.addEventListener("input", syncAiKeyForm);
+  aiKeyVisibility?.addEventListener("click", toggleAiKeyVisibility);
+  aiKeyForm?.addEventListener("submit", (e) => {
+    e.preventDefault();
+    void configureAiProviderFromDialog();
+  });
+  syncAiKeyForm();
+}
+
+function syncAiKeyForm() {
+  if (aiKeyConnect) aiKeyConnect.disabled = !String(aiApiKey?.value ?? "").trim();
+}
+
+function toggleAiKeyVisibility() {
+  if (!aiApiKey || !aiKeyVisibility) return;
+  const show = aiApiKey.type === "password";
+  aiApiKey.type = show ? "text" : "password";
+  aiKeyVisibility.textContent = show ? "Hide" : "Show";
+  aiKeyVisibility.setAttribute("aria-pressed", String(show));
+  aiApiKey.focus();
+}
+
+function resetAiKeyField() {
+  if (aiApiKey) {
+    aiApiKey.value = "";
+    aiApiKey.type = "password";
+  }
+  if (aiKeyVisibility) {
+    aiKeyVisibility.textContent = "Show";
+    aiKeyVisibility.setAttribute("aria-pressed", "false");
+  }
+  syncAiKeyForm();
+}
+
+async function configureAiProviderFromDialog() {
+  const provider = String(aiKeyProvider?.value ?? "").trim();
+  const apiKey = String(aiApiKey?.value ?? "").trim();
+  if (!provider || !apiKey || !aiKeyConnect) return;
+  const providerLabel = AI_PROVIDER_LABELS[provider] ?? provider;
+  aiKeyConnect.disabled = true;
+  aiKeyConnect.textContent = "Connecting…";
+  setClaudeSetupStatus(`Connecting ${providerLabel} to this IDEL session…`);
+  resetAiKeyField();
+  try {
+    const res = await apiFetch("/api/agent/configure", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ provider, apiKey }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    setAgentAvailability(true);
+    setAiProviderCatalog(data.agentProviders, data.agentProvider);
+    selectAiProvider(provider);
+    renderSetupChecklist();
+    setClaudeSetupStatus(`${providerLabel} connected for this session. The key will be verified on the first request.`);
+  } catch (err) {
+    setClaudeSetupStatus(`Could not connect ${providerLabel}: ${err?.message ?? "request failed"}`);
+  } finally {
+    aiKeyConnect.textContent = "Connect provider";
+    syncAiKeyForm();
+  }
 }
 
 function initDictionary() {
@@ -2249,6 +2316,7 @@ function openClaudeSetupDialog({ switchToAsk = false, message = "" } = {}) {
 
 function closeClaudeSetupDialog() {
   switchToAskAfterSetup = false;
+  resetAiKeyField();
   if (!claudeSetupDialog) return;
   if (typeof claudeSetupDialog.close === "function" && claudeSetupDialog.open) claudeSetupDialog.close();
   else claudeSetupDialog.removeAttribute("open");

@@ -24,7 +24,7 @@ import type {
 
 /**
  * A dependency-free HTTP server over the {@link TerminalService}. It is the
- * local boundary the web and desktop (Javelle/Electron) terminals talk to.
+ * local boundary the web and desktop (Electron) terminals talk to.
  *
  * Endpoints (all JSON unless noted):
  *   GET  /api/health                 → { ok, version, platform, agentAvailable }
@@ -36,6 +36,7 @@ import type {
  *   POST /api/learn      {cli,write} → host-specific learned-command preview
  *   POST /api/editor/open {file,cwd} → { file, content, language, outcome }
  *   POST /api/editor/save {file,content,cwd} → RuntimeOutcome
+ *   POST /api/agent/configure {provider,apiKey} → in-memory provider status
  *   POST /api/native/start {cwd,shell} → NativeTerminalInfo
  *   GET  /api/native/:id/stream        → SSE native terminal output
  *   POST /api/native/:id/input {data}  → write to native terminal stdin
@@ -48,15 +49,16 @@ import type {
  *
  * Streaming: `POST /api/run/stream` runs the command and emits the same outcome
  * over Server-Sent Events (one `event: outcome`, then `event: done`). SSE is
- * used deliberately — it needs no extra dependency and matches Javelle's own
- * patch-stream contract (`EventSource`), so the desktop/web bridge is uniform.
+ * used deliberately because it needs no extra dependency and keeps the
+ * desktop/web bridge uniform.
  *
  * Agent: `POST /api/agent/stream` {intent, allowReal?, provider?} — the embedded AI
  * console. It drives the injected agent, streaming one SSE event per AgentEvent
  * (`text`, `proposed`, `blocked`, `approval_request`, ... then `done`). Each
  * command the agent proposes flows through the same TerminalService.run pipeline
- * (audited as `source: "agent"`). Returns 501 when no agent was wired. The
- * Provider credentials stay server-side; loopback-only bind keeps them off the network.
+ * (audited as `source: "agent"`). Returns 501 when no agent was wired. After
+ * configuration, credentials stay server-side; the setup route requires the
+ * server bearer and remains restricted to loopback.
  *
  * Real-run approval: with `allowReal: true`, a real run pauses on an
  * `approval_request` SSE event and the stream parks until the client posts
@@ -108,6 +110,11 @@ export interface ServerOptions extends ServiceOptions {
     providers: Record<string, (service: TerminalService) => AgentRunner>;
   };
   /**
+   * Authenticated, in-memory provider configuration supplied by the host UI.
+   * The server validates the request but never persists or returns the key.
+   */
+  configureAgentProvider?: AgentProviderConfigurator;
+  /**
    * Optional host-provided CLI learning surface. The server does not import the
    * agent package directly; `idel serve` injects this when available.
    */
@@ -130,6 +137,16 @@ export interface ServerOptions extends ServiceOptions {
 export interface AgentRunner {
   ask(intent: string, approve?: AgentApprovalGate): AsyncIterable<unknown>;
 }
+
+export interface AgentProviderConfiguration {
+  provider: string;
+  apiKey: string;
+}
+
+export type AgentProviderConfigurator = (
+  request: AgentProviderConfiguration,
+  service: TerminalService,
+) => AgentRunner | Promise<AgentRunner>;
 
 /** Resolves true to allow a real (non-dry-run) execution of `command`. */
 export type AgentApprovalGate = (info: {
@@ -189,10 +206,18 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
   for (const [id, factory] of Object.entries(opts.agents?.providers ?? {})) {
     agents.set(id, factory(service));
   }
-  const agentProvider = opts.agents?.default && agents.has(opts.agents.default)
+  let agentProvider = opts.agents?.default && agents.has(opts.agents.default)
     ? opts.agents.default
     : agents.keys().next().value as string | undefined;
-  const agent = agentProvider ? agents.get(agentProvider) : opts.agent?.(service);
+  let agent = agentProvider ? agents.get(agentProvider) : opts.agent?.(service);
+  const configureAgentProvider = opts.configureAgentProvider
+    ? async (request: AgentProviderConfiguration): Promise<void> => {
+        const configured = await opts.configureAgentProvider!(request, service);
+        agents.set(request.provider, configured);
+        agentProvider = request.provider;
+        agent = configured;
+      }
+    : undefined;
   const learn = opts.learn;
   const nativeTerminals = new NativeTerminalManager({
     cwd: opts.cwd,
@@ -211,6 +236,7 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
       agent,
       agents,
       agentProvider,
+      configureAgentProvider,
       learn,
       approvals,
       runApprovals,
@@ -280,6 +306,7 @@ async function handle(
     agent: AgentRunner | undefined;
     agents: Map<string, AgentRunner>;
     agentProvider: string | undefined;
+    configureAgentProvider: ((request: AgentProviderConfiguration) => Promise<void>) | undefined;
     learn: LearnRunner | undefined;
     approvals: PendingApprovals;
     runApprovals: PendingRunApprovals;
@@ -294,6 +321,7 @@ async function handle(
     agent,
     agents,
     agentProvider,
+    configureAgentProvider,
     learn,
     approvals,
     runApprovals,
@@ -518,6 +546,28 @@ async function handle(
     return agentStream(res, selectedAgent, body.intent ?? "", cors, body.allowReal ?? false, approvals);
   }
 
+  if (path === "/api/agent/configure" && method === "POST") {
+    if (!configureAgentProvider) {
+      return sendJson(res, 501, { error: "AI provider configuration is not available on this server" }, cors);
+    }
+    const body = await readJsonBody<{ provider?: unknown; apiKey?: unknown }>(req);
+    const request = validateAgentProviderConfiguration(body);
+    try {
+      await configureAgentProvider(request);
+    } catch (err) {
+      if (err instanceof ServiceError) {
+        return sendJson(res, err.status, { error: err.message }, cors);
+      }
+      throw err;
+    }
+    return sendJson(res, 200, {
+      ok: true,
+      agentAvailable: true,
+      agentProvider: request.provider,
+      agentProviders: [...agents.keys()],
+    }, cors);
+  }
+
   // Resolve a pending real-run approval the agent stream is parked on. The
   // browser POSTs { approvalId, approve } after the user confirms (or declines)
   // the dry-run shown in the needs_approval SSE event. Idempotent-ish: an
@@ -629,7 +679,7 @@ async function handle(
   sendJson(res, 404, { error: `not found: ${method} ${path}` }, cors);
 }
 
-/** Run a command and stream the outcome as SSE (matches Javelle EventSource). */
+/** Run a command and stream the outcome as server-sent events. */
 async function runStream(
   res: ServerResponse,
   service: TerminalService,
@@ -1192,6 +1242,20 @@ function validateAuthToken(token: string | undefined, boundary: string): string 
     );
   }
   return token;
+}
+
+function validateAgentProviderConfiguration(
+  body: { provider?: unknown; apiKey?: unknown },
+): AgentProviderConfiguration {
+  const provider = typeof body.provider === "string" ? body.provider.trim().toLowerCase() : "";
+  const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
+  if (!/^[a-z][a-z0-9-]{0,31}$/.test(provider)) {
+    throw new ServiceError("invalid AI provider", 400);
+  }
+  if (apiKey.length < 8 || apiKey.length > 4096 || /[\u0000-\u001f\u007f]/u.test(apiKey)) {
+    throw new ServiceError("API key must be 8-4096 printable characters", 400);
+  }
+  return { provider, apiKey };
 }
 
 function isNativeApiPath(path: string): boolean {
