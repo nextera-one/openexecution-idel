@@ -307,4 +307,4 @@ Guidance for authoring:
 - **Be honest about divergence** — if POSIX and PowerShell differ, say so in `semanticNotes` and only emit faithful argv. Prefer a `@node` adapter when there is no faithful shell form.
 - **Validation is fail-closed** — a malformed def is rejected at load time, so test with `idel explain.registry command=<id>` to confirm it resolves from the `custom` layer and reports the params/adapters you expect.
 
-> The registry **API** (`Registry.loadLayer` / `Registry.addLayer`) supports loading the custom and official layers today, and resolution already honors `custom > official > core`. The bundled `idel` CLI currently loads only the core layer at startup; wiring automatic discovery of `~/.idel/registries/custom` into the CLI is a small follow-on. Until then, custom layers are loaded programmatically or in tests via the registry API.
+> The registry **API** (`Registry.loadLayer` / `Registry.addLayer`) and bundled CLI load custom and official layers, and resolution honors `custom > official > core`. Learned definitions are available after `idel learn --write`; signed official definitions are accepted only through the configured trust store.

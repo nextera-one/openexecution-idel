@@ -106,6 +106,7 @@ describe("parseArgv", () => {
       "--static",
       "./www",
       "--open",
+      "--cors",
       "--enable-native-terminal",
     ]);
     expect(inv.mode).toBe("serve");
@@ -113,6 +114,7 @@ describe("parseArgv", () => {
     expect(inv.flags.host).toBe("0.0.0.0");
     expect(inv.flags.staticDir).toBe("./www");
     expect(inv.flags.open).toBe(true);
+    expect(inv.flags.cors).toBe(true);
     expect(inv.flags.enableNativeTerminal).toBe(true);
   });
 

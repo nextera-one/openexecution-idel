@@ -52,7 +52,7 @@
           { "kind": "literal", "value": "-C" },
           { "kind": "value", "param": "to" }
         ],
-        "semanticNotes": "tar -xzf <file> -C <to>. Extraction OVERWRITES existing files in `to` without prompting — hence riskDefault MEDIUM and destructive:true. A malicious archive with `../` paths can escape `to` (path traversal); validate archive contents upstream."
+        "semanticNotes": "tar -xzf <file> -C <to>. Extraction OVERWRITES existing files in `to` without prompting — hence riskDefault MEDIUM and destructive:true. The runtime lists and validates every entry before execution, rejecting absolute/traversal paths and all symbolic or hard links."
       },
       "powershell": {
         "command": "Expand-Archive",

@@ -3,6 +3,7 @@ lockfileVersion: '9.0'
 settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
+  injectWorkspacePackages: true
 
 overrides:
   '@nextera.one/tps-standard': file:./vendor/nextera.one-tps-standard-0.8.1.tgz

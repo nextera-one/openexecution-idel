@@ -30,8 +30,11 @@ Development Host`.
 By default the extension auto-detects the repository root and starts:
 
 ```sh
-node packages/cli/bin/idel.js serve --static packages/web/public --port 7878 --enable-native-terminal
+node packages/cli/bin/idel.js serve --static packages/web/public --port 7878
 ```
+
+Raw native shell tabs are disabled by default because they bypass IDEL command
+policy. Enable `openexecutionIdel.enableNativeTerminal` only when you need them.
 
 If you already run the server yourself, set `openexecutionIdel.serverUrl` to the
 local URL, for example `http://127.0.0.1:7878`.

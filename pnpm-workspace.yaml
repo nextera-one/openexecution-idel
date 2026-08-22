@@ -8,8 +8,9 @@ allowBuilds:
   esbuild: true
 
 # Required for `pnpm deploy` to produce a self-contained CLI artifact (workspace
-# deps copied in, not symlinked back to source) — see scripts/pack-cli.sh.
-inject-workspace-packages: true
+# deps copied in, not symlinked back to source) — verified by `pnpm check:package`.
+injectWorkspacePackages: true
+forceLegacyDeploy: true
 
 minimumReleaseAgeExclude:
   - electron@42.4.1

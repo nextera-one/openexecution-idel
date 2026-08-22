@@ -70,9 +70,9 @@ export interface RunRequest {
    */
   approve?: boolean;
   /**
-   * Logged command origin. Defaults to the service default (`undefined` →
-   * runtime infers idel/ci). The agent layer passes `"agent"` so AI-proposed
-   * commands are audited with `source: "agent"`. Risk/policy are unaffected.
+   * Logged command origin and policy source. Transport hosts must derive this
+   * value rather than trusting client input. The agent layer passes `"agent"`
+   * so AI-proposed commands are governed and audited as agent work.
    */
   origin?: CommandOrigin;
 }

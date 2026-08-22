@@ -1,5 +1,4 @@
 import { hostname, userInfo, platform, homedir } from "node:os";
-import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -300,23 +299,23 @@ async function serve(runtime: Runtime, flags: CliFlags): Promise<number> {
       : provider === "api"
         ? (service: TerminalService) => new IdelAgent({ service })
         : undefined;
-  // Native PTYs bypass command-level IDEL policy, so even a loopback server
-  // gives them a separate high-entropy bearer. Operators automating API access
-  // can pin it through the environment; otherwise it is generated in memory,
-  // injected only into the no-store same-origin terminal page, and never logged.
-  const nativeTerminalAuthToken = flags.enableNativeTerminal
-    ? process.env.IDEL_NATIVE_TERMINAL_AUTH_TOKEN || randomBytes(32).toString("base64url")
-    : undefined;
-
+  const apiAuthToken =
+    process.env.IDEL_SERVER_AUTH_TOKEN || process.env.IDEL_NATIVE_TERMINAL_AUTH_TOKEN;
+  if (!flags.staticDir && !apiAuthToken) {
+    throw new Error(
+      "API-only serve requires IDEL_SERVER_AUTH_TOKEN (32-256 base64url characters)",
+    );
+  }
   const server = await startServer({
     runtime,
     port: flags.port,
     host: flags.host,
     staticDir: flags.staticDir,
+    cors: flags.cors,
     environment: flags.environment,
     noNative: flags.noNative,
+    ...(apiAuthToken ? { authToken: apiAuthToken } : {}),
     allowNativeTerminal: flags.enableNativeTerminal,
-    nativeTerminalAuthToken,
     agent: agentFactory,
     learn: async (req) => {
       const result = await learnForHost(req.cli ?? "", { write: req.write === true });
@@ -340,6 +339,7 @@ async function serve(runtime: Runtime, flags: CliFlags): Promise<number> {
   process.stdout.write(
     color.gray(
       `  API:  ${server.url}/api/health · /api/registry · /api/run · /api/complete · /api/logs\n` +
+        `  Auth: bearer required (health excluded; secret is never printed)\n` +
         `  Ask:  ${server.url}/api/agent/stream  ` +
         claudeNote +
         (flags.staticDir

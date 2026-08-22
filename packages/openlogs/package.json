@@ -15,11 +15,14 @@
   },
   "dependencies": {
     "@nextera.one/openlogs-sdk": "^2.2.0",
-    "@nextera.one/tps-standard": "file:../../vendor/nextera.one-tps-standard-0.8.1.tgz",
+    "@nextera.one/tps-standard": "0.8.1",
     "@openexecution/types": "workspace:*"
   },
   "files": [
     "dist"
+  ],
+  "bundledDependencies": [
+    "@nextera.one/tps-standard"
   ],
   "description": "Signed OpenLogs audit writer and verifier integration for IDEL runtime events.",
   "license": "MIT",

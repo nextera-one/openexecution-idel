@@ -39,6 +39,7 @@ import type {
 import { isNativeAst, ParseError, RegistryError } from "@openexecution/types";
 
 import { runMeta, isMetaCommand } from "./meta.js";
+import { preflightArchiveExtraction } from "./archive-safety.js";
 
 const LEGACY_COMMAND_ALIASES = new Map<string, string>([
   ["registry.list", "list.registry"],
@@ -697,6 +698,9 @@ export class Runtime {
       if (nativeShell) {
         result = await execNativeShell(plan, { dryRun, cwd: ast.cwd });
       } else if (adapter) {
+        if (!dryRun && ast.command === "extract.archive") {
+          await preflightArchiveExtraction(String(ast.params["file"] ?? ""), ast.cwd);
+        }
         result = await adapter.execute(plan, {
           dryRun,
           cwd: ast.cwd,

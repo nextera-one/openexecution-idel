@@ -505,7 +505,7 @@ describe("startServer (HTTP)", () => {
 
   beforeAll(async () => {
     const runtime = new Runtime({ registry, policy: defaultPolicy() });
-    server = await startServer({ runtime, port: 0, cwd: tmpdir() });
+    server = await startServer({ runtime, port: 0, cwd: tmpdir(), authRequired: false, cors: true });
     base = server.url;
   });
   afterAll(async () => {
@@ -887,18 +887,168 @@ describe("startServer (HTTP)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Authenticated local API boundary
+// ---------------------------------------------------------------------------
+
+describe("startServer — authenticated API boundary", () => {
+  it("keeps health public but protects every other API with a generated bearer", async () => {
+    const runtime = new Runtime({ registry, policy: defaultPolicy() });
+    const server = await startServer({ runtime, port: 0, cwd: await sandbox() });
+    try {
+      expect(server.authToken).toMatch(/^[A-Za-z0-9_-]{32,256}$/);
+      expect((await fetch(`${server.url}/api/health`)).status).toBe(200);
+      expect((await fetch(`${server.url}/api/registry`)).status).toBe(401);
+      const allowed = await fetch(`${server.url}/api/registry`, {
+        headers: { authorization: `Bearer ${server.authToken}` },
+      });
+      expect(allowed.status).toBe(200);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("rejects cross-origin loopback requests unless development CORS is enabled", async () => {
+    const runtime = new Runtime({ registry, policy: defaultPolicy() });
+    const server = await startServer({ runtime, port: 0, cwd: await sandbox() });
+    try {
+      const sameOrigin = await fetch(`${server.url}/api/health`, {
+        headers: { origin: server.url },
+      });
+      expect(sameOrigin.status).toBe(200);
+      const crossOrigin = await fetch(`${server.url}/api/health`, {
+        headers: { origin: "http://localhost:3000" },
+      });
+      expect(crossOrigin.status).toBe(403);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("injects the generated API bearer only into a no-store boot document", async () => {
+    const dir = await sandbox();
+    await writeFile(
+      join(dir, "terminal.html"),
+      '<meta name="idel-native-terminal-auth" content="__IDEL_NATIVE_TERMINAL_AUTH_TOKEN__">',
+    );
+    const runtime = new Runtime({ registry, policy: defaultPolicy() });
+    const server = await startServer({ runtime, port: 0, cwd: dir, staticDir: dir });
+    try {
+      const boot = await fetch(`${server.url}/terminal.html`);
+      expect(boot.status).toBe(200);
+      expect(await boot.text()).toContain(`content="${server.authToken}"`);
+      expect(boot.headers.get("cache-control")).toBe("no-store");
+      expect(boot.headers.get("referrer-policy")).toBe("no-referrer");
+      expect(boot.headers.get("content-security-policy")).toContain("script-src 'self'");
+      expect(boot.headers.get("permissions-policy")).toContain("camera=()");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("ignores forged origin/approve fields and accepts only a bound single-use approval", async () => {
+    const dir = await sandbox();
+    await mkdir(join(dir, "v2"));
+    const runtime = new Runtime({
+      registry,
+      policy: {
+        rules: [
+          { match: { risk: "HIGH" }, action: "approval_required", approvers: ["lead"] },
+        ],
+      },
+    });
+    const server = await startServer({ runtime, port: 0, cwd: dir });
+    const headers = {
+      authorization: `Bearer ${server.authToken}`,
+      "content-type": "application/json",
+    };
+    try {
+      const proposed = await fetch(`${server.url}/api/run`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          command: "remove.folder name=v2 recursive=true",
+          cwd: dir,
+          origin: "idel",
+          approve: true,
+        }),
+      });
+      const outcome = await proposed.json();
+      expect(outcome.record.result).toBe("approval_required");
+      expect(outcome.record.source).toBe("api");
+      expect(outcome.approvalId).toMatch(/^run_appr_/);
+      expect(await readdir(dir)).toContain("v2");
+
+      const approved = await fetch(`${server.url}/api/run/approve`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ approvalId: outcome.approvalId, approve: true }),
+      });
+      expect((await approved.json()).record.result).toBe("success");
+      expect(await readdir(dir)).not.toContain("v2");
+
+      const replay = await fetch(`${server.url}/api/run/approve`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ approvalId: outcome.approvalId, approve: true }),
+      });
+      expect(replay.status).toBe(404);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("derives the source for previews instead of trusting the client", async () => {
+    const dir = await sandbox();
+    const runtime = new Runtime({
+      registry,
+      policy: {
+        rules: [
+          { match: { source: "agent" }, action: "block" },
+          { match: { risk: "LOW" }, action: "allow" },
+        ],
+      },
+    });
+    const server = await startServer({ runtime, port: 0, cwd: dir });
+    try {
+      const response = await fetch(`${server.url}/api/preview`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${server.authToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ command: "create.file name=preview.txt", origin: "agent" }),
+      });
+      const preview = await response.json();
+      expect(preview.decision.action).toBe("allow");
+    } finally {
+      await server.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Native terminal authorization/policy boundary
 // ---------------------------------------------------------------------------
 
 describe("startServer — enabled native terminal boundary", () => {
   const token = "test-native-terminal-token-32-bytes-minimum";
 
-  it("refuses insecure enablement without a bearer secret", async () => {
+  it("generates a bearer secret when native mode is explicitly enabled", async () => {
     const dir = await sandbox();
     const runtime = new Runtime({ registry, policy: defaultPolicy() });
-    await expect(
-      startServer({ runtime, port: 0, cwd: dir, allowNativeTerminal: true }),
-    ).rejects.toThrow(/requires nativeTerminalAuthToken/i);
+    const nativeServer = await startServer({
+      runtime,
+      port: 0,
+      cwd: dir,
+      allowNativeTerminal: true,
+    });
+    try {
+      expect(nativeServer.authToken).toMatch(/^[A-Za-z0-9_-]{32,256}$/);
+      const unauthorized = await fetch(`${nativeServer.url}/api/native/sessions`);
+      expect(unauthorized.status).toBe(401);
+    } finally {
+      await nativeServer.close();
+    }
   });
 
   it("requires authorization and rejects unallowed shells and escaped cwd", async () => {
@@ -913,6 +1063,7 @@ describe("startServer — enabled native terminal boundary", () => {
       port: 0,
       cwd: dir,
       staticDir: dir,
+      cors: true,
       allowNativeTerminal: true,
       nativeTerminalAuthToken: token,
       allowedNativeShells: ["idel-test-allowed-shell"],
@@ -982,7 +1133,13 @@ describe("startServer — static UI", () => {
     await writeFile(join(dir, "index.html"), "<!doctype html><title>UI</title>");
     await writeFile(join(dir, "app.js"), "console.log('hi')");
     const runtime = new Runtime({ registry, policy: defaultPolicy() });
-    server = await startServer({ runtime, port: 0, cwd: tmpdir(), staticDir: dir });
+    server = await startServer({
+      runtime,
+      port: 0,
+      cwd: tmpdir(),
+      staticDir: dir,
+      authRequired: false,
+    });
     base = server.url;
   });
   afterAll(async () => {
@@ -1029,7 +1186,7 @@ describe("startServer — injected agent", () => {
         yield { type: "done", reason: "end_turn" };
       },
     });
-    const server = await startServer({ runtime, port: 0, cwd: tmpdir(), agent: fakeAgent });
+    const server = await startServer({ runtime, port: 0, cwd: tmpdir(), agent: fakeAgent, authRequired: false });
     try {
       const res = await fetch(`${server.url}/api/agent/stream`, {
         method: "POST",
@@ -1056,7 +1213,7 @@ describe("startServer — injected agent", () => {
         yield { type: "done", reason: "end_turn" };
       },
     });
-    const server = await startServer({ runtime, port: 0, cwd: tmpdir(), agent: fakeAgent });
+    const server = await startServer({ runtime, port: 0, cwd: tmpdir(), agent: fakeAgent, authRequired: false });
     try {
       const res = await fetch(`${server.url}/api/run/stream`, {
         method: "POST",
@@ -1081,7 +1238,7 @@ describe("startServer — injected agent", () => {
         yield { type: "text", text: "unreached" };
       },
     });
-    const server = await startServer({ runtime, port: 0, cwd: tmpdir(), agent: fakeAgent });
+    const server = await startServer({ runtime, port: 0, cwd: tmpdir(), agent: fakeAgent, authRequired: false });
     try {
       const res = await fetch(`${server.url}/api/agent/stream`, {
         method: "POST",
@@ -1104,6 +1261,7 @@ describe("startServer — injected learn runner", () => {
       runtime,
       port: 0,
       cwd: tmpdir(),
+      authRequired: false,
       learn: async (req) => ({
         cli: req.cli,
         write: req.write === true,
@@ -1134,6 +1292,7 @@ describe("startServer — injected learn runner", () => {
       runtime,
       port: 0,
       cwd: tmpdir(),
+      authRequired: false,
       learn: async () => {
         throw new Error("no model");
       },
@@ -1200,7 +1359,7 @@ describe("startServer — real-run approval round-trip", () => {
 
   it("emits approval_request, parks, and runs for real after POST /approve true", async () => {
     const runtime = new Runtime({ registry, policy: defaultPolicy() });
-    const server = await startServer({ runtime, port: 0, cwd: tmpdir(), agent: approvalAgent });
+    const server = await startServer({ runtime, port: 0, cwd: tmpdir(), agent: approvalAgent, authRequired: false });
     try {
       const res = await fetch(`${server.url}/api/agent/stream`, {
         method: "POST",
@@ -1232,7 +1391,7 @@ describe("startServer — real-run approval round-trip", () => {
 
   it("declines (POST /approve false) → agent leaves the dry-run standing", async () => {
     const runtime = new Runtime({ registry, policy: defaultPolicy() });
-    const server = await startServer({ runtime, port: 0, cwd: tmpdir(), agent: approvalAgent });
+    const server = await startServer({ runtime, port: 0, cwd: tmpdir(), agent: approvalAgent, authRequired: false });
     try {
       const res = await fetch(`${server.url}/api/agent/stream`, {
         method: "POST",
@@ -1261,7 +1420,7 @@ describe("startServer — real-run approval round-trip", () => {
 
   it("stays propose-only (no approval_request) when allowReal is omitted", async () => {
     const runtime = new Runtime({ registry, policy: defaultPolicy() });
-    const server = await startServer({ runtime, port: 0, cwd: tmpdir(), agent: approvalAgent });
+    const server = await startServer({ runtime, port: 0, cwd: tmpdir(), agent: approvalAgent, authRequired: false });
     try {
       const res = await fetch(`${server.url}/api/agent/stream`, {
         method: "POST",
@@ -1278,7 +1437,7 @@ describe("startServer — real-run approval round-trip", () => {
 
   it("POST /api/agent/approve with an unknown id → 404", async () => {
     const runtime = new Runtime({ registry, policy: defaultPolicy() });
-    const server = await startServer({ runtime, port: 0, cwd: tmpdir(), agent: approvalAgent });
+    const server = await startServer({ runtime, port: 0, cwd: tmpdir(), agent: approvalAgent, authRequired: false });
     try {
       const res = await fetch(`${server.url}/api/agent/approve`, {
         method: "POST",

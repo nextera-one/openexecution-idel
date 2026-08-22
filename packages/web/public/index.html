@@ -201,7 +201,7 @@ Learned gh  (7 accepted, 2 rejected)
             </p>
           </div>
         </div>
-        <p class="hero-actions" style="margin-top: 1.4rem">
+        <p class="hero-actions hero-actions-spaced">
           <a href="/terminal.html#ask" class="btn btn-primary">Try the AI console →</a>
         </p>
       </section>
@@ -234,20 +234,6 @@ Learned gh  (7 accepted, 2 rejected)
       </footer>
     </main>
 
-    <script>
-      // Live signal: is a local `idel serve` actually backing this page?
-      fetch("/api/health")
-        .then((r) => (r.ok ? r.json() : Promise.reject()))
-        .then((d) => {
-          const el = document.getElementById("server-status");
-          el.textContent = "● local runtime online — idel " + (d.version || "");
-          el.classList.add("online");
-        })
-        .catch(() => {
-          const el = document.getElementById("server-status");
-          el.textContent =
-            "○ no local runtime detected — run `idel serve --static …` to power the terminal";
-        });
-    </script>
+    <script src="/landing.js" type="module"></script>
   </body>
 </html>

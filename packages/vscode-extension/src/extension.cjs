@@ -117,7 +117,7 @@ class IdelServerManager {
     const terminalUrl = new URL("/terminal.html", baseUrl);
     if (!(await isHttpOk(terminalUrl))) {
       throw new Error(
-        `IDEL server is reachable at ${baseUrl.origin}, but /terminal.html is not available. Start it with \`idel serve --static packages/web/public --enable-native-terminal\`.`,
+        `IDEL server is reachable at ${baseUrl.origin}, but /terminal.html is not available. Start it with \`idel serve --static packages/web/public\`.`,
       );
     }
     return terminalUrl;
@@ -145,7 +145,7 @@ class IdelServerManager {
 
     if (!config.manageServer) {
       throw new Error(
-        "No IDEL server is reachable. Start `idel serve --static packages/web/public --enable-native-terminal`, set openexecutionIdel.serverUrl, or enable openexecutionIdel.manageServer.",
+        "No IDEL server is reachable. Start `idel serve --static packages/web/public`, set openexecutionIdel.serverUrl, or enable openexecutionIdel.manageServer.",
       );
     }
 

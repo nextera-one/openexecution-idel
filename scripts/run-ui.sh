@@ -4,7 +4,7 @@
 #
 # This is the one-liner for "show me the UI." It:
 #   1. builds the TypeScript packages if `idel` isn't built yet,
-#   2. starts `idel serve` bound to loopback with native terminal explicitly enabled,
+#   2. starts `idel serve` bound to loopback with authenticated APIs,
 #   3. prints the URL (and opens it when --open is passed).
 #
 # The AI console in the UI lights up automatically when ANTHROPIC_API_KEY is
@@ -38,7 +38,7 @@ fi
 
 build_workspace() {
   if command -v corepack >/dev/null 2>&1; then
-    corepack pnpm@10.0.0 build
+    corepack pnpm@11.7.0 build
   elif command -v pnpm >/dev/null 2>&1; then
     pnpm build
   else
@@ -73,4 +73,4 @@ elif [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
 fi
 
 echo "run-ui: serving the IDEL web terminal from $STATIC"
-exec node "$IDEL" serve --static "$STATIC" --enable-native-terminal "$@"
+exec node "$IDEL" serve --static "$STATIC" "$@"

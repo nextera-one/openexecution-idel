@@ -1,8 +1,8 @@
 # CONCERNS — open items to resolve
 
-Captured 2026-06-09. These are known caveats from the OpenLogs-v2 signed-logging
-integration and packaging work. Nothing here blocks the build or tests (all 192
-pass, smoke test passes), but each needs attention before calling V1 "done" or
+Reviewed 2026-08-22. These are known caveats from the OpenLogs-v2 signed-logging
+integration and packaging work. Nothing here blocks the current 572-test suite
+or smoke test, but each needs attention before calling V1 "done" or
 shipping to a clean machine. Ordered roughly by priority.
 
 ---
@@ -17,26 +17,26 @@ The fix is **nextera-one/tps PR #2** (branch `fix/esm-node-compat`, version
 bumped to **0.8.1**). It is **not yet published to npm** — the automation
 environment is not authenticated to npm.
 
-**Until 0.8.1 is on npm, this repo pins the fix via a pnpm override that points
-at a vendored tarball:**
+**Until 0.8.1 is on npm, this repo pins the fix via a pnpm workspace override
+that points at a vendored tarball. The OpenLogs package declares 0.8.1 normally
+and bundles that dependency in its published tarball, so consumers do not inherit
+an invalid repository-relative `file:` path:**
 
-```jsonc
-// package.json
-"pnpm": {
-  "overrides": {
-    "@nextera.one/tps-standard": "file:./vendor/nextera.one-tps-standard-0.8.1.tgz"
-  }
-}
+```yaml
+// pnpm-workspace.yaml
+overrides:
+  "@nextera.one/tps-standard": "file:./vendor/nextera.one-tps-standard-0.8.1.tgz"
 ```
 
-The tarball is committed under `vendor/`. This makes `pnpm install`, the build,
-the tests, and CI fully reproducible **without** waiting on the publish.
+The tarball is committed under `vendor/`. This makes `pnpm install`, packaged
+OpenLogs artifacts, the build, the tests, and CI reproducible **without** waiting
+on the upstream publish.
 
 **To resolve:**
 1. Merge nextera-one/tps PR #2.
 2. `cd tps && npm run build && npm run bundle && npm publish --access public` (0.8.1).
-3. In this repo: remove the `pnpm.overrides` block and the `vendor/` tarball,
-   set `@nextera.one/tps-standard` to `^0.8.1` in `packages/openlogs/package.json`,
+3. In this repo: remove the workspace override, bundled-dependency declaration,
+   and vendor tarball; set `@nextera.one/tps-standard` to `^0.8.1`,
    run `pnpm install`, re-run `pnpm test && pnpm smoke`, commit.
 4. Only then is `npm install -g @openexecution/cli` viable from a clean machine
    (also requires un-setting `"private": true` on the packages you publish).
@@ -109,14 +109,15 @@ SDK's placeholder location. Time is encoded correctly (Gregorian). If/when
 location matters (e.g. per-host/per-datacenter audit), thread a configurable
 location through `OpenLogWriter`.
 
-## 7. `pnpm deploy` doesn't work here (informational)
+## 7. `pnpm deploy` packaging (FIXED with legacy deploy)
 
-`pnpm deploy` (the canonical "self-contained artifact" tool) errored in this
-pnpm 10.0.0 setup (`ERR_PNPM_DEPLOY_NONINJECTED_WORKSPACE`, and a 254 with the
-`file:` override). Packaging therefore uses `scripts/install-local.sh`
-(`pnpm build` + `npm link`) as the supported V1 install, plus
-`scripts/smoke-test.sh`. Revisit `pnpm deploy` once §1 removes the tarball
-override.
+The shared-lockfile deploy path cannot copy the repository-relative TPS override
+into its temporary workspace. `pnpm-workspace.yaml` now enables injected
+workspace packages and explicitly selects pnpm's legacy deploy implementation,
+which creates a self-contained CLI artifact while resolving the committed TPS
+tarball from the real workspace. `pnpm check:package` packs OpenLogs, verifies
+the bundled ESM dependency, deploys the CLI to a temporary directory, and checks
+both runtime entrypoints. Remove `forceLegacyDeploy` after §1 moves TPS to npm.
 
 ---
 

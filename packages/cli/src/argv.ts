@@ -38,6 +38,7 @@ export interface CliFlags {
   ci: boolean;
   noNative: boolean;
   enableNativeTerminal: boolean;
+  cors: boolean;
   yes: boolean;
   json: boolean;
   policyPath?: string;
@@ -64,6 +65,7 @@ const RUNTIME_FLAGS = new Set([
   "--no-native",
   "--enable-native-terminal",
   "--native-terminal",
+  "--cors",
   "--yes",
   "--json",
   "--open",
@@ -85,6 +87,7 @@ export function parseArgv(argv: string[]): CliInvocation {
     ci: false,
     noNative: false,
     enableNativeTerminal: false,
+    cors: false,
     yes: false,
     json: false,
   };
@@ -100,6 +103,7 @@ export function parseArgv(argv: string[]): CliInvocation {
       else if (arg === "--enable-native-terminal" || arg === "--native-terminal") {
         flags.enableNativeTerminal = true;
       }
+      else if (arg === "--cors") flags.cors = true;
       else if (arg === "--yes") flags.yes = true;
       else if (arg === "--json") flags.json = true;
       else if (arg === "--open") flags.open = true;

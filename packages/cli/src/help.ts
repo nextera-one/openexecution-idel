@@ -65,9 +65,11 @@ SERVE FLAGS (idel serve)
   --port <n>       HTTP port (default 7878)
   --host <addr>    bind address (default 127.0.0.1, loopback only)
   --static <dir>   serve a built terminal UI from this directory at /
+  --cors           allow authenticated cross-origin loopback clients (development)
   --enable-native-terminal
                    enable bearer-authenticated native shell sessions
-                   (optional 32+ char base64url token: IDEL_NATIVE_TERMINAL_AUTH_TOKEN)
+  Authentication   all non-health APIs require a 32+ character bearer token;
+                   set IDEL_SERVER_AUTH_TOKEN for API-only/remote clients
 
 SAFETY
   Every command is risk-classified (LOW/MEDIUM/HIGH/CRITICAL) and policy-checked

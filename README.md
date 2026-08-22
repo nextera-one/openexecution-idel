@@ -178,14 +178,25 @@ idel 'run.script path=./scripts/start.sh shell=bash && wait.time seconds=2 && ta
 
 Each step is parsed, classified, policy-checked, executed, and logged as its own command. The next step starts only after the previous step completes successfully. During an explicit `--dry-run`, dry-run steps are allowed to continue so you can preview a whole batch. A line beginning with `!` remains native passthrough, so `! cmd1 && cmd2` keeps normal shell semantics inside the IDEL terminal. From Bash, quote the whole IDEL line: `idel '! cmd1 && cmd2'`.
 
-**Web / desktop terminal.** `idel serve` starts a local HTTP+SSE server (loopback, port 7878 by default) that exposes the same runtime — registry-driven autocomplete, risk/policy classification, and signed OpenLogs — over a small JSON API. It is the boundary the browser and Electron desktop terminal talk to; pass `--static <dir>` to also serve a built UI. A command typed in the GUI is audited identically to one typed at the CLI.
+**Web / desktop terminal.** `idel serve` starts a local HTTP+SSE server (loopback, port 7878 by default) that exposes the same runtime — registry-driven autocomplete, risk/policy classification, and signed OpenLogs — over a small JSON API. It is the boundary the browser and Electron desktop terminal talk to; pass `--static <dir>` to also serve a built UI. All non-health API routes require a high-entropy bearer, and browser origins must match the server by default. A command typed in the GUI is audited identically to one typed at the CLI.
 
 A ready-made, dependency-free web terminal + landing page ships in `packages/web/public`. The fastest way to see it:
 
 ```bash
 pnpm ui            # builds if needed, then serves the terminal at http://127.0.0.1:7878
-# (equivalently: idel serve --static packages/web/public --enable-native-terminal)
+# (equivalently: idel serve --static packages/web/public)
 ```
+
+The same-origin terminal boot page receives a generated, in-memory bearer and
+is served with `Cache-Control: no-store`; the token is never printed or exposed
+by an API. For API-only, SSH-tunneled, or cross-origin development clients, set
+`IDEL_SERVER_AUTH_TOKEN` to a private 32–256 character base64url value and send
+`Authorization: Bearer …`. Cross-origin loopback access additionally requires
+the explicit `--cors` development flag.
+
+An API-only `idel serve` (without `--static`) requires
+`IDEL_SERVER_AUTH_TOKEN`; there is no boot page in which to deliver a generated
+secret safely.
 
 Build Electron desktop folders for each platform:
 
@@ -230,11 +241,11 @@ the workspace declares `packageManager: pnpm`.
 
 The page at `/` explains the runtime; `/terminal.html` is a live terminal with an **IDEL** mode (registry completion, history, a live audit-log panel), an **Ask AI** mode that drives the embedded console over `/api/agent/stream`, and optional `sh` tabs for a native OS shell. Ask AI currently runs through the Claude provider on the `idel serve` process (see [Using Ask AI](#using-ask-ai)) — the credential never reaches the browser.
 
-Use IDEL tabs for the audited policy pipeline. Use a native `sh` tab only when you need interactive OS behavior such as `sudo apt install git`, package prompts, shell autocomplete, Ctrl+C, arrows, or full-screen terminal tools. Native shell tabs are backed by xterm.js and are intentionally direct shell sessions, so commands typed there are not converted into IDEL commands or risk-scanned command-by-command. When native tabs are explicitly enabled with `--enable-native-terminal`, their session start/close/signal/exit lifecycle events are still written to signed OpenLogs. The CLI creates a fresh high-entropy bearer in memory and injects it only into the same-origin, no-store terminal page; every native API request must present it. For an API client, set `IDEL_NATIVE_TERMINAL_AUTH_TOKEN` to a private 32–256 character base64url value and send it as `Authorization: Bearer …`. The server never prints the token. Native cwd values remain inside the configured server workspace and clients may select only an explicitly allowed shell. Without the enable flag, native shell tabs remain disabled.
+Use IDEL tabs for the audited policy pipeline. Use a native `sh` tab only when you need interactive OS behavior such as `sudo apt install git`, package prompts, shell autocomplete, Ctrl+C, arrows, or full-screen terminal tools. Native shell tabs are backed by xterm.js and are intentionally direct shell sessions, so commands typed there are not converted into IDEL commands or risk-scanned command-by-command. Native mode is disabled by default in the CLI, web launcher, desktop launchers, and VS Code extension. When explicitly enabled with `--enable-native-terminal`, session start/close/signal/exit lifecycle events are still written to signed OpenLogs and every native request uses the same authenticated API boundary. Native cwd values remain inside the configured server workspace and clients may select only an explicitly allowed shell.
 
 Every command rendered in the terminal — typed or AI-proposed — shows what it **translates to**: the real adapter invocation (e.g. `remove.file name=x force=true` → `rm -f x`, `list.folder` → `ls`), so the mapping from intent to execution is visible at the call site. In the interactive `idel terminal`, a sensitive (HIGH/CRITICAL) command is previewed with its translation and risk and held for confirmation before any real run (and a `require_dry_run`-policy command is shown as dry-run-only, never silently promoted).
 
-The web console can run commands **for real**, behind an explicit approval. Before any real run, the agent pauses and the terminal shows the dry-run plus **Approve / Decline** buttons; the server parks the agent (over `POST /api/agent/approve`) until you choose. A decline leaves the dry-run result standing, and a forgotten approval fails closed after a timeout — the agent never touches disk without a human "Approve." Interactive editor commands such as `open.editor` appear in the web registry and autocomplete, but actual editor launch is CLI/TTY-only; web/API/CI requests return a clear non-interactive failure instead of hanging.
+The web console can run commands **for real**, behind an explicit approval. Before any real run, the terminal shows the decision evidence plus **Approve / Decline** buttons. Direct command approvals are opaque, single-use capabilities bound server-side to the exact proposed command, cwd, and API origin; client-supplied `approve` or `origin` fields are ignored. Agent approvals park the agent (over `POST /api/agent/approve`) until you choose. A decline leaves the preview standing, expired/replayed approval IDs fail closed, and the agent never touches disk without a human "Approve." Interactive editor commands such as `open.editor` appear in the web registry and autocomplete, but actual editor launch is CLI/TTY-only; web/API/CI requests return a clear non-interactive failure instead of hanging.
 
 **Teach IDEL an installed CLI.** `idel learn <cli>` introspects a CLI's own `--help`, drafts conservative IDEL command definitions locally, validates each against the registry schema (fail-closed), and **replays each def's declared `tests[]` through a real runtime** to prove its risk/policy classification. Accepted drafts land in the custom layer and are then governed by the same runtime — risk-classified, policy-gated, audited:
 
@@ -490,8 +501,10 @@ These let CI fail closed: a blocked or approval-required command never returns `
 ## Testing
 
 ```bash
-pnpm test           # vitest run — 373+ tests across 17 test files
-pnpm typecheck      # tsc --build --dry
+pnpm test           # Vitest suite (572 passing, 1 skipped across 25 test files)
+pnpm typecheck      # full TypeScript project build/type-check
+pnpm check:web      # static UI syntax, CSP hygiene, duplicate-id, and button checks
+pnpm check:package  # bundled OpenLogs package + self-contained CLI deploy artifact
 ```
 
 Coverage spans the parser (quoting/booleans/paths), registry schema validation, the safety engine (root/home/device/symlink/empty-target/glob cases), policy evaluation (all five actions plus the CRITICAL floor), POSIX and PowerShell plan snapshots, OpenLogs redaction, end-to-end runtime flows (including the OpenLogs-append-failure warning), the agent loop on **both** providers — the API/SDK path (multi-turn tool use, max-steps cap, tool-error recovery, API-error handling, per-call approval gate) and the subscription/`claude`-CLI path (a fake spawn driving multi-round plans, block enforcement, real-run approval, non-JSON fallback) — provider selection precedence, `idel learn` (fail-closed validation, hostile-name rejection, and test round-tripping through a real runtime), and the HTTP server (static serving, traversal guard, registry-id validation, injected-agent SSE, and the real-run approval round-trip). Destructive tests run only in temp directories.
@@ -500,7 +513,7 @@ Coverage spans the parser (quoting/booleans/paths), registry schema validation, 
 
 ## V1 scope vs. V2 deferred
 
-**Built in V1:** IDEL parser; core registry schema + ~31 commands (filesystem, permissions, archive, find/search, path/env, scripts, editor, native, meta); two-phase safety engine; policy engine; native passthrough with a deterministic scanner; OpenLogs with redaction; POSIX, PowerShell, and Node adapters; registry-driven autocomplete; CLI and interactive terminal.
+**Built in V1:** IDEL parser; core registry schema + 70+ commands (filesystem, permissions, archive, find/search, path/env, scripts, editor, native, meta); two-phase safety engine; policy engine; native passthrough with a deterministic scanner; OpenLogs with redaction; POSIX, PowerShell, and Node adapters; registry-driven autocomplete; CLI and interactive terminal.
 
 **Explicitly deferred to V2 (not built):**
 
@@ -513,5 +526,6 @@ Coverage spans the parser (quoting/booleans/paths), registry schema validation, 
 
 ## Further reading
 
-- [docs/safety-rules.md](docs/safety-rules.md) — the two-phase safety engine, every finding code, the non-overridable floors, and the native scanner patterns.
-- [docs/registry-schema.md](docs/registry-schema.md) — the `CommandDef` shape, the structured `AdapterArgSpec` union, the three layers, the `semanticNotes` honesty principle, and how to add a custom command.
+- [Security model and reporting](SECURITY.md) — local API, approval, native-shell, archive, and OpenLogs trust boundaries.
+- [Safety rules](docs/safety-rules.md) — the two-phase engine, finding codes, non-overridable floors, and native scanner patterns.
+- [Registry schema](docs/registry-schema.md) — `CommandDef`, adapter argument specs, resolution layers, and custom commands.

@@ -403,10 +403,9 @@ export interface RuntimeContext {
    */
   interactive?: boolean;
   /**
-   * Override the logged command origin. When omitted, the runtime infers
-   * `"ci"` or `"idel"`. Set to `"agent"` so AI-proposed commands are recorded
-   * with `source: "agent"` in OpenLogs. Does not affect risk/policy — those are
-   * origin-independent; it only changes the audit attribution.
+   * Override the command origin. When omitted, the runtime infers `"ci"` or
+   * `"idel"`. Policy rules may match this source, and OpenLogs records it, so
+   * transport hosts must derive it rather than accepting an untrusted value.
    */
   origin?: CommandOrigin;
 }

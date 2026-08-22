@@ -248,7 +248,6 @@ function startServer() {
     "serve",
     "--static",
     resolve(appDir, "web"),
-    "--enable-native-terminal",
   ];
   if (!hasPort(passThrough)) serveArgs.push("--port", String(selectedPort(passThrough)));
   serveArgs.push(...passThrough);
@@ -442,17 +441,41 @@ function createWindow() {
       preload: resolve(here, "preload.mjs"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
+      webSecurity: true,
+      devTools: process.env.IDEL_DESKTOP_DEVTOOLS === "1",
     },
   });
   win.on("closed", () => {
     if (mainWindow === win) mainWindow = null;
   });
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\\/\\//.test(url)) void shell.openExternal(url);
+    if (/^https:\\/\\//.test(url)) void shell.openExternal(url);
     return { action: "deny" };
   });
+  win.webContents.on("will-navigate", (event, url) => {
+    if (!isTrustedNavigation(url)) event.preventDefault();
+  });
+  win.webContents.on("will-redirect", (event, url) => {
+    if (!isTrustedNavigation(url)) event.preventDefault();
+  });
+  win.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
+    const clipboardPermission = permission === "clipboard-read" || permission === "clipboard-sanitized-write";
+    callback(clipboardPermission && isTrustedNavigation(webContents.getURL()));
+  });
   return win;
+}
+
+function isTrustedNavigation(value) {
+  if (value.startsWith("data:text/html")) return true;
+  try {
+    const url = new URL(value);
+    if (desktopUrl && url.origin === new URL(desktopUrl).origin) return true;
+    return (url.protocol === "http:" || url.protocol === "https:") &&
+      (url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]");
+  } catch {
+    return false;
+  }
 }
 
 function startServer() {
@@ -470,7 +493,6 @@ function startServer() {
     "serve",
     "--static",
     staticDir,
-    "--enable-native-terminal",
   ];
   const argv = userArgs();
   if (!hasPort(argv)) serveArgs.push("--port", String(selectedPort()));
@@ -627,7 +649,7 @@ function buildMenu() {
       label: "View",
       submenu: [
         { role: "reload" },
-        { role: "toggleDevTools" },
+        ...(process.env.IDEL_DESKTOP_DEVTOOLS === "1" ? [{ role: "toggleDevTools" }] : []),
         { type: "separator" },
         { role: "resetZoom" },
         { role: "zoomIn" },

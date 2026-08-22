@@ -86,8 +86,8 @@
         },
         "openexecutionIdel.enableNativeTerminal": {
           "type": "boolean",
-          "default": true,
-          "markdownDescription": "Pass `--enable-native-terminal` to `idel serve`, enabling native shell tabs in the embedded terminal."
+          "default": false,
+          "markdownDescription": "Pass `--enable-native-terminal` to `idel serve`. This exposes a raw shell that bypasses IDEL command policy, so enable it only when needed."
         },
         "openexecutionIdel.extraServeArgs": {
           "type": "array",

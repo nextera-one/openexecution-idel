@@ -3,10 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta
-      name="idel-native-terminal-auth"
-      content="__IDEL_NATIVE_TERMINAL_AUTH_TOKEN__"
-    />
+    <meta name="idel-api-auth" content="__IDEL_API_AUTH_TOKEN__" />
     <title>IDEL Terminal</title>
     <link rel="stylesheet" href="/vendor/xterm/xterm.css" />
     <link rel="stylesheet" href="/style.css" />
@@ -29,6 +26,7 @@
         <button
           class="mode-btn active"
           id="mode-idel"
+          type="button"
           title="Type IDEL commands"
         >
           IDEL
@@ -36,6 +34,7 @@
         <button
           class="mode-btn"
           id="mode-ask"
+          type="button"
           title="Ask AI in natural language"
         >
           Ask AI
@@ -275,6 +274,14 @@
         </button>
         <button
           class="term-tool-btn"
+          id="policy-open"
+          type="button"
+          title="Simulate policy without executing"
+        >
+          Policy Studio
+        </button>
+        <button
+          class="term-tool-btn"
           id="setup-open"
           type="button"
           title="Open setup checklist"
@@ -289,6 +296,40 @@
         >
           Preferences
         </button>
+      </div>
+    </dialog>
+
+    <dialog
+      class="connect-dialog"
+      id="policy-dialog"
+      aria-labelledby="policy-title"
+    >
+      <div class="connect-panel policy-panel">
+        <div class="preferences-head">
+          <div>
+            <h2 id="policy-title">Policy Studio</h2>
+            <p>Simulate a command without executing or logging it</p>
+          </div>
+          <button class="icon-btn" id="policy-close" type="button" aria-label="Close Policy Studio">x</button>
+        </div>
+        <div class="connect-body">
+          <label class="connect-field">
+            <span>Command to evaluate</span>
+            <input
+              id="policy-command"
+              type="text"
+              spellcheck="false"
+              autocomplete="off"
+              placeholder="remove.folder name=dist recursive=true"
+            />
+          </label>
+          <div class="connect-actions">
+            <button class="mode-btn active" id="policy-evaluate" type="button">Evaluate</button>
+          </div>
+          <div class="policy-result" id="policy-result" role="status" aria-live="polite">
+            Enter a command to inspect its adapter translation, risk findings, and matched policy action.
+          </div>
+        </div>
       </div>
     </dialog>
 
@@ -323,6 +364,17 @@
               autocomplete="off"
               placeholder="http://127.0.0.1:8787"
             />
+          </label>
+          <label class="connect-field">
+            <span>Bearer token</span>
+            <input
+              id="connect-token"
+              type="password"
+              spellcheck="false"
+              autocomplete="off"
+              placeholder="IDEL_SERVER_AUTH_TOKEN"
+            />
+            <small>Kept only in this page session. Required for remote or SSH-tunneled servers.</small>
           </label>
           <div class="connect-grid">
             <label class="connect-field">
@@ -463,17 +515,14 @@
     </dialog>
 
     <main class="term-main">
-      <div
-        class="workspace-tabs"
-        id="tabs"
-        role="tablist"
-        aria-label="Workspace tabs"
-      >
+      <div class="workspace-tabs">
+        <div id="tabs" class="workspace-tab-list" role="tablist" aria-label="Workspace tabs"></div>
         <button
           class="tab-new"
           id="new-terminal"
           type="button"
           title="New terminal"
+          aria-label="New IDEL terminal"
         >
           +
         </button>
@@ -482,21 +531,30 @@
           id="new-native-terminal"
           type="button"
           title="New native shell"
+          aria-label="New native shell"
         >
           sh
         </button>
       </div>
-      <section class="term-output" id="output" aria-live="polite">
-        <div class="line muted">
-          IDEL web terminal. Type a command like
-          <code>list.folder name=.</code> and press Enter. Every command flows
-          through the same safety → policy → signed-log pipeline as the CLI.
-        </div>
-        <div class="line muted">
-          Switch to <strong>Ask AI</strong> (top right) to describe what you
-          want in natural language — the runtime stays the enforcement boundary.
-        </div>
+      <section class="term-output" id="output" role="log" aria-label="Terminal output">
+        <section class="welcome-card" aria-labelledby="welcome-title">
+          <p class="welcome-kicker">Safe execution workspace</p>
+          <h2 id="welcome-title">Start with intent. Review before execution.</h2>
+          <p>
+            Every command is translated, risk-classified, checked by policy,
+            and added to the signed audit trail.
+          </p>
+          <div class="welcome-steps" aria-label="Execution flow">
+            <span>1 · Write intent</span><span>2 · Review evidence</span><span>3 · Execute or decline</span>
+          </div>
+          <div class="welcome-actions">
+            <button type="button" data-starter-command="list.folder name=.">Try a safe command</button>
+            <button type="button" data-starter-command="create.file name=hello.txt">Preview a write</button>
+            <button type="button" id="welcome-ask">Ask AI</button>
+          </div>
+        </section>
       </section>
+      <div class="sr-only" id="terminal-announcer" role="status" aria-live="polite"></div>
 
       <form class="term-input" id="form" autocomplete="off">
         <span class="term-prompt" id="prompt">idel&gt;</span>
@@ -544,10 +602,25 @@
 
     <aside class="term-side">
       <div class="side-head">
-        <span>Recent audit log</span>
-        <button id="refresh-logs" title="Reload">↻</button>
+        <span>Audit trail</span>
+        <span class="side-head-actions">
+          <button id="verify-logs" type="button" title="Verify signed log chain">Verify</button>
+          <button id="refresh-logs" type="button" title="Reload audit records" aria-label="Reload audit records">↻</button>
+        </span>
       </div>
-      <div class="logs" id="logs"></div>
+      <div class="audit-tools">
+        <label>
+          <span class="sr-only">Filter audit records</span>
+          <select id="audit-filter">
+            <option value="all">All activity</option>
+            <option value="attention">Needs attention</option>
+            <option value="agent">Agent activity</option>
+            <option value="writes">Real executions</option>
+          </select>
+        </label>
+        <output id="audit-verify-status" role="status" aria-live="polite"></output>
+      </div>
+      <div class="logs" id="logs" aria-label="Recent audit records"></div>
     </aside>
 
     <dialog

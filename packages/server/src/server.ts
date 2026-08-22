@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { isIP, type AddressInfo } from "node:net";
@@ -14,7 +14,7 @@ import type {
   NativeTerminalInfo,
   NativeTerminalSignal,
 } from "./native-terminal.js";
-import type { ParamValue } from "@openexecution/types";
+import type { ParamValue, RuntimeOutcome } from "@openexecution/types";
 import type {
   RunRequest,
   CompleteRequest,
@@ -71,13 +71,22 @@ export interface ServerOptions extends ServiceOptions {
   host?: string;
   /** Directory of built UI assets to serve at `/`. Omit for an API-only server. */
   staticDir?: string;
-  /** Allow cross-origin browser requests (dev). Default true for loopback dev. */
+  /** Allow cross-origin loopback browser requests (dev). Default false. */
   cors?: boolean;
+  /**
+   * Bearer secret required by every non-health API route. When omitted, the
+   * server generates an in-memory 256-bit secret and injects it only into the
+   * no-store terminal boot document. API-only callers should provide a stable
+   * value with IDEL_SERVER_AUTH_TOKEN through the CLI host.
+   */
+  authToken?: string;
+  /** Disable the API bearer boundary only for tightly scoped tests. Default true. */
+  authRequired?: boolean;
   /** Enable raw native shell sessions and native API passthrough. Default false. */
   allowNativeTerminal?: boolean;
   /**
-   * Bearer secret required by every native-terminal route when enabled. Must be
-   * 32-256 base64url characters; it is never returned by the health endpoint.
+   * Legacy native bearer option. Prefer `authToken`, which protects the whole
+   * API. Retained for compatibility with older hosts.
    */
   nativeTerminalAuthToken?: string;
   /** Exact native shell executables clients may request. Defaults to the host shell only. */
@@ -136,6 +145,8 @@ const AGENT_UNAVAILABLE =
 export interface RunningServer {
   url: string;
   port: number;
+  /** Host-side bearer value. Never exposed by an HTTP endpoint or printed. */
+  authToken?: string;
   close(): Promise<void>;
 }
 
@@ -147,12 +158,21 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
       403,
     );
   }
+  const authRequired = opts.authRequired ?? true;
+  const apiAuthToken = authRequired
+    ? validateAuthToken(
+        opts.authToken ??
+          opts.nativeTerminalAuthToken ??
+          randomBytes(32).toString("base64url"),
+        "server",
+      )
+    : undefined;
   const nativeEnabled = opts.allowNativeTerminal === true && opts.noNative !== true;
   const nativeTerminalAuthToken = nativeEnabled
-    ? validateNativeTerminalAuthToken(opts.nativeTerminalAuthToken)
+    ? apiAuthToken ?? validateAuthToken(opts.nativeTerminalAuthToken, "native terminal")
     : undefined;
   const service = new TerminalService({ ...opts, noNative: !nativeEnabled });
-  const cors = opts.cors ?? true;
+  const cors = opts.cors ?? false;
   const staticDir = opts.staticDir ? resolve(opts.staticDir) : undefined;
   // Build the agent once and share it (its system prompt — the registry catalog
   // — is cached by Anthropic across turns). Undefined when the host didn't wire one.
@@ -166,6 +186,7 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
   // Coordinates the async approval round-trip: an agent stream that proposes a
   // real run parks here on an id; POST /api/agent/approve resolves it.
   const approvals = new PendingApprovals();
+  const runApprovals = new PendingRunApprovals();
 
   const httpServer = createServer((req, res) => {
     handle(req, res, service, {
@@ -174,7 +195,9 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
       agent,
       learn,
       approvals,
+      runApprovals,
       nativeTerminals,
+      apiAuthToken,
       nativeTerminalAuthToken,
     }).catch((err) => {
       // A ServiceError carries the intended HTTP status (e.g. 413 for an
@@ -215,10 +238,12 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
   return {
     url,
     port: addr.port,
+    ...(apiAuthToken ? { authToken: apiAuthToken } : {}),
     close: () => {
       // Release any parked approvals (deny) so suspended agent loops unwind
       // instead of keeping handles open across shutdown.
       approvals.cancelAll();
+      runApprovals.cancelAll();
       nativeTerminals.closeAll();
       return new Promise<void>((resolveClose, reject) =>
         httpServer.close((err) => (err ? reject(err) : resolveClose())),
@@ -237,25 +262,51 @@ async function handle(
     agent: AgentRunner | undefined;
     learn: LearnRunner | undefined;
     approvals: PendingApprovals;
+    runApprovals: PendingRunApprovals;
     nativeTerminals: NativeTerminalManager;
+    apiAuthToken: string | undefined;
     nativeTerminalAuthToken: string | undefined;
   },
 ): Promise<void> {
-  const { cors, staticDir, agent, learn, approvals, nativeTerminals, nativeTerminalAuthToken } = cfg;
+  const {
+    cors,
+    staticDir,
+    agent,
+    learn,
+    approvals,
+    runApprovals,
+    nativeTerminals,
+    apiAuthToken,
+    nativeTerminalAuthToken,
+  } = cfg;
   const method = req.method ?? "GET";
   const url = new URL(req.url ?? "/", "http://localhost");
   const path = url.pathname;
-  const boundary = validateRequestBoundary(req);
+  const boundary = validateRequestBoundary(req, cors);
   if (!boundary.ok) {
     return sendJson(res, 403, { error: boundary.error }, false);
   }
   if (cors && boundary.origin) setCors(res, boundary.origin);
 
+  // Health remains available for local discovery. Every other API route uses
+  // the same per-server bearer, including editor, learning, approvals, logs,
+  // and native PTYs. Loopback is a network boundary, not authentication.
+  if (
+    apiAuthToken &&
+    method !== "OPTIONS" &&
+    path.startsWith("/api/") &&
+    path !== "/api/health" &&
+    !hasBearerAuthorization(req, apiAuthToken)
+  ) {
+    res.setHeader("www-authenticate", 'Bearer realm="idel-server"');
+    return sendJson(res, 401, { error: "IDEL server authorization required" }, false);
+  }
+
   // Native PTYs intentionally bypass IDEL parsing and command-level policy.
   // Enabling the feature therefore also requires a separate bearer boundary;
   // loopback binding and Host/Origin validation are defense in depth, not auth.
   if (nativeTerminals.available && method !== "OPTIONS" && isNativeApiPath(path)) {
-    if (!hasNativeTerminalAuthorization(req, nativeTerminalAuthToken)) {
+    if (!hasBearerAuthorization(req, nativeTerminalAuthToken)) {
       res.setHeader("www-authenticate", 'Bearer realm="idel-native-terminal"');
       return sendJson(res, 401, { error: "native terminal authorization required" }, false);
     }
@@ -290,7 +341,12 @@ async function handle(
   }
 
   if (path.startsWith("/api/registry/") && method === "GET") {
-    const id = decodeURIComponent(path.slice("/api/registry/".length));
+    let id: string;
+    try {
+      id = decodeURIComponent(path.slice("/api/registry/".length));
+    } catch {
+      return sendJson(res, 400, { error: "invalid encoded registry id" }, cors);
+    }
     // Validate the shape up front (defense in depth) rather than relying on the
     // registry to reject it downstream: a command id is dotted lowercase, never
     // a path. Anything else is a 400, not a registry miss.
@@ -306,7 +362,8 @@ async function handle(
   }
 
   if (path === "/api/preview" && method === "POST") {
-    const body = await readJsonBody<PreviewRequest>(req);
+    const untrusted = await readJsonBody<PreviewRequest>(req);
+    const body = publicPreviewRequest(untrusted);
     try {
       return sendJson(res, 200, await service.preview(body), cors);
     } catch (err) {
@@ -318,10 +375,15 @@ async function handle(
   }
 
   if (path === "/api/run" && method === "POST") {
-    const body = await readJsonBody<RunRequest>(req);
-    const commands = body.native ? [body.command] : service.batchCommands(body.command ?? "");
-    if (!body.native && commands.length > 1) {
-      return sendJson(res, 200, await service.runBatch(body), cors);
+    const untrusted = await readJsonBody<RunRequest>(req);
+    const body = publicRunRequest(untrusted);
+    const commands = service.batchCommands(body.command ?? "");
+    if (commands.length > 1) {
+      const result = await service.runBatch(body);
+      const outcomes = result.outcomes.map((outcome, index) =>
+        bindRunApproval(outcome, { ...body, command: commands[index]! }, runApprovals),
+      );
+      return sendJson(res, 200, { ...result, outcomes }, cors);
     }
     const ask = parseAskAiRunCommand(body.command ?? "");
     if (ask.isAskAi) {
@@ -340,7 +402,7 @@ async function handle(
     }
     try {
       const outcome = await service.run(body);
-      return sendJson(res, 200, outcome, cors);
+      return sendJson(res, 200, bindRunApproval(outcome, body, runApprovals), cors);
     } catch (err) {
       if (err instanceof ServiceError) {
         return sendJson(res, err.status, { error: err.message }, cors);
@@ -350,16 +412,37 @@ async function handle(
   }
 
   if (path === "/api/run/stream" && method === "POST") {
-    const body = await readJsonBody<RunRequest>(req);
-    const commands = body.native ? [body.command] : service.batchCommands(body.command ?? "");
-    if (!body.native && commands.length > 1) {
-      return runBatchStream(res, service, body, commands, cors);
+    const untrusted = await readJsonBody<RunRequest>(req);
+    const body = publicRunRequest(untrusted);
+    const commands = service.batchCommands(body.command ?? "");
+    if (commands.length > 1) {
+      return runBatchStream(res, service, body, commands, cors, runApprovals);
     }
     const ask = parseAskAiRunCommand(body.command ?? "");
     if (ask.isAskAi) {
       return runAskAiStream(res, agent, ask.intent, cors, approvals);
     }
-    return runStream(res, service, body, cors);
+    return runStream(res, service, body, cors, runApprovals);
+  }
+
+  // A direct execution approval is an opaque, single-use capability bound to
+  // the exact server-derived request that produced the approval_required
+  // outcome. Clients cannot change the command, cwd, origin, or approval bit.
+  if (path === "/api/run/approve" && method === "POST") {
+    const body = await readJsonBody<{ approvalId?: string; approve?: boolean }>(req);
+    const approved = runApprovals.consume(body.approvalId ?? "");
+    if (!approved) {
+      return sendJson(res, 404, { error: "no pending run approval with that id" }, cors);
+    }
+    try {
+      const outcome = await service.run({ ...approved, approve: body.approve === true });
+      return sendJson(res, 200, outcome, cors);
+    } catch (err) {
+      if (err instanceof ServiceError) {
+        return sendJson(res, err.status, { error: err.message }, cors);
+      }
+      throw err;
+    }
   }
 
   if (path === "/api/learn" && method === "POST") {
@@ -510,7 +593,7 @@ async function handle(
 
   // --- Static UI (optional) ----------------------------------------------
   if (staticDir && method === "GET") {
-    const served = await serveStatic(res, staticDir, path, cors, nativeTerminalAuthToken);
+    const served = await serveStatic(res, staticDir, path, cors, apiAuthToken);
     if (served) return;
   }
 
@@ -523,6 +606,7 @@ async function runStream(
   service: TerminalService,
   body: RunRequest,
   cors: boolean,
+  approvals: PendingRunApprovals,
 ): Promise<void> {
   if (cors) setCors(res);
   res.writeHead(200, {
@@ -532,7 +616,7 @@ async function runStream(
   });
   try {
     const outcome = await service.run(body);
-    writeSse(res, "outcome", outcome);
+    writeSse(res, "outcome", bindRunApproval(outcome, body, approvals));
   } catch (err) {
     const status = err instanceof ServiceError ? err.status : 500;
     writeSse(res, "error", { error: String((err as Error).message), status });
@@ -549,6 +633,7 @@ async function runBatchStream(
   body: RunRequest,
   commands: string[],
   cors: boolean,
+  approvals: PendingRunApprovals,
 ): Promise<void> {
   if (cors) setCors(res);
   res.writeHead(200, {
@@ -563,7 +648,11 @@ async function runBatchStream(
       const command = commands[i]!;
       writeSse(res, "batch_step", { index: i + 1, total: commands.length, command });
       const outcome = await service.run({ ...body, command, native: false });
-      writeSse(res, "outcome", outcome);
+      writeSse(
+        res,
+        "outcome",
+        bindRunApproval(outcome, { ...body, command, native: false }, approvals),
+      );
       if (!batchStepSucceeded(outcome, body.dryRun === true)) {
         writeSse(res, "batch_stop", {
           index: i + 1,
@@ -897,9 +986,88 @@ class PendingApprovals {
   }
 }
 
+/**
+ * Single-use capabilities for direct (non-agent) policy approvals. Keeping the
+ * original request server-side prevents a client from previewing one command
+ * and approving another, or from forging `origin` / `approve` fields.
+ */
+class PendingRunApprovals {
+  private readonly pending = new Map<string, { request: RunRequest; expiresAt: number }>();
+  private static readonly TIMEOUT_MS = 5 * 60_000;
+
+  create(request: RunRequest): string {
+    this.prune();
+    if (this.pending.size >= 256) {
+      const oldest = this.pending.keys().next().value;
+      if (typeof oldest === "string") this.pending.delete(oldest);
+    }
+    const id = `run_appr_${randomUUID()}`;
+    this.pending.set(id, {
+      request: {
+        command: request.command,
+        native: false,
+        dryRun: request.dryRun === true,
+        ...(request.cwd ? { cwd: request.cwd } : {}),
+        origin: "api",
+      },
+      expiresAt: Date.now() + PendingRunApprovals.TIMEOUT_MS,
+    });
+    return id;
+  }
+
+  consume(id: string): RunRequest | undefined {
+    const item = this.pending.get(id);
+    this.pending.delete(id);
+    if (!item || item.expiresAt <= Date.now()) return undefined;
+    return item.request;
+  }
+
+  cancelAll(): void {
+    this.pending.clear();
+  }
+
+  private prune(): void {
+    const now = Date.now();
+    for (const [id, item] of this.pending) {
+      if (item.expiresAt <= now) this.pending.delete(id);
+    }
+  }
+}
+
+function publicRunRequest(body: RunRequest): RunRequest {
+  return {
+    command: typeof body.command === "string" ? body.command : "",
+    native: false,
+    dryRun: body.dryRun === true,
+    ...(typeof body.cwd === "string" ? { cwd: body.cwd } : {}),
+    origin: "api",
+  };
+}
+
+function publicPreviewRequest(body: PreviewRequest): PreviewRequest {
+  return {
+    command: typeof body.command === "string" ? body.command : "",
+    native: false,
+    ...(typeof body.cwd === "string" ? { cwd: body.cwd } : {}),
+    origin: "api",
+  };
+}
+
+function bindRunApproval(
+  outcome: RuntimeOutcome,
+  request: RunRequest,
+  approvals: PendingRunApprovals,
+): RuntimeOutcome & { approvalId?: string } {
+  if (outcome.record.result !== "approval_required") return outcome;
+  return { ...outcome, approvalId: approvals.create(request) };
+}
+
 // --- helpers ---------------------------------------------------------------
 
-function validateRequestBoundary(req: IncomingMessage): { ok: true; origin?: string } | { ok: false; error: string } {
+function validateRequestBoundary(
+  req: IncomingMessage,
+  allowCrossOrigin: boolean,
+): { ok: true; origin?: string } | { ok: false; error: string } {
   const host = req.headers.host;
   if (host && !isLoopbackHostHeader(host)) {
     return { ok: false, error: `host is not allowed: ${host}` };
@@ -911,7 +1079,19 @@ function validateRequestBoundary(req: IncomingMessage): { ok: true; origin?: str
   if (!allowedOrigin) {
     return { ok: false, error: `origin is not allowed: ${origin}` };
   }
+  if (!sameOriginHost(origin, host) && !allowCrossOrigin) {
+    return { ok: false, error: `cross-origin request is not allowed: ${origin}` };
+  }
   return { ok: true, origin: allowedOrigin };
+}
+
+function sameOriginHost(origin: string, hostHeader: string | undefined): boolean {
+  if (!hostHeader) return false;
+  try {
+    return new URL(origin).host.toLowerCase() === hostHeader.trim().toLowerCase();
+  } catch {
+    return false;
+  }
 }
 
 function normalizeAllowedOrigin(origin: string): string | undefined {
@@ -975,10 +1155,10 @@ function stripIpv6Brackets(value: string): string {
   return value.startsWith("[") && value.endsWith("]") ? value.slice(1, -1) : value;
 }
 
-function validateNativeTerminalAuthToken(token: string | undefined): string {
+function validateAuthToken(token: string | undefined, boundary: string): string {
   if (!token || token.length < 32 || token.length > 256 || !/^[A-Za-z0-9_-]+$/.test(token)) {
     throw new ServiceError(
-      "enabling native terminals requires nativeTerminalAuthToken as a 32-256 character base64url secret",
+      `${boundary} authorization requires a 32-256 character base64url secret`,
       400,
     );
   }
@@ -989,7 +1169,7 @@ function isNativeApiPath(path: string): boolean {
   return path === "/api/native" || path.startsWith("/api/native/");
 }
 
-function hasNativeTerminalAuthorization(
+function hasBearerAuthorization(
   req: IncomingMessage,
   expected: string | undefined,
 ): boolean {
@@ -1061,6 +1241,9 @@ function sendJson(
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
     "content-length": Buffer.byteLength(body),
+    "cache-control": "no-store",
+    "x-content-type-options": "nosniff",
+    "referrer-policy": "no-referrer",
   });
   res.end(body);
 }
@@ -1099,7 +1282,7 @@ async function serveStatic(
   dir: string,
   urlPath: string,
   cors: boolean,
-  nativeTerminalAuthToken?: string,
+  apiAuthToken?: string,
 ): Promise<boolean> {
   const rel = urlPath === "/" ? "index.html" : urlPath.replace(/^\/+/, "");
   // Resolve and confirm the target stays inside `dir` (traversal guard).
@@ -1126,17 +1309,17 @@ async function serveStatic(
     return false;
   }
   const isHtml = extname(filePath) === ".html";
-  const hasNativeBootstrap = isHtml && data.includes(NATIVE_TERMINAL_BOOTSTRAP_MARKER);
-  if (hasNativeBootstrap) {
-    const rendered = data.toString("utf8").replaceAll(
-      NATIVE_TERMINAL_BOOTSTRAP_MARKER,
-      escapeHtmlAttribute(nativeTerminalAuthToken ?? ""),
-    );
+  const hasAuthBootstrap = isHtml &&
+    (data.includes(API_BOOTSTRAP_MARKER) || data.includes(LEGACY_NATIVE_BOOTSTRAP_MARKER));
+  if (hasAuthBootstrap) {
+    const rendered = data.toString("utf8")
+      .replaceAll(API_BOOTSTRAP_MARKER, escapeHtmlAttribute(apiAuthToken ?? ""))
+      .replaceAll(LEGACY_NATIVE_BOOTSTRAP_MARKER, escapeHtmlAttribute(apiAuthToken ?? ""));
     data = Buffer.from(rendered, "utf8");
   }
-  // A boot document carrying the in-memory native bearer is never CORS-readable
+  // A boot document carrying the in-memory API bearer is never CORS-readable
   // and never cacheable. Same-origin navigation remains unaffected.
-  if (hasNativeBootstrap) {
+  if (hasAuthBootstrap) {
     res.removeHeader("access-control-allow-origin");
     res.removeHeader("access-control-allow-credentials");
   } else if (cors) {
@@ -1146,7 +1329,21 @@ async function serveStatic(
     "content-type": MIME[extname(filePath)] ?? "application/octet-stream",
     "content-length": data.length,
     "x-content-type-options": "nosniff",
-    ...(hasNativeBootstrap
+    "content-security-policy": [
+      "default-src 'self'",
+      "script-src 'self'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob:",
+      "font-src 'self'",
+      "connect-src 'self' http://127.0.0.1:* http://localhost:*",
+      "object-src 'none'",
+      "base-uri 'none'",
+      "frame-ancestors 'self' vscode-webview: https://*.vscode-webview.net",
+      "form-action 'self'",
+    ].join("; "),
+    "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+    "cross-origin-opener-policy": "same-origin",
+    ...(hasAuthBootstrap
       ? { "cache-control": "no-store", "referrer-policy": "no-referrer" }
       : {}),
   });
@@ -1154,7 +1351,8 @@ async function serveStatic(
   return true;
 }
 
-const NATIVE_TERMINAL_BOOTSTRAP_MARKER = "__IDEL_NATIVE_TERMINAL_AUTH_TOKEN__";
+const API_BOOTSTRAP_MARKER = "__IDEL_API_AUTH_TOKEN__";
+const LEGACY_NATIVE_BOOTSTRAP_MARKER = "__IDEL_NATIVE_TERMINAL_AUTH_TOKEN__";
 
 function escapeHtmlAttribute(value: string): string {
   return value

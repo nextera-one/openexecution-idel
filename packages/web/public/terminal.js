@@ -8,8 +8,17 @@
 // Both render into the same scrollback. The runtime, not this page, is the
 // enforcement boundary — the UI only displays what the server decided.
 
+import {
+  apiUrl as resolveApiUrl,
+  authorizedRequestOptions,
+  normalizeApiBase,
+  readBootstrapApiToken,
+} from "./api-client.js";
+
 const $ = (id) => document.getElementById(id);
 const initialOutput = $("output");
+const terminalAnnouncer = $("terminal-announcer");
+const welcomeAsk = $("welcome-ask");
 const input = $("input");
 const form = $("form");
 const promptEl = $("prompt");
@@ -20,6 +29,8 @@ const riskIndicator = $("risk-indicator");
 const completionsEl = $("completions");
 const statusEl = $("status");
 const logsEl = $("logs");
+const auditFilter = $("audit-filter");
+const auditVerifyStatus = $("audit-verify-status");
 const tabsEl = $("tabs");
 const modeIdelBtn = $("mode-idel");
 const modeAskBtn = $("mode-ask");
@@ -27,6 +38,7 @@ const connectOpen = $("connect-open");
 const connectDialog = $("connect-dialog");
 const connectClose = $("connect-close");
 const connectUrl = $("connect-url");
+const connectToken = $("connect-token");
 const connectHost = $("connect-host");
 const connectUser = $("connect-user");
 const connectLocalPort = $("connect-local-port");
@@ -37,6 +49,12 @@ const connectReset = $("connect-reset");
 const connectTest = $("connect-test");
 const connectApply = $("connect-apply");
 const connectStatus = $("connect-status");
+const policyOpen = $("policy-open");
+const policyDialog = $("policy-dialog");
+const policyClose = $("policy-close");
+const policyCommand = $("policy-command");
+const policyEvaluate = $("policy-evaluate");
+const policyResult = $("policy-result");
 const appearanceMenuOpen = $("appearance-menu-open");
 const appearanceMenuDialog = $("appearance-menu-dialog");
 const actionsMenuOpen = $("actions-menu-open");
@@ -155,6 +173,8 @@ const tabs = [];
 const compactInputMedia = typeof window.matchMedia === "function" ? window.matchMedia("(max-width: 520px)") : null;
 const reducedMotionMedia = typeof window.matchMedia === "function" ? window.matchMedia("(prefers-reduced-motion: reduce)") : null;
 let commandBusy = false;
+let pendingCommandApprovalCount = 0;
+let pendingAgentApprovalCount = 0;
 let screenshotScope = "visible";
 let screenshotSource = null;
 let agentAvailable = true;
@@ -182,7 +202,8 @@ let matrixColumns = [];
 let matrixLastFrame = 0;
 let pageReloadConfirmed = false;
 let pendingNativePaste = null;
-const nativeTerminalAuthToken = readNativeTerminalAuthToken();
+const bootstrapApiAuthToken = readBootstrapApiToken();
+let remoteApiAuthToken = "";
 const AGENT_PROGRESS_STEPS = [
   "Reading request",
   "Preparing context",
@@ -190,39 +211,13 @@ const AGENT_PROGRESS_STEPS = [
   "Waiting for response",
 ];
 
-function normalizeApiBase(raw) {
-  const text = String(raw ?? "").trim();
-  if (!text) return "";
-  const withScheme = /^https?:\/\//i.test(text) ? text : `http://${text}`;
-  try {
-    const url = new URL(withScheme);
-    url.pathname = url.pathname.replace(/\/+$/, "");
-    url.search = "";
-    url.hash = "";
-    return url.toString().replace(/\/$/, "");
-  } catch {
-    return null;
-  }
-}
-
 function apiUrl(path) {
-  if (!apiBaseUrl) return path;
-  return new URL(path, apiBaseUrl).toString();
+  return resolveApiUrl(apiBaseUrl, path);
 }
 
 function apiFetch(path, options) {
-  if (!String(path).startsWith("/api/native/") || !nativeTerminalAuthToken) {
-    return fetch(apiUrl(path), options);
-  }
-  const headers = new Headers(options?.headers);
-  headers.set("authorization", `Bearer ${nativeTerminalAuthToken}`);
-  return fetch(apiUrl(path), { ...options, headers });
-}
-
-/** Read the no-store, same-origin bootstrap value injected into terminal.html. */
-function readNativeTerminalAuthToken() {
-  const token = document.querySelector('meta[name="idel-native-terminal-auth"]')?.content ?? "";
-  return token === "__IDEL_NATIVE_TERMINAL_AUTH_TOKEN__" ? "" : token;
+  const token = apiBaseUrl ? remoteApiAuthToken : bootstrapApiAuthToken;
+  return fetch(apiUrl(path), authorizedRequestOptions(path, token, options));
 }
 
 function currentApiLabel() {
@@ -324,6 +319,7 @@ let searchCaseSensitive = false;
 let searchUseRegex = false;
 let searchResults = [];
 let searchFocusedLine = null;
+let auditRecords = [];
 let searchFocusTimer = 0;
 let aiPromptBusy = false;
 let aiPromptProgressText = "Asking AI";
@@ -554,9 +550,98 @@ function initConnectDialog() {
   connectCopySsh?.addEventListener("click", () => void copyConnectSsh());
 }
 
+function initPolicyStudio() {
+  policyOpen?.addEventListener("click", openPolicyStudio);
+  policyClose?.addEventListener("click", closePolicyStudio);
+  policyDialog?.addEventListener("click", (event) => {
+    if (event.target === policyDialog) closePolicyStudio();
+  });
+  policyDialog?.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closePolicyStudio();
+  });
+  policyEvaluate?.addEventListener("click", () => void evaluatePolicyCommand());
+  policyCommand?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    void evaluatePolicyCommand();
+  });
+}
+
+function openPolicyStudio() {
+  if (!policyDialog) return;
+  if (policyCommand && !policyCommand.value.trim()) {
+    policyCommand.value = input.value.trim() || "remove.folder name=dist recursive=true";
+  }
+  if (typeof policyDialog.showModal === "function") policyDialog.showModal();
+  else policyDialog.setAttribute("open", "");
+  policyCommand?.focus();
+  policyCommand?.select();
+}
+
+function closePolicyStudio() {
+  if (!policyDialog) return;
+  if (typeof policyDialog.close === "function" && policyDialog.open) policyDialog.close();
+  else policyDialog.removeAttribute("open");
+  focusActiveInput();
+}
+
+async function evaluatePolicyCommand() {
+  const command = String(policyCommand?.value || "").trim();
+  if (!command || !policyResult) return;
+  policyEvaluate.disabled = true;
+  policyResult.textContent = "Evaluating without execution…";
+  try {
+    const response = await apiFetch("/api/preview", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ command }),
+    });
+    const preview = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(preview.error || `HTTP ${response.status}`);
+    renderPolicySimulation(preview);
+  } catch (error) {
+    policyResult.textContent = `Evaluation failed: ${error?.message || String(error)}`;
+  } finally {
+    policyEvaluate.disabled = false;
+  }
+}
+
+function renderPolicySimulation(preview) {
+  if (!policyResult) return;
+  policyResult.replaceChildren();
+  const head = document.createElement("div");
+  head.className = "policy-result-head";
+  head.append(
+    reviewBadge(preview.risk?.level || "LOW", `risk-${preview.risk?.level || "LOW"}`),
+    reviewBadge(String(preview.decision?.action || "unknown").replaceAll("_", " "), "review-decision"),
+  );
+  const reason = document.createElement("span");
+  reason.textContent = preview.decision?.reason || "No policy reason provided.";
+  head.appendChild(reason);
+  policyResult.appendChild(head);
+  const translated = translateLine(preview);
+  if (translated) {
+    const code = document.createElement("code");
+    code.textContent = translated;
+    policyResult.appendChild(code);
+  }
+  const findings = preview.risk?.findings || [];
+  if (findings.length) {
+    const list = document.createElement("ul");
+    for (const finding of findings) {
+      const item = document.createElement("li");
+      item.textContent = `[${finding.level}] ${finding.code}: ${finding.message}`;
+      list.appendChild(item);
+    }
+    policyResult.appendChild(list);
+  }
+}
+
 function openConnectDialog() {
   if (!connectDialog) return;
   if (connectUrl) connectUrl.value = apiBaseUrl || location.origin;
+  if (connectToken) connectToken.value = apiBaseUrl ? remoteApiAuthToken : "";
   if (connectLocalPort && !connectLocalPort.value) connectLocalPort.value = "8787";
   if (connectRemotePort && !connectRemotePort.value) connectRemotePort.value = "7878";
   setConnectStatus(`Current: ${currentApiLabel()}`, "");
@@ -579,7 +664,9 @@ async function applyConnectDialog() {
     return;
   }
   const previous = apiBaseUrl;
+  const previousToken = remoteApiAuthToken;
   apiBaseUrl = base;
+  remoteApiAuthToken = base ? String(connectToken?.value ?? "").trim() : "";
   if (apiBaseUrl) storageSet(API_BASE_KEY, apiBaseUrl);
   else storageRemove(API_BASE_KEY);
   try {
@@ -592,6 +679,7 @@ async function applyConnectDialog() {
     closeConnectDialog();
   } catch (err) {
     apiBaseUrl = previous;
+    remoteApiAuthToken = previousToken;
     if (apiBaseUrl) storageSet(API_BASE_KEY, apiBaseUrl);
     else storageRemove(API_BASE_KEY);
     setConnectStatus(`Connection failed: ${err?.message ?? String(err)}`, "err");
@@ -605,7 +693,9 @@ async function testConnectDialog() {
     return;
   }
   const previous = apiBaseUrl;
+  const previousToken = remoteApiAuthToken;
   apiBaseUrl = base;
+  remoteApiAuthToken = base ? String(connectToken?.value ?? "").trim() : "";
   try {
     const data = await fetchHealth();
     setConnectStatus(`OK: idel ${data.version ?? "unknown"} · ${data.platform ?? "unknown"}`, "ok");
@@ -613,11 +703,13 @@ async function testConnectDialog() {
     setConnectStatus(`Failed: ${err?.message ?? String(err)}`, "err");
   } finally {
     apiBaseUrl = previous;
+    remoteApiAuthToken = previousToken;
   }
 }
 
 async function resetConnectDialog() {
   apiBaseUrl = "";
+  remoteApiAuthToken = "";
   storageRemove(API_BASE_KEY);
   if (connectUrl) connectUrl.value = location.origin;
   await refreshServerHealth({ suppressSetup: true }).catch(() => undefined);
@@ -3063,11 +3155,26 @@ function initWorkspace() {
     history: [],
     histIdx: -1,
   };
+  initialOutput.id = `${terminal.id}-panel`;
+  initialOutput.setAttribute("aria-labelledby", terminal.id);
   terminalCount = 1;
   tabs.push(terminal);
   activeTabId = terminal.id;
   lastTerminalTabId = terminal.id;
   renderTabs();
+}
+
+function initWelcomeActions() {
+  for (const button of document.querySelectorAll("[data-starter-command]")) {
+    button.addEventListener("click", () => {
+      setMode("idel", { suppressSetup: true });
+      input.value = button.dataset.starterCommand || "";
+      resizeCommandInput();
+      scheduleRiskPreview();
+      input.focus();
+    });
+  }
+  welcomeAsk?.addEventListener("click", () => setMode("ask"));
 }
 
 function initPageRefreshGuard() {
@@ -3132,7 +3239,12 @@ function confirmPageReload() {
 }
 
 function shouldConfirmPageExit() {
-  return true;
+  return commandBusy ||
+    aiPromptBusy ||
+    pendingCommandApprovalCount > 0 ||
+    pendingAgentApprovalCount > 0 ||
+    tabs.some((tab) => tab.type === "editor" && tab.dirty) ||
+    tabs.some((tab) => tab.type === "native" && nativeTabState(tab) !== "exited");
 }
 
 function activeTab() {
@@ -3215,7 +3327,7 @@ function createTerminalTab(activate = true) {
   terminalCount += 1;
   const pane = document.createElement("section");
   pane.className = "term-output";
-  pane.setAttribute("aria-live", "polite");
+  pane.setAttribute("role", "log");
   pane.hidden = true;
   pane.appendChild(lineNode(`Terminal ${terminalCount}. Type an IDEL command and press Enter.`, "muted"));
   form.parentNode.insertBefore(pane, form);
@@ -3227,6 +3339,8 @@ function createTerminalTab(activate = true) {
     history: [],
     histIdx: -1,
   };
+  pane.id = `${tab.id}-panel`;
+  pane.setAttribute("aria-labelledby", tab.id);
   tabs.push(tab);
   if (activate) switchTab(tab.id);
   else renderTabs();
@@ -3242,7 +3356,7 @@ function createNativeTerminalTab(activate = true, options = {}) {
   const nativeNumber = nativeTerminalCount;
   const pane = document.createElement("section");
   pane.className = "term-output native-output";
-  pane.setAttribute("aria-live", "polite");
+  pane.setAttribute("role", "region");
   pane.hidden = true;
   form.parentNode.insertBefore(pane, form);
   const tab = {
@@ -3254,6 +3368,8 @@ function createNativeTerminalTab(activate = true, options = {}) {
     histIdx: -1,
     native: createNativeState(nativeNumber),
   };
+  pane.id = `${tab.id}-panel`;
+  pane.setAttribute("aria-labelledby", tab.id);
   buildNativeToolbar(tab);
   tabs.push(tab);
   if (activate) switchTab(tab.id);
@@ -3546,8 +3662,8 @@ function closeTab(tab) {
 function renderTabs() {
   for (const node of Array.from(tabsEl.querySelectorAll(".workspace-tab"))) node.remove();
   for (const tab of tabs) {
-    const btn = document.createElement("button");
-    btn.type = "button";
+    const btn = document.createElement("div");
+    btn.id = tab.id;
     btn.className = "workspace-tab";
     btn.classList.toggle("active", tab.id === activeTabId);
     btn.classList.toggle("dirty", Boolean(tab.dirty));
@@ -3555,6 +3671,8 @@ function renderTabs() {
     if (tab.type === "native") btn.classList.add(`state-${nativeTabState(tab)}`);
     btn.setAttribute("role", "tab");
     btn.setAttribute("aria-selected", String(tab.id === activeTabId));
+    btn.setAttribute("aria-controls", `${tab.id}-panel`);
+    btn.tabIndex = tab.id === activeTabId ? 0 : -1;
     btn.title = tab.title;
     const label = document.createElement("span");
     label.className = "tab-label";
@@ -3572,9 +3690,11 @@ function renderTabs() {
       tab.type === "native" ||
       tabs.filter((candidate) => candidate.type === "terminal").length > 1;
     if (canClose) {
-      const close = document.createElement("span");
+      const close = document.createElement("button");
+      close.type = "button";
       close.className = "tab-close";
       close.textContent = "x";
+      close.setAttribute("aria-label", `Close ${tab.title}`);
       close.addEventListener("click", (e) => {
         e.stopPropagation();
         closeTab(tab);
@@ -3582,7 +3702,29 @@ function renderTabs() {
       btn.appendChild(close);
     }
     btn.addEventListener("click", () => switchTab(tab.id));
-    tabsEl.insertBefore(btn, newTerminalBtn);
+    btn.addEventListener("keydown", (event) => handleWorkspaceTabKey(event, tab));
+    tabsEl.appendChild(btn);
+  }
+}
+
+function handleWorkspaceTabKey(event, tab) {
+  if (event.target !== event.currentTarget) return;
+  const index = tabs.findIndex((candidate) => candidate.id === tab.id);
+  let target;
+  if (event.key === "ArrowRight") target = tabs[(index + 1) % tabs.length];
+  else if (event.key === "ArrowLeft") target = tabs[(index - 1 + tabs.length) % tabs.length];
+  else if (event.key === "Home") target = tabs[0];
+  else if (event.key === "End") target = tabs[tabs.length - 1];
+  else if (event.key === "Enter" || event.key === " ") target = tab;
+  else if (event.key === "Delete") {
+    event.preventDefault();
+    closeTab(tab);
+    return;
+  } else return;
+  event.preventDefault();
+  if (target) {
+    switchTab(target.id);
+    document.getElementById(target.id)?.focus();
   }
 }
 
@@ -3700,6 +3842,7 @@ function line(text, cls = "") {
   const div = lineNode(text, cls);
   output.appendChild(div);
   output.scrollTop = output.scrollHeight;
+  announceTerminal(text);
   return div;
 }
 
@@ -3715,7 +3858,13 @@ function markdownLine(markdown, cls = "text") {
   attachLineActions(div, raw, cls);
   output.appendChild(div);
   output.scrollTop = output.scrollHeight;
+  announceTerminal(raw);
   return div;
+}
+
+function announceTerminal(value) {
+  if (!terminalAnnouncer) return;
+  terminalAnnouncer.textContent = String(value ?? "").replace(/\s+/g, " ").trim().slice(0, 500);
 }
 
 function renderMarkdown(container, markdown) {
@@ -4060,6 +4209,7 @@ function mountNativeTerminal(tab) {
     fontFamily: getComputedStyle(document.body).getPropertyValue("--mono").trim() || "monospace",
     fontSize: xtermFontSize(),
     scrollback: 5000,
+    screenReaderMode: true,
     theme: xtermTheme(),
   });
   const fitAddon = new FitAddonCtor();
@@ -5008,63 +5158,98 @@ function translateLine(o) {
   return plan.command + (plan.argv?.length ? " " + plan.argv.join(" ") : "");
 }
 
-/** Render a RuntimeOutcome the way the CLI's `render()` does, but as DOM. */
+/** Render an execution review card with the decision evidence kept together. */
 function renderOutcome(o) {
   if (!o || !o.record) return;
   const wrap = document.createElement("div");
-  wrap.className = "line";
+  const risk = ["LOW", "MEDIUM", "HIGH", "CRITICAL"].includes(o.risk?.level)
+    ? o.risk.level
+    : "LOW";
+  const result = String(o.record.result || "unknown");
+  wrap.className = `line execution-review review-${risk.toLowerCase()}`;
 
-  // "Translates to" — show the real adapter invocation this IDEL command maps to.
+  const header = document.createElement("div");
+  header.className = "execution-review-head";
+  const title = document.createElement("strong");
+  title.textContent = o.record.command || "Execution result";
+  const badges = document.createElement("span");
+  badges.className = "execution-review-badges";
+  badges.append(
+    reviewBadge(risk, `risk-${risk}`),
+    reviewBadge(String(o.decision?.action || "unknown").replaceAll("_", " "), "review-decision"),
+    reviewBadge(result.replaceAll("_", " "), `review-result-${result}`),
+  );
+  header.append(title, badges);
+  wrap.appendChild(header);
+
   const translated = translateLine(o);
   if (translated) {
     const tl = document.createElement("div");
-    tl.className = "line muted";
-    tl.textContent = "translates to: " + translated;
+    tl.className = "execution-translation";
+    tl.textContent = translated;
     wrap.appendChild(tl);
   }
 
-  const risk = o.risk?.level ?? "LOW";
-  const head = document.createElement("div");
-  head.innerHTML =
-    `Risk: <span class="risk-${risk}">${risk}</span>` +
-    `  ·  Decision: <span class="risk-${risk}">${(o.decision?.action ?? "").toUpperCase()}</span>`;
-  wrap.appendChild(head);
+  const resLine = document.createElement("div");
+  resLine.className = `execution-result ${
+    result === "blocked_before_execution" || result === "failed" ? "err" :
+      result === "success" || result === "dry_run" ? "ok" : ""
+  }`;
+  resLine.textContent = describeResult(result);
+  wrap.appendChild(resLine);
 
-  for (const f of o.risk?.findings ?? []) {
-    const fl = document.createElement("div");
-    fl.className = "line muted";
-    fl.textContent = `  - [${f.level}] ${f.code}: ${f.message}`;
-    wrap.appendChild(fl);
+  const evidence = document.createElement("details");
+  evidence.className = "execution-evidence";
+  evidence.open = risk === "HIGH" || risk === "CRITICAL" || result === "blocked_before_execution";
+  const summary = document.createElement("summary");
+  summary.textContent = "Why this decision";
+  evidence.appendChild(summary);
+  const reason = document.createElement("p");
+  reason.textContent = o.decision?.reason || "No additional policy reason was provided.";
+  evidence.appendChild(reason);
+  for (const finding of o.risk?.findings ?? []) {
+    const item = document.createElement("p");
+    item.className = "execution-finding";
+    item.textContent = `[${finding.level}] ${finding.code}: ${finding.message}`;
+    evidence.appendChild(item);
   }
   if (typeof o.record.affectedPathsEstimate === "number") {
-    const af = document.createElement("div");
-    af.className = "line muted";
-    af.textContent = `  affected paths (estimate): ${o.record.affectedPathsEstimate}`;
-    wrap.appendChild(af);
+    const affected = document.createElement("p");
+    affected.textContent = `Affected paths (estimate): ${o.record.affectedPathsEstimate}`;
+    evidence.appendChild(affected);
   }
-
-  const res = o.record.result;
-  const resLine = document.createElement("div");
-  resLine.className =
-    "line " + (res === "blocked_before_execution" ? "err" : res === "success" || res === "dry_run" ? "ok" : "");
-  resLine.textContent = describeResult(res);
-  wrap.appendChild(resLine);
+  wrap.appendChild(evidence);
 
   const out = o.result;
   if (out) {
-    if (out.simulated && out.stdout) line(out.stdout, "muted");
-    else {
-      if (out.stdout?.trim()) line(out.stdout.replace(/\n$/, ""), "text");
-      if (out.stderr?.trim()) line(out.stderr.replace(/\n$/, ""), "err");
+    for (const [value, className] of [
+      [out.stdout, out.simulated ? "muted" : "text"],
+      [out.stderr, "err"],
+    ]) {
+      if (!value?.trim()) continue;
+      const output = document.createElement("pre");
+      output.className = `execution-output ${className}`;
+      output.textContent = value.replace(/\n$/, "");
+      wrap.appendChild(output);
     }
   }
   html(wrap);
+  announceTerminal(`${o.record.command}. ${describeResult(result)}`);
+}
+
+function reviewBadge(text, className) {
+  const badge = document.createElement("span");
+  badge.className = `execution-badge ${className}`;
+  badge.textContent = text;
+  return badge;
 }
 
 function renderCommandApprovalPrompt(command, outcome) {
   const approvalCommand = String(outcome?.record?.command || command || "").trim();
-  if (!approvalCommand || outcome?.record?.result !== "approval_required") return;
+  const approvalId = String(outcome?.approvalId || "");
+  if (!approvalCommand || !approvalId || outcome?.record?.result !== "approval_required") return;
   const card = document.createElement("div");
+  pendingCommandApprovalCount += 1;
   card.className = "line approval";
   const q = document.createElement("span");
   q.textContent = "Approve this command? ";
@@ -5080,11 +5265,12 @@ function renderCommandApprovalPrompt(command, outcome) {
   const decide = async (approve) => {
     if (settled) return;
     settled = true;
+    pendingCommandApprovalCount = Math.max(0, pendingCommandApprovalCount - 1);
     yes.disabled = no.disabled = true;
     card.classList.add("decided");
     q.textContent = approve ? "Approved — running… " : "Declined. ";
     try {
-      await runApprovedIdel(approvalCommand, approve);
+      await runApprovedIdel(approvalId, approve);
     } catch (err) {
       line("Approval failed: " + (err?.message ?? String(err)), "err");
     }
@@ -5095,17 +5281,15 @@ function renderCommandApprovalPrompt(command, outcome) {
   html(card);
 }
 
-async function runApprovedIdel(command, approve) {
-  await postSse("/api/run/stream", { command, dryRun: false, approve }, (event, data) => {
-    if (event === "outcome") renderOutcome(data);
-    else if (event === "batch_start") line(`batch: ${data.commands?.length ?? 0} step(s)`, "muted");
-    else if (event === "batch_step") line(`batch ${data.index}/${data.total}> ${data.command}`, "muted");
-    else if (event === "batch_stop") {
-      const skipped = Math.max(0, Number(data.total ?? 0) - Number(data.index ?? 0));
-      line(`batch stopped at step ${data.index}; ${skipped} step(s) skipped`, "err");
-    }
-    else if (event === "error") line("Error: " + (data.error ?? "unknown"), "err");
+async function runApprovedIdel(approvalId, approve) {
+  const res = await apiFetch("/api/run/approve", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ approvalId, approve }),
   });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  renderOutcome(data);
   refreshLogs();
 }
 
@@ -5287,6 +5471,9 @@ function renderInlineEditor(file, content, language) {
     dirty: false,
     editorState: undefined,
   };
+  pane.id = `${tab.id}-panel`;
+  pane.setAttribute("role", "region");
+  pane.setAttribute("aria-labelledby", tab.id);
   tabs.push(tab);
 
   const card = pane;
@@ -6213,6 +6400,7 @@ function renderApprovalPrompt(data, askTurn = null) {
   if (data.outcome) renderOutcome(data.outcome);
 
   const card = document.createElement("div");
+  pendingAgentApprovalCount += 1;
   card.className = "line approval";
   const q = document.createElement("span");
   q.textContent = "Run this for real? ";
@@ -6235,6 +6423,7 @@ function renderApprovalPrompt(data, askTurn = null) {
   const decide = async (approve, options = {}) => {
     if (settled) return;
     settled = true;
+    pendingAgentApprovalCount = Math.max(0, pendingAgentApprovalCount - 1);
     yes.disabled = auto.disabled = no.disabled = true;
     card.classList.add("decided");
     if (options.autoApproveRule && autoRule.allowed) {
@@ -6633,19 +6822,104 @@ async function refreshLogs() {
   try {
     const res = await apiFetch("/api/logs?limit=20");
     if (!res.ok) return;
-    const recs = await res.json();
-    logsEl.innerHTML = "";
-    for (const r of recs.reverse()) {
-      const div = document.createElement("div");
-      div.className = "log-rec";
-      const src = r.source === "agent" ? '<span class="log-src-agent">agent</span>' : r.source;
-      div.innerHTML =
-        `<div class="lr-cmd">${escapeHtml(r.command)}</div>` +
-        `<div class="lr-meta"><span class="risk-${r.risk}">${r.risk}</span> · ${r.policyDecision} · ${r.result} · ${src}</div>`;
-      logsEl.appendChild(div);
-    }
+    auditRecords = (await res.json()).reverse();
+    renderAuditRecords();
   } catch {
     /* logs are best-effort */
+  }
+}
+
+function renderAuditRecords() {
+  if (!logsEl) return;
+  const filter = auditFilter?.value || "all";
+  const records = auditRecords.filter((record) => {
+    if (filter === "attention") {
+      return record.risk === "HIGH" || record.risk === "CRITICAL" ||
+        ["failed", "blocked_before_execution", "approval_required"].includes(record.result);
+    }
+    if (filter === "agent") return record.source === "agent";
+    if (filter === "writes") return record.dryRun === false && record.result === "success";
+    return true;
+  });
+  logsEl.replaceChildren();
+  if (!records.length) {
+    const empty = document.createElement("p");
+    empty.className = "audit-empty";
+    empty.textContent = auditRecords.length ? "No records match this filter." : "No audit records yet.";
+    logsEl.appendChild(empty);
+    return;
+  }
+  for (const record of records) logsEl.appendChild(auditRecordNode(record));
+}
+
+function auditRecordNode(record) {
+  const details = document.createElement("details");
+  details.className = "log-rec";
+  const summary = document.createElement("summary");
+  const command = document.createElement("span");
+  command.className = "lr-cmd";
+  command.textContent = formatAuditCommand(record);
+  const meta = document.createElement("span");
+  meta.className = "lr-meta";
+  const risk = document.createElement("span");
+  risk.className = `risk-${record.risk}`;
+  risk.textContent = record.risk;
+  const source = document.createElement("span");
+  source.className = record.source === "agent" ? "log-src-agent" : "";
+  source.textContent = record.source;
+  meta.append(risk, ` · ${record.policyDecision} · ${record.result} · `, source);
+  summary.append(command, meta);
+
+  const body = document.createElement("dl");
+  body.className = "audit-detail";
+  const fields = [
+    ["Time", formatAuditTime(record.timestamp)],
+    ["Working directory", record.cwd],
+    ["Parameters", JSON.stringify(record.ast?.params || {})],
+    ["Policy", record.policyReason],
+    ["Adapter", record.adapter || "none"],
+    ["Duration", Number.isFinite(record.durationMs) ? `${record.durationMs} ms` : "—"],
+  ];
+  for (const [label, value] of fields) {
+    const term = document.createElement("dt");
+    term.textContent = label;
+    const description = document.createElement("dd");
+    description.textContent = String(value || "—");
+    body.append(term, description);
+  }
+  details.append(summary, body);
+  return details;
+}
+
+function formatAuditCommand(record) {
+  const params = Object.entries(record.ast?.params || {})
+    .map(([key, value]) => `${key}=${JSON.stringify(value)}`)
+    .join(" ");
+  return `${record.command || record.ast?.command || "command"}${params ? ` ${params}` : ""}`;
+}
+
+function formatAuditTime(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? String(value || "—") : date.toLocaleString();
+}
+
+async function verifyAuditLog() {
+  if (!auditVerifyStatus) return;
+  auditVerifyStatus.textContent = "Verifying…";
+  try {
+    const response = await apiFetch("/api/logs/verify");
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || result.ok !== true) {
+      auditVerifyStatus.textContent = `Integrity failed${result.error ? `: ${result.error}` : ""}`;
+      auditVerifyStatus.className = "err";
+      return;
+    }
+    const count = result.records ?? result.recordCount ?? 0;
+    auditVerifyStatus.textContent = `Verified · ${count} record${count === 1 ? "" : "s"}`;
+    auditVerifyStatus.className = "ok";
+  } catch {
+    auditVerifyStatus.textContent = "Verification unavailable";
+    auditVerifyStatus.className = "err";
   }
 }
 
@@ -6758,6 +7032,8 @@ modeAskBtn.addEventListener("click", () => {
   activateAskMode();
 });
 $("refresh-logs").addEventListener("click", refreshLogs);
+$("verify-logs")?.addEventListener("click", () => void verifyAuditLog());
+auditFilter?.addEventListener("change", renderAuditRecords);
 newTerminalBtn.addEventListener("click", () => createTerminalTab(true));
 newNativeTerminalBtn?.addEventListener("click", () => createNativeTerminalTab(true));
 if (compactInputMedia?.addEventListener) compactInputMedia.addEventListener("change", syncInputPlaceholder);
@@ -6974,6 +7250,7 @@ async function boot() {
 
 initPreferences();
 initConnectDialog();
+initPolicyStudio();
 initClaudeSetupDialog();
 initDictionary();
 initKnowledgeBase();
@@ -6984,6 +7261,7 @@ initNativeSessionsDialog();
 initSetupChecklist();
 initScreenshotActions();
 initWorkspace();
+initWelcomeActions();
 initPageRefreshGuard();
 setServerPlatform("");
 setMultilineBatch(false);
