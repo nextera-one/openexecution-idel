@@ -8,9 +8,9 @@ The bet of V1 is narrow and defensible: **prove that a runtime can prevent dange
 
 ---
 
-## Table of Contents
-
 Desktop preview installers are published in [GitHub Releases](https://github.com/nextera-one/openexecution-idel/releases). Windows x64, macOS Intel/Apple Silicon, and Linux x64 packages include the runtime. Read the signing status and installation limitations in each preview's release notes.
+
+## Table of Contents
 
 - [The killer demo](#the-killer-demo)
 - [Why this exists](#why-this-exists)

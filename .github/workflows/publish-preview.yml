@@ -83,5 +83,7 @@ jobs:
             echo 'Release or tag already exists; use a new preview version.' >&2
             exit 1
           fi
-          gh release create "$RELEASE_TAG" dist/release/* --target "$SOURCE_SHA" --draft --prerelease --title "IDEL ${RELEASE_TAG#v}" --notes-file docs/preview-1-release-notes.md
+          test -f "docs/releases/$RELEASE_TAG.md"
+          rg --fixed-strings --quiet "$SOURCE_SHA" "docs/releases/$RELEASE_TAG.md"
+          gh release create "$RELEASE_TAG" dist/release/* --target "$SOURCE_SHA" --draft --prerelease --title "IDEL ${RELEASE_TAG#v}" --notes-file "docs/releases/$RELEASE_TAG.md"
           gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false
