@@ -18,6 +18,7 @@ USAGE
   idel terminal                        interactive IDEL terminal (readline REPL; \`? <ask>\` for AI)
   idel connect <server-url>            connect this terminal to a remote IDEL server
   idel serve [--port N] [--static D]   start the local web/desktop terminal server
+  idel ui [--port N]                  open the bundled terminal in your browser
   idel completion <partial>            print autocomplete suggestions
   idel help | version
 

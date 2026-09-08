@@ -383,6 +383,7 @@ async function handle(
         agentProvider,
         agentProviders: [...agents.keys()],
         nativeAvailable: nativeTerminals.available,
+        nativeAudit: service.nativeAuditStatus,
       },
       cors,
     );

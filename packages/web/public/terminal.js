@@ -1888,6 +1888,8 @@ function closeSetupChecklist() {
   focusActiveInput();
 }
 
+let nativeAuditFailures = 0;
+
 function renderSetupChecklist() {
   if (!setupChecks) return;
   const packagePack = dictionaryEntries.some((entry) => /\.apt\.|\.brew\.|\.winget\./.test(entry.id));
@@ -1898,7 +1900,8 @@ function renderSetupChecklist() {
     setupCheck("Registry", registryCommandCount > 0, registryCommandCount ? `${registryCommandCount} commands loaded.` : "Registry is not loaded yet."),
     setupCheck("Package commands", packagePack, packagePack ? "Curated package-manager commands are available." : "Package-manager commands are not loaded."),
     setupCheck("Native shell", nativeAvailable, nativeAvailable ? "Native shell tabs are available." : "Native shell tabs are disabled.", "warn"),
-    setupCheck("AI provider", agentAvailable, agentAvailable ? "Ask AI is ready." : "Ask AI needs a supported provider."),
+    setupCheck("AI provider (optional)", agentAvailable, agentAvailable ? "Ask AI is ready." : "IDEL commands work without AI. Configure a provider to use Ask AI.", "warn"),
+    setupCheck("Native audit", nativeAuditFailures === 0, nativeAuditFailures ? `${nativeAuditFailures} native lifecycle event(s) could not be recorded. Restart after repairing audit storage.` : "No native audit failures reported."),
     setupCheck("Saved workflows", workflows.length > 0, workflows.length ? `${workflows.length} workflow(s) saved.` : "No workflows saved yet.", "warn"),
   ];
   setupChecks.innerHTML = "";
@@ -2426,6 +2429,7 @@ async function fetchHealth() {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json();
   if (!data?.ok) throw new Error("health check failed");
+  nativeAuditFailures = Number(data.nativeAudit?.failures) || 0;
   return data;
 }
 

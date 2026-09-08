@@ -1,5 +1,7 @@
 import { hostname, userInfo, platform, homedir } from "node:os";
 import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 
 import { splitBatch } from "@openexecution/parser";
@@ -37,6 +39,16 @@ import { HELP_TEXT, VERSION } from "./help.js";
 
 /** Process entry point. Returns the desired process exit code. */
 export async function main(argv: string[]): Promise<number> {
+  if (argv[0] === "ui") {
+    const bundledWeb = fileURLToPath(new URL("../web/", import.meta.url));
+    const sourceWeb = fileURLToPath(new URL("../../web/public/", import.meta.url));
+    const staticDir = existsSync(join(bundledWeb, "terminal.html")) ? bundledWeb : sourceWeb;
+    if (!existsSync(join(staticDir, "terminal.html"))) {
+      process.stderr.write("IDEL web assets are missing. Reinstall the CLI package.\n");
+      return 1;
+    }
+    argv = ["serve", "--static", staticDir, "--open", ...argv.slice(1)];
+  }
   let inv;
   try {
     inv = parseArgv(argv);

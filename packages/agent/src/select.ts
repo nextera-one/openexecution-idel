@@ -81,14 +81,14 @@ export function createAgentForProvider(opts: SelectOptions & { force: ProviderKi
     });
   }
   const system = cliSystemPrompt(opts.service);
-  const provider = kind === "openai"
+  const providerFactory = () => kind === "openai"
     ? new OpenAiApiProvider({ system, model: opts.model, apiKey: opts.apiKey })
     : new GeminiApiProvider({
         system,
         model: opts.model,
         apiKey: opts.apiKey ?? process.env["GEMINI_API_KEY"] ?? process.env["GOOGLE_API_KEY"],
       });
-  return new IdelCliAgent({ service: opts.service, approve: opts.approve, provider });
+  return new IdelCliAgent({ service: opts.service, approve: opts.approve, providerFactory });
 }
 
 /** Build the selected agent, or return null when its credentials are unavailable. */

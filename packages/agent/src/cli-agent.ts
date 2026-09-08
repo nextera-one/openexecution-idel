@@ -34,25 +34,27 @@ export interface CliAgentOptions {
   maxSteps?: number;
   /** Injectable structured-plan provider. Defaults to a real ClaudeCliProvider. */
   provider?: PlanProvider;
+  /** Create isolated conversation state for each ask; preferred by hosts. */
+  providerFactory?: () => PlanProvider;
 }
 
 export class IdelCliAgent {
   private readonly service: TerminalService;
   private readonly approve: AgentApproval | undefined;
   private readonly maxSteps: number;
-  private readonly provider: PlanProvider;
+  private readonly providerFactory: () => PlanProvider;
 
   constructor(opts: CliAgentOptions) {
     this.service = opts.service;
     this.approve = opts.approve;
     this.maxSteps = opts.maxSteps ?? 12;
-    this.provider =
-      opts.provider ??
-      new ClaudeCliProvider({
+    this.providerFactory = opts.providerFactory ?? (opts.provider
+      ? () => opts.provider!
+      : () => new ClaudeCliProvider({
         bin: opts.bin,
         model: opts.model,
         system: cliSystemPrompt(opts.service),
-      });
+      }));
   }
 
   /** Same signature/semantics as {@link IdelAgent.ask}. */
@@ -61,13 +63,16 @@ export class IdelCliAgent {
     approve?: AgentApproval,
   ): AsyncGenerator<AgentEvent, void, unknown> {
     const gate = approve ?? this.approve;
+    // One conversation per ask, including all its planning rounds. Never share
+    // mutable provider history between simultaneous terminal tabs.
+    const provider = this.providerFactory();
     let priorOutcomes: { command: string; outcomeJson: string }[] = [];
     let intent = userIntent;
 
     for (let step = 0; step < this.maxSteps; step++) {
       let turn: ProviderTurn;
       try {
-        turn = await this.provider.next({ userIntent: intent, priorOutcomes });
+        turn = await provider.next({ userIntent: intent, priorOutcomes });
       } catch (err) {
         yield { type: "error", message: (err as Error).message };
         return;

@@ -183,7 +183,8 @@ Each step is parsed, classified, policy-checked, executed, and logged as its own
 A ready-made, dependency-free web terminal + landing page ships in `packages/web/public`. The fastest way to see it:
 
 ```bash
-pnpm ui            # builds if needed, then serves the terminal at http://127.0.0.1:7878
+pnpm build
+pnpm ui            # opens the terminal at http://127.0.0.1:7878
 # (equivalently: idel serve --static packages/web/public)
 ```
 
@@ -198,7 +199,21 @@ An API-only `idel serve` (without `--static`) requires
 `IDEL_SERVER_AUTH_TOKEN`; there is no boot page in which to deliver a generated
 secret safely.
 
-Build Electron desktop folders for each platform:
+Build standalone desktop installers (no system Node or source checkout required):
+
+```bash
+pnpm desktop:package:linux    # AppImage + DEB, Linux x64
+pnpm desktop:package:windows  # NSIS setup EXE, build on Windows
+pnpm desktop:package:macos    # DMG for Apple Silicon + Intel, build on macOS
+```
+
+The desktop app starts in `Documents/IDEL`. Use **IDEL → Choose workspace** to
+select another folder. Native shell mode remains disabled by default. Release
+builds are currently candidates until platform testing and signing are complete.
+See [release instructions](docs/releasing.md).
+
+For development, build repo-backed Electron launchers:
+
 
 ```bash
 pnpm desktop:build          # all Electron launchers under dist/desktop/
@@ -239,7 +254,7 @@ Pass npm-check-updates options after `--`, for example
 `pnpm upgrade:latest -- --target minor`. The pnpm path is the default because
 the workspace declares `packageManager: pnpm`.
 
-The page at `/` explains the runtime; `/terminal.html` is a live terminal with an **IDEL** mode (registry completion, history, a live audit-log panel), an **Ask AI** mode that drives the embedded console over `/api/agent/stream`, and optional `sh` tabs for a native OS shell. Ask AI can use Claude Code, the Anthropic API, the OpenAI Responses API, or the Google Gemini API on the `idel serve` process (see [Using Ask AI](#using-ask-ai)) — credentials never reach the browser.
+The page at `/` explains the runtime; `/terminal.html` is a live terminal with an **IDEL** mode (registry completion, history, a live audit-log panel), an **Ask AI** mode that drives the embedded console over `/api/agent/stream`, and optional `sh` tabs for a native OS shell. Ask AI can use Claude Code, the Anthropic API, the OpenAI Responses API, or the Google Gemini API on the `idel serve` process (see [Using Ask AI](#using-ask-ai)) — keys entered in setup are sent to the authenticated local server and retained only for that server session.
 
 Use IDEL tabs for the audited policy pipeline. Use a native `sh` tab only when you need interactive OS behavior such as `sudo apt install git`, package prompts, shell autocomplete, Ctrl+C, arrows, or full-screen terminal tools. Native shell tabs are backed by xterm.js and are intentionally direct shell sessions, so commands typed there are not converted into IDEL commands or risk-scanned command-by-command. Native mode is disabled by default in the CLI, web launcher, desktop launchers, and VS Code extension. When explicitly enabled with `--enable-native-terminal`, session start/close/signal/exit lifecycle events are still written to signed OpenLogs and every native request uses the same authenticated API boundary. Native cwd values remain inside the configured server workspace and clients may select only an explicitly allowed shell.
 
@@ -437,8 +452,9 @@ idel editor README.md
 
 Interactive OS work belongs in a native shell tab in the web terminal, or in a
 local terminal. Native shell tabs are direct OS sessions for prompts, Ctrl+C,
-Tab, and arrows; they are not structured IDEL commands and are not OpenLogs
-records. Use `open.editor` for the scoped editor path in local interactive CLI
+Tab, and arrows. Their lifecycle events are recorded in OpenLogs; raw terminal
+input is not recorded. Native audit append failures are reported in setup and
+health status and do not block the native shell. Use `open.editor` for the scoped editor path in local interactive CLI
 contexts.
 
 Native passthrough is:
@@ -504,7 +520,7 @@ These let CI fail closed: a blocked or approval-required command never returns `
 ## Testing
 
 ```bash
-pnpm test           # Vitest suite (572 passing, 1 skipped across 25 test files)
+pnpm test           # Vitest suite (584 passing, 1 skipped across 27 test files)
 pnpm typecheck      # full TypeScript project build/type-check
 pnpm check:web      # static UI syntax, CSP hygiene, duplicate-id, and button checks
 pnpm check:package  # bundled OpenLogs package + self-contained CLI deploy artifact

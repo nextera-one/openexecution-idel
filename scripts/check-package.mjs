@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { access, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { access, cp, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -36,6 +36,7 @@ try {
   if (listing.status !== 0) throw new Error(listing.stderr || "could not inspect package tarball");
   for (const required of [
     "package/dist/index.js",
+    "package/node_modules/@nextera.one/openlogs-sdk/package.json",
     "package/node_modules/@nextera.one/tps-standard/package.json",
     "package/node_modules/@nextera.one/tps-standard/dist/esm/index.js",
   ]) {
@@ -60,6 +61,13 @@ try {
   ]) {
     await access(required);
   }
+  await cp(join(root, "registries/core"), join(deployDir, "node_modules/@openexecution/registry/registries/core"), { recursive: true });
+  await cp(join(root, "packages/web/public"), join(deployDir, "web"), { recursive: true });
+  const cli = spawnSync(process.execPath, [join(deployDir, "bin/idel.js"), "version"], { cwd: out, encoding: "utf8" });
+  if (cli.status !== 0 || !cli.stdout.startsWith("idel ")) throw new Error(cli.stderr || "deployed CLI failed");
+  const smoke = spawnSync(process.execPath, [join(root, "scripts/artifact-smoke.mjs"), deployDir], { cwd: out, encoding: "utf8" });
+  if (smoke.status !== 0) throw new Error(smoke.stderr || smoke.stdout || "deployed runtime smoke failed");
+  process.stdout.write(smoke.stdout);
   process.stdout.write(
     "package check passed: OpenLogs bundles TPS and the CLI deploy artifact is self-contained\n",
   );

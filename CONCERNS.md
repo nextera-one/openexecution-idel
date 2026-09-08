@@ -7,39 +7,20 @@ shipping to a clean machine. Ordered roughly by priority.
 
 ---
 
-## 1. ⚠️ BLOCKING for clean-machine install: publish `@nextera.one/tps-standard@0.8.1`
+## 1. TPS publishing and clean-install verification
 
-The published `tps-standard` (0.7.x / 0.8.0) **cannot be imported as native ESM**
-(extensionless imports + `typeof require` Node detection). That breaks
-`@nextera.one/openlogs-sdk`, which IDEL's OpenLogs layer now depends on.
+`@nextera.one/tps-standard@0.8.1` is not yet on npm. The committed vendored
+ESM fix and OpenLogs SDK remain bundled together inside `@openexecution/openlogs`, so the published
+manifest does not leak a repository-relative file dependency. Do not remove
+this workaround until the fixed upstream package is published and verified.
 
-The fix is **nextera-one/tps PR #2** (branch `fix/esm-node-compat`, version
-bumped to **0.8.1**). It is **not yet published to npm** — the automation
-environment is not authenticated to npm.
+The package check now executes the deployed CLI and exercises the staged runtime,
+web assets, authenticated API, and signed logging outside the checkout. Desktop
+packaging uses a hoisted, materialized dependency tree to avoid pnpm store links.
+A clean npm consumer install remains a separate release gate. The workspace root
+should remain private; public library and CLI manifests already have public access.
 
-**Until 0.8.1 is on npm, this repo pins the fix via a pnpm workspace override
-that points at a vendored tarball. The OpenLogs package declares 0.8.1 normally
-and bundles that dependency in its published tarball, so consumers do not inherit
-an invalid repository-relative `file:` path:**
-
-```yaml
-// pnpm-workspace.yaml
-overrides:
-  "@nextera.one/tps-standard": "file:./vendor/nextera.one-tps-standard-0.8.1.tgz"
-```
-
-The tarball is committed under `vendor/`. This makes `pnpm install`, packaged
-OpenLogs artifacts, the build, the tests, and CI reproducible **without** waiting
-on the upstream publish.
-
-**To resolve:**
-1. Merge nextera-one/tps PR #2.
-2. `cd tps && npm run build && npm run bundle && npm publish --access public` (0.8.1).
-3. In this repo: remove the workspace override, bundled-dependency declaration,
-   and vendor tarball; set `@nextera.one/tps-standard` to `^0.8.1`,
-   run `pnpm install`, re-run `pnpm test && pnpm smoke`, commit.
-4. Only then is `npm install -g @openexecution/cli` viable from a clean machine
-   (also requires un-setting `"private": true` on the packages you publish).
+---
 
 ## 2. Runtime audit append failures — FAIL-CLOSED BY DEFAULT
 

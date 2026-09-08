@@ -7,3 +7,10 @@ packages/*/*.tsbuildinfo
 *.tsbuildinfo
 .DS_Store
 *.log
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.pfx
+packages/cli/web/

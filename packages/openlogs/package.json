@@ -16,12 +16,16 @@
   "dependencies": {
     "@nextera.one/openlogs-sdk": "^2.2.0",
     "@nextera.one/tps-standard": "0.8.1",
-    "@openexecution/types": "workspace:*"
+    "@noble/ed25519": "^3.1.0",
+    "@noble/hashes": "^2.2.0",
+    "@openexecution/types": "workspace:*",
+    "ulid": "^3.0.2"
   },
   "files": [
     "dist"
   ],
   "bundledDependencies": [
+    "@nextera.one/openlogs-sdk",
     "@nextera.one/tps-standard"
   ],
   "description": "Signed OpenLogs audit writer and verifier integration for IDEL runtime events.",

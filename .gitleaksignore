@@ -1,0 +1,6 @@
+# Reviewed synthetic redaction fixtures and minified xterm symbols (2026-09-08).
+a246ad6b44863fe1b9a1b374b57824ccc10ab1bb:packages/openlogs/src/openlogs.test.ts:curl-auth-header:196
+dd11dd28b6256e12752872d10fc4fc7fb4405e99:packages/openlogs/src/openlogs.test.ts:jwt:91
+b6ee1f644abaa744c17406d93fdfcecc8b6beaaa:packages/web/public/vendor/xterm/xterm.js:generic-api-key:1
+b6ee1f644abaa744c17406d93fdfcecc8b6beaaa:packages/web/public/vendor/xterm/xterm.js:generic-api-key:1
+b6ee1f644abaa744c17406d93fdfcecc8b6beaaa:packages/web/public/vendor/xterm/xterm.js:generic-api-key:1

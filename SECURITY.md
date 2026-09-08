@@ -24,7 +24,10 @@ Raw native shell sessions bypass IDEL parsing and command-level policy. They are
 disabled by default in the CLI, web launcher, Electron launchers, and VS Code
 extension. Enable `--enable-native-terminal` only when an interactive OS shell
 is required. Session lifecycle is audited, but raw terminal input is not logged
-because it may contain passwords and control sequences.
+because it may contain passwords and control sequences. Native lifecycle audit
+append failures are best-effort: every failure warns and increments persistent
+in-process degraded status, exposed by health and the setup checklist. This
+does not provide the structured runtime’s fail-closed audit guarantee.
 
 ## Files, archives, and logs
 
@@ -40,6 +43,6 @@ because it may contain passwords and control sequences.
 ## Reporting a vulnerability
 
 Do not include live credentials, private logs, or exploit targets in a public
-issue. Use the repository owner's private security-reporting channel. Include
+issue. Use [private vulnerability reporting](https://github.com/nextera-one/openexecution-idel/security/advisories/new). Include
 the affected version, platform, minimal reproduction, expected boundary, and
 observed impact. Rotate any credential that may have appeared in a report.

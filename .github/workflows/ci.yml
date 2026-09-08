@@ -59,6 +59,10 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && matrix.node == 24
         run: pnpm publish:dry-run
 
+      - name: Install and execute npm release tarballs
+        if: matrix.os == 'ubuntu-latest' && matrix.node == 24
+        run: pnpm check:npm
+
       # Boots the real `idel` binary, asserts the thesis demo is BLOCKED, and
       # verifies the signed OpenLogs chain end to end on every supported OS.
       - name: Smoke test (CLI + signed OpenLogs)

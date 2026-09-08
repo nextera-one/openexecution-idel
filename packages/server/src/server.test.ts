@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterEach, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterEach, afterAll, vi } from "vitest";
 import { mkdtemp, readFile, rm, writeFile, mkdir, readdir, symlink } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
@@ -81,6 +81,20 @@ describe("TerminalService.registry", () => {
 });
 
 describe("TerminalService native terminal audit", () => {
+  it("reports every native audit failure and retains degraded status", async () => {
+    const dir = await sandbox();
+    const writer = new OpenLogWriter({ path: join(dir, "audit.jsonl"), keyPath: join(dir, "key.json") });
+    const append = vi.spyOn(writer, "append").mockRejectedValue(new Error("storage unavailable"));
+    const warning = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      const svc = new TerminalService({ runtime: new Runtime({ registry, policy: defaultPolicy(), logWriter: writer }), cwd: dir });
+      await svc.auditNativeTerminal("native.terminal.start", { cwd: dir });
+      await svc.auditNativeTerminal("native.terminal.close", { cwd: dir });
+      expect(svc.nativeAuditStatus).toEqual({ degraded: true, failures: 2 });
+      expect(warning).toHaveBeenCalledTimes(2);
+    } finally { append.mockRestore(); warning.mockRestore(); }
+  });
+
   it("records native terminal lifecycle events to OpenLogs", async () => {
     const dir = await sandbox();
     const writer = new OpenLogWriter({

@@ -160,7 +160,11 @@ export class TerminalService {
   private readonly baseCwd: string;
   private readonly environment: string | undefined;
   private readonly noNative: boolean;
-  private auditFailureWarned = false;
+  private nativeAuditFailures = 0;
+
+  get nativeAuditStatus(): { degraded: boolean; failures: number } {
+    return { degraded: this.nativeAuditFailures > 0, failures: this.nativeAuditFailures };
+  }
 
   constructor(opts: ServiceOptions) {
     this.runtime = opts.runtime;
@@ -355,8 +359,7 @@ export class TerminalService {
       result: opts.result ?? "success",
     };
     await writer.append(record).catch((err: unknown) => {
-      if (this.auditFailureWarned) return;
-      this.auditFailureWarned = true;
+      this.nativeAuditFailures++;
       const detail = (err as Error)?.message ?? String(err);
       process.stderr.write(
         `openlogs: failed to record native terminal event — audit trail may be incomplete (${detail})\n`,

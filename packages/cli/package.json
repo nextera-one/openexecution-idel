@@ -15,10 +15,12 @@
   },
   "files": [
     "dist",
-    "bin"
+    "bin",
+    "web"
   ],
   "scripts": {
-    "build": "tsc --build"
+    "build": "tsc --build",
+    "prepack": "node scripts/copy-web.mjs"
   },
   "dependencies": {
     "@openexecution/types": "workspace:*",
