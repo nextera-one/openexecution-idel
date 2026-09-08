@@ -2353,7 +2353,9 @@ function setAgentAvailability(available) {
   agentAvailable = available;
   modeAskBtn.disabled = false;
   modeAskBtn.classList.toggle("unavailable", !available);
-  modeAskBtn.setAttribute("aria-disabled", String(!available));
+  // The button opens setup when no provider is configured, so it remains actionable.
+  modeAskBtn.removeAttribute("aria-disabled");
+  modeAskBtn.setAttribute("aria-label", available ? "Ask AI" : "Set up Ask AI");
   modeAskBtn.title = available
     ? "Ask AI in natural language"
     : "Ask AI is not set up. Click for setup instructions.";
