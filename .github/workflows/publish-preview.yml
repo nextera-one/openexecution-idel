@@ -1,0 +1,87 @@
+name: Publish tested desktop preview
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_run_id:
+        description: Successful Desktop release candidates run ID
+        required: true
+        type: string
+      tag:
+        description: Preview tag (must match the packaged version)
+        required: true
+        default: v1.1.0-preview.1
+        type: string
+permissions:
+  actions: read
+  contents: write
+concurrency:
+  group: publish-desktop-preview
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Validate candidate provenance
+        id: candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-preview\.[0-9]+$ ]]
+          gh api "repos/$GH_REPO/actions/runs/$CANDIDATE_RUN_ID" > "$RUNNER_TEMP/candidate.json"
+          node --input-type=module <<'JS'
+          import { readFileSync, appendFileSync } from 'node:fs';
+          const run = JSON.parse(readFileSync(process.env.RUNNER_TEMP + '/candidate.json', 'utf8'));
+          if (run.status !== 'completed' || run.conclusion !== 'success' ||
+              run.path !== '.github/workflows/desktop-release.yml' ||
+              !['push', 'workflow_dispatch'].includes(run.event) ||
+              run.repository.full_name !== process.env.GH_REPO ||
+              !/^[a-f0-9]{40}$/.test(run.head_sha)) throw new Error('Untrusted or incomplete candidate run');
+          appendFileSync(process.env.GITHUB_OUTPUT, `sha=${run.head_sha}\n`);
+          JS
+      - name: Collect and checksum the exact tested installers
+        env:
+          SOURCE_SHA: ${{ steps.candidate.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$SOURCE_SHA" origin/main
+          for target in linux-x64 win-x64 mac-x64 mac-arm64; do
+            gh run download "$CANDIDATE_RUN_ID" --name "idel-$target" --dir "dist/publish/$target"
+          done
+          mkdir -p dist/release
+          find dist/publish -type f \( -name '*.AppImage' -o -name '*.deb' -o -name '*.dmg' -o -name '*.exe' \) -exec cp -n {} dist/release/ \;
+          test "$(find dist/release -type f | wc -l)" -eq 5
+          git show "$SOURCE_SHA:package.json" > "$RUNNER_TEMP/candidate-package.json"
+          node --input-type=module <<'JS'
+          import { readFileSync } from 'node:fs';
+          const built = JSON.parse(readFileSync(process.env.RUNNER_TEMP + '/candidate-package.json', 'utf8'));
+          const current = JSON.parse(readFileSync('package.json', 'utf8'));
+          if (built.version !== current.version) throw new Error('Candidate version differs from manifest generator');
+          JS
+          node scripts/release-manifest.mjs dist/release "$RELEASE_TAG"
+          printf 'Source: %s\nCandidate run: https://github.com/%s/actions/runs/%s\n' "$SOURCE_SHA" "$GH_REPO" "$CANDIDATE_RUN_ID" > dist/release/PROVENANCE.txt
+      - name: Publish preview with installation notes
+        env:
+          SOURCE_SHA: ${{ steps.candidate.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Existing tags/releases are never overwritten or silently reused.
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1 || git rev-parse --verify "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            echo 'Release or tag already exists; use a new preview version.' >&2
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" dist/release/* --target "$SOURCE_SHA" --draft --prerelease --title "IDEL ${RELEASE_TAG#v}" --notes-file docs/preview-1-release-notes.md
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false
