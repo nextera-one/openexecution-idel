@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterEach, afterAll, vi } from "vitest";
 import { mkdtemp, readFile, rm, writeFile, mkdir, readdir, symlink } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { Registry } from "@openexecution/registry";
@@ -30,7 +30,9 @@ beforeAll(async () => {
 
 const tmpDirs: string[] = [];
 async function sandbox(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "idel-srv-"));
+  // macOS's OS-managed /private/var temp tree correctly triggers the HIGH
+  // write floor. Exercise user-workspace writes in an isolated home folder.
+  const dir = await mkdtemp(join(homedir(), "idel-srv-"));
   tmpDirs.push(dir);
   return dir;
 }
@@ -226,7 +228,7 @@ describe("TerminalService.complete", () => {
     const dir = await sandbox();
     const svc = makeService(dir);
     expect(() => svc.complete({ input: "read.file name=", cwd: dirname(dir) })).toThrow(
-      /cwd escapes the configured workspace root/i,
+      /cwd resolves outside the configured workspace root/i,
     );
   });
 
@@ -519,7 +521,7 @@ describe("startServer (HTTP)", () => {
 
   beforeAll(async () => {
     const runtime = new Runtime({ registry, policy: defaultPolicy() });
-    server = await startServer({ runtime, port: 0, cwd: tmpdir(), authRequired: false, cors: true });
+    server = await startServer({ runtime, port: 0, cwd: homedir(), authRequired: false, cors: true });
     base = server.url;
   });
   afterAll(async () => {
@@ -692,10 +694,10 @@ describe("startServer (HTTP)", () => {
     const res = await fetch(`${base}/api/complete`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ input: "open.editor file=pack", cwd: process.cwd() }),
+      body: JSON.stringify({ input: "open.editor file=pack", cwd: dirname(homedir()) }),
     });
     expect(res.status).toBe(403);
-    expect((await res.json()).error).toMatch(/cwd escapes/i);
+    expect((await res.json()).error).toMatch(/cwd resolves outside/i);
   });
 
   it("POST /api/complete → learn.cli suggestions", async () => {
@@ -1151,7 +1153,7 @@ describe("startServer — enabled native terminal boundary", () => {
         body: JSON.stringify({ cwd: dirname(dir), shell: "idel-test-allowed-shell" }),
       });
       expect(escapedCwd.status).toBe(403);
-      expect((await escapedCwd.json()).error).toMatch(/cwd escapes/i);
+      expect((await escapedCwd.json()).error).toMatch(/cwd resolves outside/i);
     } finally {
       await nativeServer.close();
     }

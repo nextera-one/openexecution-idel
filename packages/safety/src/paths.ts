@@ -96,8 +96,12 @@ export function normalizeTarget(target: string, cwd: string): string {
     }
     return path.win32.resolve(expanded);
   }
-  // POSIX / relative: path.resolve collapses `..`/`.` and anchors at cwd.
-  return path.resolve(cwd, expanded);
+  // Explicit POSIX targets retain their meaning on Windows too. Relative
+  // targets use the cwd's syntax, not the machine running the classifier.
+  if (path.posix.isAbsolute(expanded)) return path.posix.resolve(expanded);
+  return isWindowsRooted(cwd) || expanded.startsWith("\\")
+    ? path.win32.resolve(cwd, expanded)
+    : path.posix.resolve(cwd, expanded);
 }
 
 /**

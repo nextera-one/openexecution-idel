@@ -45,6 +45,11 @@ jobs:
         run: pnpm exec electron-builder --config desktop/electron-builder.cjs --${{ matrix.target }} --${{ matrix.arch }} --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Configure Linux sandbox for the hosted runner
+        if: runner.os == 'Linux'
+        run: |
+          sudo chown root:root dist/installers/linux-unpacked/chrome-sandbox
+          sudo chmod 4755 dist/installers/linux-unpacked/chrome-sandbox
       - name: Exercise packaged runtime using bundled Electron
         run: node scripts/check-desktop.mjs
       - name: Upload tested candidate (not a public release)

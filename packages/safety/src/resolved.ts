@@ -208,6 +208,12 @@ export async function assessResolved(
     }),
   );
 
+  // Once realpath reveals a forbidden root/home/device, no estimate can make
+  // execution permissible. Avoid walking the very tree we just blocked.
+  if (findings.some((finding) => finding.level === "CRITICAL")) {
+    return finalize("resolved", findings, def);
+  }
+
   // --- Blast-radius estimate for a GLOB target ---------------------------
   // A wildcard target never resolves to a single real path, so the literal
   // lstat below would throw and silently leave the estimate undefined — making

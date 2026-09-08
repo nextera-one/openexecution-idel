@@ -286,6 +286,7 @@ describe("two-phase safety: the resolved phase catches symlink-to-root", () => {
     expect(out.risk.findings.some((f) => f.code === "symlink-target")).toBe(true);
     expect(out.risk.level).toBe("CRITICAL");
     expect(out.record.result).toBe("blocked_before_execution");
+    expect(out.record.affectedPathsEstimate).toBeUndefined();
   });
 });
 
@@ -565,6 +566,12 @@ describe("meta commands", () => {
     const rt = await makeRuntime();
     const search = await rt.run("search.apt.package query=git", ctx({ dryRun: true }));
     expect(search.risk.level).toBe("LOW");
+    if (process.platform === "win32") {
+      // RuntimeContext.os is audit metadata; it does not enable foreign
+      // execution adapters. APT must remain unavailable on Windows.
+      expect(search.plan).toBeUndefined();
+      return;
+    }
     expect(search.plan?.command).toBe("apt");
     expect(search.plan?.argv).toEqual(["search", "git"]);
 

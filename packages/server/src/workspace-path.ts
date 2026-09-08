@@ -17,15 +17,14 @@ export function isWithinWorkspace(root: string, candidate: string): boolean {
 }
 
 /**
- * Resolve an existing request cwd beneath root and reject lexical and symlink
- * escapes. Absolute cwd values are accepted only when they are already inside
- * the configured root because browser clients commonly send their current
- * workspace directory verbatim.
+ * Resolve an existing request cwd beneath root. Absolute paths may use a
+ * filesystem alias (macOS /var, Windows short names, or a workspace symlink),
+ * but their canonical target must still be inside the configured root.
  */
 export function resolveWorkspaceCwd(root: string, requested?: string): string {
   rejectNul(requested);
   const lexical = requested ? resolve(root, requested) : root;
-  if (!isWithinWorkspace(root, lexical)) {
+  if (!isAbsolute(requested ?? "") && !isWithinWorkspace(root, lexical)) {
     throw new Error("cwd escapes the configured workspace root");
   }
   const canonical = realpathSync.native(lexical);

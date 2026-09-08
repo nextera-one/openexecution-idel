@@ -30,6 +30,7 @@ import {
   scanNative,
   escapesCwd,
   isHome,
+  normalizeTarget,
 } from "./index.js";
 
 // ---------------------------------------------------------------------------
@@ -39,6 +40,11 @@ import {
 const HOME = os.homedir();
 
 describe("Windows path comparison semantics", () => {
+  it("normalizes POSIX and Windows inputs independently of the host", () => {
+    expect(normalizeTarget("/usr/local/../bin", "C:\\work")).toBe("/usr/bin");
+    expect(normalizeTarget("../etc", "/work")).toBe("/etc");
+    expect(normalizeTarget("../Windows", "C:\\work")).toBe("C:\\Windows");
+  });
   it("compares Windows home paths case-insensitively", () => {
     expect(isHome("C:\\Users\\ALICE", "c:\\users\\alice")).toBe(true);
     expect(isHome("\\\\Server\\Users\\ALICE", "\\\\server\\users\\alice")).toBe(
