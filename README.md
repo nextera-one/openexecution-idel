@@ -8,6 +8,8 @@ The bet of V1 is narrow and defensible: **prove that a runtime can prevent dange
 
 ---
 
+Desktop preview installers are published in [GitHub Releases](https://github.com/nextera-one/openexecution-idel/releases). Windows x64, macOS Intel/Apple Silicon, and Linux x64 packages include the runtime. Read the signing status and installation limitations in each preview's release notes.
+
 ## Table of Contents
 
 - [The killer demo](#the-killer-demo)
@@ -520,7 +522,7 @@ These let CI fail closed: a blocked or approval-required command never returns `
 ## Testing
 
 ```bash
-pnpm test           # Vitest suite (584 passing, 1 skipped across 27 test files)
+pnpm test           # Vitest suite (586 passing, 1 skipped across 28 test files)
 pnpm typecheck      # full TypeScript project build/type-check
 pnpm check:web      # static UI syntax, CSP hygiene, duplicate-id, and button checks
 pnpm check:package  # bundled OpenLogs package + self-contained CLI deploy artifact
