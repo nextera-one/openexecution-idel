@@ -84,6 +84,6 @@ jobs:
             exit 1
           fi
           test -f "docs/releases/$RELEASE_TAG.md"
-          rg --fixed-strings --quiet "$SOURCE_SHA" "docs/releases/$RELEASE_TAG.md"
+          grep -F -q "$SOURCE_SHA" "docs/releases/$RELEASE_TAG.md"
           gh release create "$RELEASE_TAG" dist/release/* --target "$SOURCE_SHA" --draft --prerelease --title "IDEL ${RELEASE_TAG#v}" --notes-file "docs/releases/$RELEASE_TAG.md"
           gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false
