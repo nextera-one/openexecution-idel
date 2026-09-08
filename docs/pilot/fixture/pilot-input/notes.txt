@@ -1,0 +1,5 @@
+Practice project: a small documentation site.
+Create a README that explains the project.
+Keep the existing notes and the keep-me.txt file.
+Move generated.tmp to pilot-project/review-later.tmp when testing cleanup.
+All files in this practice pack are synthetic.

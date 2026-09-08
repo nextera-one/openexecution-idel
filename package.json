@@ -31,7 +31,8 @@
     "desktop:package:linux": "pnpm desktop:package --linux --x64",
     "desktop:package:windows": "pnpm desktop:package --win --x64",
     "desktop:package:macos": "pnpm desktop:package --mac --arm64 --x64",
-    "check:npm": "node scripts/check-npm-install.mjs"
+    "check:npm": "node scripts/check-npm-install.mjs",
+    "check:pilot": "node scripts/check-pilot.mjs"
   },
   "engines": {
     "node": ">=22.3"
