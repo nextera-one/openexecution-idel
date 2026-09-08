@@ -539,17 +539,21 @@
       <section class="term-output" id="output" role="log" aria-label="Terminal output">
         <section class="welcome-card" aria-labelledby="welcome-title">
           <p class="welcome-kicker">Safe execution workspace</p>
-          <h2 id="welcome-title">Start with intent. Review before execution.</h2>
+          <h2 id="welcome-title">Run commands with policy checks.</h2>
           <p>
-            Every command is translated, risk-classified, checked by policy,
-            and added to the signed audit trail.
+            Review your command before pressing Enter. Under the default policy,
+            LOW and MEDIUM commands run immediately, HIGH commands are dry runs,
+            and CRITICAL commands are blocked. Inspect the result and audit trail after each command.
+          </p>
+          <p>
+            Ask AI requests approval for real runs unless you enable matching auto approve rules.
           </p>
           <div class="welcome-steps" aria-label="Execution flow">
-            <span>1 · Write intent</span><span>2 · Review evidence</span><span>3 · Execute or decline</span>
+            <span>1 · Review your command</span><span>2 · Press Enter</span><span>3 · Inspect the result</span>
           </div>
           <div class="welcome-actions">
             <button type="button" data-starter-command="list.folder name=.">Try a safe command</button>
-            <button type="button" data-starter-command="create.file name=hello.txt">Preview a write</button>
+            <button type="button" data-starter-command="create.file name=hello.txt">Fill a write command</button>
             <button type="button" id="welcome-ask">Ask AI</button>
           </div>
         </section>
