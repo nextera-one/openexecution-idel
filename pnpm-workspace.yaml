@@ -1,6 +1,21 @@
 packages:
   - "packages/*"
 
+overrides:
+  "@nextera.one/tps-standard": "file:./vendor/nextera.one-tps-standard-0.8.1.tgz"
+
+allowBuilds:
+  electron-winstaller: false # NSIS targets do not use Squirrel/7-Zip selection
+  esbuild: true
+
 # Required for `pnpm deploy` to produce a self-contained CLI artifact (workspace
-# deps copied in, not symlinked back to source) — see scripts/pack-cli.sh.
-inject-workspace-packages: true
+# deps copied in, not symlinked back to source) — verified by `pnpm check:package`.
+injectWorkspacePackages: true
+forceLegacyDeploy: true
+
+# deploy --prod updates pnpm's remembered install settings. Release commands
+# explicitly install with a frozen lockfile; do not auto-prune their toolchain.
+verifyDepsBeforeRun: false
+
+minimumReleaseAgeExclude:
+  - electron@42.4.1

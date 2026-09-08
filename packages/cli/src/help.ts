@@ -4,18 +4,53 @@ export const HELP_TEXT = `idel ${VERSION} — OpenExecution Runtime CLI
 
 USAGE
   idel <verb.scope> [key=value ...] [flags]
-  idel ! "<native command>"            native passthrough (risk-scanned + logged)
-  idel terminal                        interactive IDEL terminal
+  idel "<cmd.one ... && cmd.two ...>"  run an IDEL batch; stop on first non-success
+  idel ! <native command>              native passthrough (risk-scanned + logged)
+  idel ask "<natural language>"        ask AI to do it (proposes IDEL, runs via the runtime)
+  idel ask.ai prompt="<request>"       IDEL-shaped alias for the AI console
+  idel learn <cli> [--write]           teach IDEL an installed CLI (drafts IDEL commands from its --help)
+  learn <cli>                          same command inside \`idel terminal\`
+  idel promote <cli> [--yes]           promote learned drafts to the signed official layer (re-verify + sign)
+  idel registry verify                 verify official commands against independently pinned keys
+  idel run.function <req.run.idel>     execute a signed IDEL function request (nonce, digest, capabilities)
+  idel verify.execution <receipt>      verify a rendered execution receipt
+  idel editor <file>                   open a file in your local editor (TTY only)
+  idel terminal                        interactive IDEL terminal (readline REPL; \`? <ask>\` for AI)
+  idel connect <server-url>            connect this terminal to a remote IDEL server
+  idel serve [--port N] [--static D]   start the local web/desktop terminal server
+  idel ui [--port N]                  open the bundled terminal in your browser
   idel completion <partial>            print autocomplete suggestions
   idel help | version
 
 EXAMPLES
   idel create.file name=readme.md
+  idel tail.file file=app.log lines=50
+  idel 'create.file name=a.txt && wait.time ms=500 && read.file name=a.txt'
   idel remove.folder name=dist recursive=true --dry-run
-  idel policy.check
-  idel registry.explain command=remove.folder
-  idel logs.list
-  idel ! "tar -xvzf backup.tar.gz"
+  idel run.script path=./scripts/deploy.sh shell=bash
+  idel run.script path=./scripts/check.js shell=node args="--fix src"
+  idel open.editor file=README.md editor=nano
+  idel editor README.md
+  idel check.policy
+  idel explain.registry command=remove.folder
+  idel list.history
+  idel list.logs
+  idel ! tar -xvzf backup.tar.gz
+  idel ask "delete the dist folder"          (uses the configured AI provider; --yes to allow real runs)
+  idel ask.ai prompt="delete the dist folder"
+  idel learn gh --write                      (drafts IDEL commands for the gh CLI into the custom layer)
+  learn.cli cli=git
+  idel promote gh                            (review + sign gh drafts into the official layer)
+  idel registry verify                       (verify every signed official command)
+  ssh -L 8787:127.0.0.1:7878 user@host       (safe remote access tunnel)
+  idel connect http://127.0.0.1:8787         (use IDEL through that tunnel)
+
+ASK AI
+  The AI console supports Claude Code (subscription), ANTHROPIC_API_KEY,
+  OPENAI_API_KEY, and GEMINI_API_KEY. Select a default with
+  IDEL_AI_PROVIDER=cli|api|openai|gemini. Keys stay in the host process; every
+  model proposal still crosses the same policy, approval, and audit boundary.
+  Provider roadmap: Microsoft Copilot, Perplexity, Mistral, Grok, and local models.
 
 FLAGS
   --dry-run        plan + classify, never touch the filesystem
@@ -25,6 +60,16 @@ FLAGS
   --json           machine-readable output
   --policy <file>  load a policy file (.yml or .json)
   --env <name>     logical environment for policy matching (e.g. production)
+
+SERVE FLAGS (idel serve)
+  --port <n>       HTTP port (default 7878)
+  --host <addr>    bind address (default 127.0.0.1, loopback only)
+  --static <dir>   serve a built terminal UI from this directory at /
+  --cors           allow authenticated cross-origin loopback clients (development)
+  --enable-native-terminal
+                   enable bearer-authenticated native shell sessions
+  Authentication   all non-health APIs require a 32+ character bearer token;
+                   set IDEL_SERVER_AUTH_TOKEN for API-only/remote clients
 
 SAFETY
   Every command is risk-classified (LOW/MEDIUM/HIGH/CRITICAL) and policy-checked

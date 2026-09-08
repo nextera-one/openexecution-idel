@@ -9,5 +9,9 @@
  */
 
 export { renderArgv } from "./render.js";
-export { PowerShellAdapter, powerShellAdapter } from "./powershell.js";
-export type { ResolveFn } from "./powershell.js";
+export {
+  PowerShellAdapter,
+  powerShellAdapter,
+  buildPowerShellHostInvocation,
+} from "./powershell.js";
+export type { PowerShellHostInvocation, ResolveFn } from "./powershell.js";

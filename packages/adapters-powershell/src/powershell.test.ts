@@ -6,7 +6,10 @@ import type {
   ParamValue,
   ResolvedCommand,
 } from "@openexecution/types";
-import { PowerShellAdapter } from "./powershell.js";
+import {
+  buildPowerShellHostInvocation,
+  PowerShellAdapter,
+} from "./powershell.js";
 import { renderArgv } from "./render.js";
 
 // ---------------------------------------------------------------------------
@@ -141,16 +144,100 @@ describe("PowerShellAdapter", () => {
     expect(result.stdout).toContain("[dry-run]");
   });
 
+  it("keeps parameter values out of executable PowerShell source", () => {
+    const payloads = [
+      "x; Start-Process calc.exe",
+      "$(Start-Process calc.exe)",
+      "x' ; Write-Output injected; #",
+      "x\nStart-Process calc.exe",
+    ];
+    const injectedPath = payloads.join(" | ");
+    const plan = adapter.plan(
+      resolved(def("remove.folder", { powershell: removeItemSpec })),
+      ast(
+        "remove.folder",
+        { path: injectedPath, recursive: true, force: true },
+        "C:\\tmp",
+      ),
+    );
+    const invocation = buildPowerShellHostInvocation(plan);
+
+    expect(invocation.argv.slice(0, 3)).toEqual([
+      "-NoProfile",
+      "-NonInteractive",
+      "-EncodedCommand",
+    ]);
+    expect(invocation.argv).toHaveLength(4);
+    for (const payload of payloads) {
+      expect(invocation.argv.join(" ")).not.toContain(payload);
+    }
+
+    const dispatcher = Buffer.from(invocation.argv[3]!, "base64").toString(
+      "utf16le",
+    );
+    expect(dispatcher).toContain("[Console]::In.ReadToEnd()");
+    expect(dispatcher).toContain("$runner.AddCommand($command)");
+    expect(dispatcher).toContain("$runner.AddParameter");
+    expect(dispatcher).toContain("$runner.AddArgument");
+    expect(dispatcher).not.toContain("Start-Process calc.exe");
+    expect(JSON.parse(invocation.stdin)).toEqual({
+      command: "Remove-Item",
+      bindings: [
+        { kind: "parameter", name: "Path", value: injectedPath },
+        { kind: "parameter", name: "Recurse" },
+        { kind: "parameter", name: "Force" },
+      ],
+    });
+  });
+
+  it("converts trusted literal cmdlet syntax into named parameter bindings", () => {
+    const spec: AdapterSpec = {
+      command: "New-Item",
+      args: [
+        { kind: "literal", value: "-ItemType" },
+        { kind: "literal", value: "File" },
+        { kind: "literal", value: "-Path" },
+        { kind: "value", param: "name" },
+      ],
+    };
+    const plan = adapter.plan(
+      resolved(def("create.file", { powershell: spec })),
+      ast("create.file", { name: "-literal-path; still-data" }, "C:\\tmp"),
+    );
+    expect(JSON.parse(buildPowerShellHostInvocation(plan).stdin)).toEqual({
+      command: "New-Item",
+      bindings: [
+        { kind: "parameter", name: "ItemType", value: "File" },
+        {
+          kind: "parameter",
+          name: "Path",
+          value: "-literal-path; still-data",
+        },
+      ],
+    });
+  });
+
+  it("refuses to execute an unbound/reconstructed plan", () => {
+    expect(() =>
+      buildPowerShellHostInvocation({ command: "Write-Output", argv: ["hello"] }),
+    ).toThrow(/requires a plan produced/);
+  });
+
   // Real spawn only makes sense on Windows where powershell exists.
   it.skipIf(process.platform !== "win32")(
     "execute() really runs a harmless cmdlet (exit 0)",
     async () => {
-      const plan = {
-        adapter: "powershell" as const,
-        command: "Write-Output",
-        argv: ["hello"],
-        describe: "Write-Output hello",
-      };
+      const plan = adapter.plan(
+        resolved(
+          def("write.output", {
+            powershell: {
+              command: "Write-Output",
+              args: [{ kind: "value", param: "message" }],
+            },
+          }),
+        ),
+        ast("write.output", { message: "hello" }, process.cwd()),
+      );
       const result = await adapter.execute(plan, {
         dryRun: false,
         cwd: process.cwd(),

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { isNativeAst, ParseError } from "@openexecution/types";
 import type { CommandAst, NativeCommandAst } from "@openexecution/types";
-import { parse, tokenize } from "./index.js";
+import { parse, splitBatch, tokenize } from "./index.js";
 
 const OPTS = { cwd: "/work" } as const;
 
@@ -42,7 +42,7 @@ describe("parse — basics", () => {
     const ast = asCommand("remove.folder name=dist recursive=true force=false");
     expect(ast.params).toEqual({ name: "dist", recursive: true, force: false });
     // Numbers are NOT coerced by the parser:
-    const m = asCommand("permission.folder.set path=public mode=755 recursive=true");
+    const m = asCommand("set.folder.permission path=public mode=755 recursive=true");
     expect(m.params).toEqual({ path: "public", mode: "755", recursive: true });
     expect(m.rawParams.mode).toBe("755");
     expect(typeof m.params.mode).toBe("string");
@@ -112,6 +112,11 @@ describe("parse — native passthrough", () => {
     expect(ast.native).toBe('echo "a b"  &&  ls');
   });
 
+  it("unwraps a whole quoted native command", () => {
+    const ast = parse('! "sudo apt install git"', OPTS) as NativeCommandAst;
+    expect(ast.native).toBe("sudo apt install git");
+  });
+
   it("treats native.run as an ordinary command (not the bang shorthand)", () => {
     const ast = parse('native.run command="rm -rf dist"', OPTS);
     expect(isNativeAst(ast)).toBe(true); // command === "native.run"
@@ -129,10 +134,38 @@ describe("parse — native passthrough", () => {
   });
 });
 
+describe("splitBatch", () => {
+  it("splits normal IDEL commands on top-level &&", () => {
+    expect(splitBatch("create.file name=a && read.file name=a")).toEqual([
+      "create.file name=a",
+      "read.file name=a",
+    ]);
+  });
+
+  it("does not split && inside quotes or escaped text", () => {
+    expect(splitBatch('write.file name=a content="one && two" && read.file name=a')).toEqual([
+      'write.file name=a content="one && two"',
+      "read.file name=a",
+    ]);
+    expect(splitBatch("write.file name=a content=one\\&&two")).toEqual([
+      "write.file name=a content=one\\&&two",
+    ]);
+  });
+
+  it("keeps native passthrough opaque", () => {
+    expect(splitBatch("! echo a && echo b")).toEqual(["! echo a && echo b"]);
+  });
+
+  it("rejects empty batch segments", () => {
+    expect(() => splitBatch("create.file name=a &&")).toThrow(ParseError);
+    expect(() => splitBatch("create.file name=a && && read.file name=a")).toThrow(ParseError);
+  });
+});
+
 describe("parse — validation", () => {
   it("accepts 2, 3, and 4 dotted segments", () => {
     expect(asCommand("create.file").command).toBe("create.file");
-    expect(asCommand("permission.folder.set").command).toBe("permission.folder.set");
+    expect(asCommand("set.folder.permission").command).toBe("set.folder.permission");
     expect(asCommand("a.b.c.d name=x").command).toBe("a.b.c.d");
   });
 

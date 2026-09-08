@@ -5,7 +5,7 @@
  *
  *     create.file name=readme.md
  *     remove.folder name=dist recursive=true force=false
- *     permission.folder.set path=public mode=755 recursive=true
+ *     set.folder.permission path=public mode=755 recursive=true
  *     find.files path=. name="*.js" modifiedWithin=7d
  *
  * and a leading `! ` (bang space) marks a native passthrough line:
@@ -59,6 +59,66 @@ export interface Token {
   quoted: boolean;
   /** Byte offset in the original input where this token began (for diagnostics). */
   offset: number;
+}
+
+// ---------------------------------------------------------------------------
+// Batch splitting
+// ---------------------------------------------------------------------------
+
+/**
+ * Split a host-level IDEL batch into individual command lines.
+ *
+ * `&&` is recognized only at top level. Quoted strings and backslash escapes are
+ * preserved verbatim, and native passthrough (`! ...`) remains opaque so shell
+ * users do not lose existing behavior like `! echo a && echo b`.
+ *
+ * @throws {ParseError} when a separator leaves an empty command segment.
+ */
+export function splitBatch(input: string): string[] {
+  const trimmed = input.trim();
+  if (!trimmed || trimmed.startsWith("!")) return [trimmed];
+
+  const parts: string[] = [];
+  let start = 0;
+  let quote: string | undefined;
+  let escaped = false;
+
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i]!;
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (ch === quote) quote = undefined;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      continue;
+    }
+    if (ch === "&" && input[i + 1] === "&") {
+      pushBatchPart(input.slice(start, i), parts, i);
+      i += 1;
+      start = i + 1;
+    }
+  }
+
+  pushBatchPart(input.slice(start), parts, input.length);
+  return parts;
+}
+
+function pushBatchPart(raw: string, parts: string[], offset: number): void {
+  const part = raw.trim();
+  if (!part) {
+    throw new ParseError("Empty command in batch near `&&`", offset);
+  }
+  parts.push(part);
 }
 
 // ---------------------------------------------------------------------------
@@ -232,9 +292,11 @@ export function parse(input: string, opts: ParseOptions): AnyAst {
   }
 
   // --- Native passthrough shorthand: `! <anything>` -------------------------
-  // Everything after the bang-space is opaque and is NOT tokenized.
+  // Everything after the bang-space is opaque and is NOT tokenized. If the
+  // whole native command is wrapped in one matching quote pair, unwrap that
+  // outer pair so web users can type `! "sudo apt install git"` naturally.
   if (trimmed.startsWith("! ")) {
-    const native = trimmed.slice(2).trim();
+    const native = unwrapQuotedNativeBody(trimmed.slice(2).trim());
     if (native.length === 0) {
       throw new ParseError("Native passthrough (`!`) requires a command", 0);
     }
@@ -331,4 +393,26 @@ export function parse(input: string, opts: ParseOptions): AnyAst {
 
   const ast: CommandAst = { command, params, rawParams, source, cwd };
   return ast;
+}
+
+function unwrapQuotedNativeBody(native: string): string {
+  if (native.length < 2) return native;
+  const quote = native[0]!;
+  if ((quote !== '"' && quote !== "'") || native[native.length - 1] !== quote) return native;
+
+  let escaped = false;
+  for (let i = 1; i < native.length - 1; i++) {
+    const ch = native[i]!;
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (ch === quote) return native;
+  }
+
+  return native.slice(1, -1).trim();
 }

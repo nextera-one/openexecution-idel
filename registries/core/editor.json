@@ -1,0 +1,84 @@
+[
+  {
+    "id": "edit.file",
+    "version": "1.0.0",
+    "summary": "Open a file in a local interactive editor, attached to the current terminal.",
+    "category": "editor",
+    "riskDefault": "MEDIUM",
+    "params": {
+      "path": { "type": "path", "required": true, "description": "File to open in the editor." },
+      "editor": {
+        "type": "string",
+        "default": "auto",
+        "enum": ["auto", "env", "nano", "vim", "vi", "code", "notepad"],
+        "description": "Editor to launch. auto uses VISUAL/EDITOR first, then a platform default."
+      },
+      "wait": {
+        "type": "boolean",
+        "default": true,
+        "description": "For editors that support it, wait until the file is closed before returning."
+      }
+    },
+    "safety": { "targetParam": "path" },
+    "adapters": {
+      "node": {
+        "command": "@node",
+        "args": [
+          { "kind": "value", "param": "path" },
+          { "kind": "value", "param": "editor" },
+          { "kind": "value", "param": "wait" }
+        ],
+        "semanticNotes": "Requires an interactive terminal. Web/server/CI contexts return a safe error instead of launching an editor. Dry-run previews the selected editor command."
+      }
+    },
+    "examples": [
+      "edit.file path=README.md",
+      "edit.file path=README.md editor=nano",
+      "edit.file path=src/index.ts editor=code wait=true"
+    ],
+    "tests": [
+      { "input": "edit.file path=README.md", "expectRisk": "MEDIUM" }
+    ]
+  },
+  {
+    "id": "open.editor",
+    "version": "1.0.0",
+    "summary": "Open a file in a local interactive editor, attached to the current terminal.",
+    "category": "editor",
+    "riskDefault": "MEDIUM",
+    "params": {
+      "file": { "type": "path", "required": true, "description": "File to open in the editor." },
+      "editor": {
+        "type": "string",
+        "default": "auto",
+        "enum": ["auto", "env", "nano", "vim", "vi", "code", "notepad"],
+        "description": "Editor to launch. auto uses VISUAL/EDITOR first, then a platform default."
+      },
+      "wait": {
+        "type": "boolean",
+        "default": true,
+        "description": "For editors that support it, wait until the file is closed before returning."
+      }
+    },
+    "safety": { "targetParam": "file" },
+    "adapters": {
+      "node": {
+        "command": "@node",
+        "args": [
+          { "kind": "value", "param": "file" },
+          { "kind": "value", "param": "editor" },
+          { "kind": "value", "param": "wait" }
+        ],
+        "semanticNotes": "Requires an interactive terminal. Web/server/CI contexts return a safe error instead of launching an editor. Dry-run previews the selected editor command."
+      }
+    },
+    "examples": [
+      "open.editor file=README.md",
+      "open.editor file=README.md editor=nano",
+      "open.editor file=src/index.ts editor=code wait=true"
+    ],
+    "tests": [
+      { "input": "open.editor file=README.md", "expectRisk": "MEDIUM" }
+    ]
+  }
+]

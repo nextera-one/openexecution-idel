@@ -1,0 +1,37 @@
+{
+  "name": "@openexecution/structure",
+  "version": "1.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --build"
+  },
+  "files": [
+    "dist"
+  ],
+  "description": "Parser and linter for declarative lowercase IDEL Structure documents.",
+  "license": "MIT",
+  "author": "Nextera One",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nextera-one/openexecution-idel.git",
+    "directory": "packages/structure"
+  },
+  "homepage": "https://github.com/nextera-one/openexecution-idel#readme",
+  "bugs": {
+    "url": "https://github.com/nextera-one/openexecution-idel/issues"
+  },
+  "engines": {
+    "node": ">=22.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

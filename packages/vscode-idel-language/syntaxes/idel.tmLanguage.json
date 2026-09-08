@@ -1,0 +1,97 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "IDEL Structure",
+  "scopeName": "source.idel",
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#header" },
+    { "include": "#use-import" },
+    { "include": "#block-verb" },
+    { "include": "#assignment-key" },
+    { "include": "#value" }
+  ],
+  "repository": {
+    "comment": {
+      "name": "comment.line.number-sign.idel",
+      "match": "#.*$"
+    },
+    "header": {
+      "match": "^(@idel)\\s+([0-9]+(?:\\.[0-9]+)*)",
+      "captures": {
+        "1": { "name": "keyword.control.directive.idel" },
+        "2": { "name": "constant.numeric.version.idel" }
+      }
+    },
+    "use-import": {
+      "match": "^\\s*(use)\\s+(?=[a-z_])(.*?)\\s+(as)\\s+([a-z_][a-z0-9_]*)\\s*$",
+      "captures": {
+        "1": { "name": "keyword.control.import.idel" },
+        "2": { "patterns": [{ "include": "#value" }] },
+        "3": { "name": "keyword.control.import.idel" },
+        "4": { "name": "variable.other.alias.idel" }
+      }
+    },
+    "block-verb": {
+      "match": "^\\s*([a-z_][a-z0-9_]*)((?:\\.[a-z_][a-z0-9_]*)+)\\s*(?=\"|\\{)",
+      "captures": {
+        "1": { "name": "keyword.control.verb.idel" },
+        "2": { "name": "entity.name.function.scope.idel" }
+      }
+    },
+    "assignment-key": {
+      "match": "^\\s*([a-z_][a-z0-9_]*)\\s*(=)",
+      "captures": {
+        "1": { "name": "variable.other.member.idel" },
+        "2": { "name": "keyword.operator.assignment.idel" }
+      }
+    },
+    "value": {
+      "patterns": [
+        { "include": "#string" },
+        { "include": "#call" },
+        { "include": "#boolean" },
+        { "include": "#enum-token" },
+        { "include": "#number" }
+      ]
+    },
+    "string": {
+      "name": "string.quoted.double.idel",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.idel",
+          "match": "\\\\[\"\\\\nt]"
+        },
+        {
+          "name": "string.quoted.double.uri.idel",
+          "match": "[a-z][a-z0-9+.-]*://[^\"\\s]*"
+        }
+      ]
+    },
+    "call": {
+      "begin": "\\b([a-z_][a-z0-9_.]*)\\s*(\\()",
+      "beginCaptures": {
+        "1": { "name": "support.function.idel" },
+        "2": { "name": "punctuation.definition.arguments.begin.idel" }
+      },
+      "end": "\\)",
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.arguments.end.idel" }
+      },
+      "patterns": [{ "include": "#value" }]
+    },
+    "boolean": {
+      "name": "constant.language.boolean.idel",
+      "match": "\\b(true|false)\\b"
+    },
+    "enum-token": {
+      "name": "support.constant.enum.idel",
+      "match": "\\b[a-z_][a-z0-9_]*(?:\\.[a-z_][a-z0-9_]*)+\\b"
+    },
+    "number": {
+      "name": "constant.numeric.idel",
+      "match": "\\b[0-9]+(?:\\.[0-9]+)*\\b"
+    }
+  }
+}

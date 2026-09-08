@@ -44,14 +44,22 @@ const SENSITIVE_KEY_PATTERNS: readonly RegExp[] = [
  */
 const SECRET_VALUE_PATTERNS: readonly RegExp[] = [
   // JWT: three base64url segments separated by dots (header.payload.signature).
-  /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/,
-  // AWS access key id: AKIA/ASIA + 16 uppercase-alphanumeric chars.
-  /^(?:AKIA|ASIA)[A-Z0-9]{16}$/,
+  /^[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}$/,
+  // AWS access key id: AKIA/ASIA + 16 alphanumeric chars (case-insensitive so a
+  // lowercased transcription still redacts).
+  /^(?:AKIA|ASIA)[A-Z0-9]{16}$/i,
   // GitHub classic PAT and fine-grained PAT.
   /^ghp_[A-Za-z0-9]{20,}$/,
+  /^gh[osru]_[A-Za-z0-9]{20,}$/,
   /^github_pat_[A-Za-z0-9_]{20,}$/,
-  // OpenAI-style keys: sk-… (incl. sk-proj-…).
+  // OpenAI/Anthropic-style keys.
   /^sk-[A-Za-z0-9_-]{16,}$/,
+  /^sk-ant-[A-Za-z0-9_-]{16,}$/,
+  // Stripe live/test keys and npm automation tokens.
+  /^sk_(?:live|test)_[A-Za-z0-9]{16,}$/,
+  /^npm_[A-Za-z0-9_-]{20,}$/,
+  // Slack tokens.
+  /^xox[baprs]-[A-Za-z0-9-]{20,}$/,
   // Generic long hex/base64-ish blob — kept LAST so the more specific
   // patterns above win first. ≥24 chars of [A-Za-z0-9+/=_-].
   /^[A-Za-z0-9+/=_-]{24,}$/,
@@ -64,7 +72,22 @@ export function isSensitiveKey(key: string): boolean {
 
 /** True if a string value, on its own, looks like a secret. */
 export function looksLikeSecretValue(value: string): boolean {
+  if (isLikelyNonSecretPath(value)) return false;
   return SECRET_VALUE_PATTERNS.some((re) => re.test(value));
+}
+
+function isLikelyNonSecretPath(value: string): boolean {
+  if (/^[A-Za-z]:[\\/]/.test(value)) return true;
+  if (
+    value.startsWith("/") ||
+    value.startsWith("./") ||
+    value.startsWith("../") ||
+    value.startsWith("~/") ||
+    value.startsWith("\\\\")
+  ) {
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -74,7 +97,16 @@ export function looksLikeSecretValue(value: string): boolean {
  */
 function redactParamValue(key: string, value: ParamValue): ParamValue {
   if (isSensitiveKey(key)) return REDACTED;
-  if (typeof value === "string" && looksLikeSecretValue(value)) return REDACTED;
+  if (typeof value === "string") {
+    if (looksLikeSecretValue(value)) return REDACTED;
+
+    // Param values are not necessarily atomic. Innocent-looking fields such as
+    // `note="production key is AKIA..."` can embed a credential in prose. Use
+    // the same token-aware scrubber as command/reason strings while preserving
+    // the non-secret context for useful audit evidence.
+    const scrubbed = redactString(value);
+    if (scrubbed !== value) return scrubbed;
+  }
   return value;
 }
 
@@ -88,14 +120,59 @@ function redactParamValue(key: string, value: ParamValue): ParamValue {
  * original spacing-sensitive shells; redaction is about not leaking, not about
  * round-tripping the command verbatim.
  */
+/** Query-string parameter names whose value is a secret (within a URL). */
+const SENSITIVE_QUERY_KEYS =
+  /\b(token|access_token|api[-_]?key|apikey|key|secret|sig|signature|password|passwd|pwd|auth|sas|code|session)\b/i;
+
 export function redactString(s: string): string {
   if (!s) return s;
+
+  // Pass 0: private-key PEM blocks can span many lines; remove the entire block
+  // before whitespace-token passes split it apart.
+  let out0 = s.replace(
+    /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g,
+    REDACTED,
+  );
+
+  // Pass 0a: URL userinfo — `scheme://user:pass@host` leaks the password (and
+  // arguably the user) into the log. Redact the credentials, keep the host so
+  // the audit line stays useful. Handles http(s), ftp, redis, postgres, etc.
+  out0 = out0.replace(
+    /([A-Za-z][A-Za-z0-9+.-]*:\/\/)([^/\s:@]+)(?::([^/\s@]+))?@/g,
+    (_m, scheme: string, user: string, pass: string | undefined) =>
+      pass !== undefined ? `${scheme}${user}:${REDACTED}@` : `${scheme}${REDACTED}@`,
+  );
+
+  // Pass 0b: secret-bearing URL query params — `?token=…&sig=…`. These ride
+  // inside a single whitespace token (a URL), so the key=value pass below won't
+  // see them; scrub each sensitive query value in place.
+  out0 = out0.replace(
+    /([?&])([A-Za-z0-9_.-]+)=([^&\s#"']+)/g,
+    (match, sep: string, key: string, _val: string) =>
+      SENSITIVE_QUERY_KEYS.test(key) ? `${sep}${key}=${REDACTED}` : match,
+  );
+
+  // Pass 0c: HTTP auth headers — `Authorization: Bearer <token>`, `-H
+  // "Authorization: Basic <b64>"`, and bare `Bearer <token>`. The colon syntax
+  // and the scheme word break the key=value / flag-value shapes, so handle them
+  // explicitly. Redact the credential, keep the scheme name.
+  out0 = out0.replace(
+    /(authorization\s*:\s*)(bearer|basic|token|digest)?\s*([^"'\s][^"'\n]*)/gi,
+    (_m, head: string, scheme: string | undefined, _cred: string) =>
+      `${head}${scheme ? scheme + " " : ""}${REDACTED}`,
+  );
+  out0 = out0.replace(
+    /\b(bearer)\s+([A-Za-z0-9._~+/=-]{8,})/gi,
+    (_m, scheme: string) => `${scheme} ${REDACTED}`,
+  );
 
   // Pass 1: inline `key=value`. Redact the value when the key is sensitive,
   // or when the value itself looks like a secret. The key may carry leading
   // dashes (`--api-key=…`); strip them before testing sensitivity.
-  let out = s.replace(
-    /([A-Za-z0-9_.-]+)=("[^"]*"|'[^']*'|\S+)/g,
+  // The unquoted value stops at `&` so a `k=v&other=v2` URL query (already
+  // handled per-param by Pass 0b) isn't greedily swallowed whole.
+  let out = out0.replace(
+    /([A-Za-z0-9_.-]+)=("[^"]*"|'[^']*'|[^\s&]+)/g,
     (match, rawKey: string, rawVal: string) => {
       const key = rawKey.replace(/^-+/, "");
       const unquoted = rawVal.replace(/^["']|["']$/g, "");
@@ -158,6 +235,11 @@ export function redact(record: OpenLogRecord): OpenLogRecord {
   return {
     ...record,
     command: redactString(record.command),
+    // policyReason is free-form text that can echo user-controlled input (a
+    // matched param value, a target path). Run it through the same scrubber so a
+    // secret embedded in a reason can't ride into the signed log. redactString
+    // only touches known secret shapes, so ordinary reason text is untouched.
+    policyReason: redactString(record.policyReason),
     ast: {
       command: record.ast.command,
       params,

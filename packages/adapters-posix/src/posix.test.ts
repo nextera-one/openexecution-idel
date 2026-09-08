@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -10,7 +10,7 @@ import type {
   ResolvedCommand,
 } from "@openexecution/types";
 import { NodeAdapter } from "./node-adapter.js";
-import { PosixAdapter } from "./posix.js";
+import { PosixAdapter, UnsafePosixArgumentError } from "./posix.js";
 import { renderArgv } from "./render.js";
 
 // ---------------------------------------------------------------------------
@@ -115,6 +115,15 @@ describe("renderArgv", () => {
     expect(argv.every((a) => a.length > 0)).toBe(true);
   });
 
+  it("can insert an end-of-options marker before the first positional value", () => {
+    const argv = renderArgv(
+      removeFolderSpec,
+      { recursive: true, force: true, path: "--preserve-root=all" },
+      { endOfOptionsBeforeValues: true },
+    );
+    expect(argv).toEqual(["-r", "-f", "--", "--preserve-root=all"]);
+  });
+
   it("renders remove.folder without flags as just [dist] (no empty strings)", () => {
     const argv = renderArgv(removeFolderSpec, {
       recursive: false,
@@ -178,8 +187,110 @@ describe("PosixAdapter", () => {
     );
     expect(plan.adapter).toBe("posix");
     expect(plan.command).toBe("rm");
-    expect(plan.argv).toEqual(["-r", "-f", "dist"]);
-    expect(plan.describe).toBe("rm -r -f dist");
+    expect(plan.argv).toEqual(["-r", "-f", "--", "dist"]);
+    expect(plan.describe).toBe("rm -r -f -- dist");
+  });
+
+  it("plan() inserts -- for destructive POSIX targets that start with dashes", () => {
+    const d = resolved({
+      ...def("remove.folder", { posix: removeFolderSpec }),
+      riskDefault: "HIGH",
+      params: { path: { type: "path", required: true } },
+      safety: { destructive: true, targetParam: "path" },
+    });
+    const plan = adapter.plan(
+      d,
+      ast("remove.folder", { recursive: true, force: true, path: "--preserve-root=all" }, "/tmp"),
+    );
+    expect(plan.argv).toEqual(["-r", "-f", "--", "./--preserve-root=all"]);
+    expect(plan.describe).toBe("rm -r -f -- ./--preserve-root=all");
+  });
+
+  it("makes find's option-like path a relative path rather than an action", () => {
+    const findSpec: AdapterSpec = {
+      command: "find",
+      args: [
+        { kind: "value", param: "path" },
+        { kind: "literal", value: "-name" },
+        { kind: "value", param: "name" },
+      ],
+    };
+    const d = resolved({
+      ...def("find.files", { posix: findSpec }),
+      params: {
+        path: { type: "path", required: true },
+        name: { type: "string", required: true },
+      },
+    });
+    const plan = adapter.plan(
+      d,
+      ast("find.files", { path: "-delete", name: "x" }, "/tmp"),
+    );
+    expect(plan.argv).toEqual(["./-delete", "-name", "x"]);
+  });
+
+  it("permits an option-like value only when structurally bound as an option operand", () => {
+    const d = resolved({
+      ...def("find.files", {
+        posix: {
+          command: "find",
+          args: [
+            { kind: "value", param: "path" },
+            { kind: "literal", value: "-name" },
+            { kind: "value", param: "name" },
+          ],
+        },
+      }),
+      params: {
+        path: { type: "path", required: true },
+        name: { type: "string", required: true },
+      },
+    });
+    expect(
+      adapter.plan(d, ast("find.files", { path: ".", name: "-delete" }, "/tmp")).argv,
+    ).toEqual([".", "-name", "-delete"]);
+  });
+
+  it("rejects an ambiguous leading-option non-path positional", () => {
+    const d = resolved({
+      ...def("install.apt.package", {
+        posix: {
+          command: "sudo",
+          args: [
+            { kind: "literal", value: "apt" },
+            { kind: "literal", value: "install" },
+            { kind: "value", param: "name" },
+          ],
+        },
+      }),
+      params: { name: { type: "string", required: true } },
+    });
+    expect(() =>
+      adapter.plan(d, ast("install.apt.package", { name: "--purge" }, "/tmp")),
+    ).toThrow(UnsafePosixArgumentError);
+  });
+
+  it("inserts -- for chmod/chown even when a def omitted destructive=true", () => {
+    const d = resolved({
+      ...def("set.file.permission", {
+        posix: {
+          command: "chmod",
+          args: [
+            { kind: "value", param: "mode" },
+            { kind: "value", param: "path" },
+          ],
+        },
+      }),
+      params: {
+        mode: { type: "mode", required: true },
+        path: { type: "path", required: true },
+      },
+    });
+    const plan = adapter.plan(
+      d,
+      ast("set.file.permission", { mode: "755", path: "-victim" }, "/tmp"),
+    );
+    expect(plan.argv).toEqual(["--", "755", "./-victim"]);
   });
 
   it("execute() dryRun returns a simulated result and does NOT spawn", async () => {
@@ -235,11 +346,15 @@ describe("NodeAdapter", () => {
   function run(
     id: string,
     params: Record<string, ParamValue>,
-    opts: { dryRun: boolean },
+    opts: { dryRun: boolean; interactive?: boolean },
   ) {
     const d = resolved(def(id, { node: { command: "@node", args: [] } }));
     const plan = adapter.plan(d, ast(id, params, dir));
-    return adapter.execute(plan, { dryRun: opts.dryRun, cwd: dir });
+    return adapter.execute(plan, {
+      dryRun: opts.dryRun,
+      cwd: dir,
+      interactive: opts.interactive,
+    });
   }
 
   it("name is node and available is always true", () => {
@@ -249,7 +364,11 @@ describe("NodeAdapter", () => {
 
   it("supports only the handled ids; supportsResolved requires @node", () => {
     expect(adapter.supports("create.file")).toBe(true);
+    expect(adapter.supports("tail.file")).toBe(true);
     expect(adapter.supports("remove.folder")).toBe(true);
+    expect(adapter.supports("run.script")).toBe(true);
+    expect(adapter.supports("edit.file")).toBe(true);
+    expect(adapter.supports("open.editor")).toBe(true);
     expect(adapter.supports("native.run")).toBe(false);
     expect(
       adapter.supportsResolved(
@@ -299,6 +418,10 @@ describe("NodeAdapter", () => {
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toBe("hello world");
 
+    r = await run("tail.file", { file: "readme.md", lines: 1 }, { dryRun: false });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe("hello world");
+
     // list.folder → stdout lists readme.md and the nested dir
     r = await run("list.folder", {}, { dryRun: false });
     expect(r.exitCode).toBe(0);
@@ -345,10 +468,43 @@ describe("NodeAdapter", () => {
     await expect(stat(join(dir, "to-del"))).rejects.toThrow();
   });
 
-  it("path.current returns cwd on stdout", async () => {
-    const r = await run("path.current", {}, { dryRun: false });
+  it("show.path returns cwd on stdout", async () => {
+    const r = await run("show.path", {}, { dryRun: false });
     expect(r.exitCode).toBe(0);
     expect(r.stdout.trim()).toBe(dir);
+  });
+
+  // --- Phase 2: TOCTOU symlink-swap refusal -----------------------------
+  it("remove.folder refuses when the leaf is a symlink at execution time", async () => {
+    // Simulate a swap: the safety scan blessed a real dir, but by execution the
+    // leaf is a symlink pointing elsewhere. The executor must refuse, fail-closed,
+    // and must NOT delete the symlink's victim.
+    const victim = join(dir, "victim");
+    await mkdir(victim);
+    await writeFile(join(victim, "keep.txt"), "precious");
+    const link = join(dir, "swapped");
+    await symlink(victim, link, "dir");
+
+    const r = await run(
+      "remove.folder",
+      { path: "swapped", recursive: true, force: true },
+      { dryRun: false },
+    );
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toMatch(/symlink at execution time|time-of-check/i);
+    // The victim and its contents are intact.
+    expect((await stat(victim)).isDirectory()).toBe(true);
+    expect(await readFile(join(victim, "keep.txt"), "utf8")).toBe("precious");
+  });
+
+  it("remove.file refuses a symlink leaf (fail-closed)", async () => {
+    const real = join(dir, "real.txt");
+    await writeFile(real, "data");
+    await symlink(real, join(dir, "link.txt"));
+    const r = await run("remove.file", { path: "link.txt" }, { dryRun: false });
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toMatch(/symlink/i);
+    expect(await readFile(real, "utf8")).toBe("data"); // real file untouched
   });
 
   it("dryRun does NOT touch the filesystem", async () => {
@@ -357,6 +513,112 @@ describe("NodeAdapter", () => {
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toContain("[dry-run]");
     await expect(stat(join(dir, "ghost.md"))).rejects.toThrow();
+  });
+
+  it("run.script dry-runs with the selected interpreter", async () => {
+    await writeFile(join(dir, "hello.js"), "console.log('hi')\n");
+    const r = await run(
+      "run.script",
+      { path: "hello.js", shell: "node", args: "--name test" },
+      { dryRun: true },
+    );
+    expect(r.simulated).toBe(true);
+    expect(r.stdout).toContain("[dry-run] would run script:");
+    expect(r.stdout).toContain("hello.js");
+  });
+
+  it("tail.file returns the requested trailing lines", async () => {
+    await writeFile(join(dir, "app.log"), "one\ntwo\nthree\nfour\n");
+    const r = await run("tail.file", { file: "app.log", lines: 2 }, { dryRun: false });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe("three\nfour\n");
+  });
+
+  it("run.script executes a node script and preserves quoted args", async () => {
+    await writeFile(
+      join(dir, "hello.js"),
+      "console.log(process.argv.slice(2).join('|'));\n",
+    );
+    const r = await run(
+      "run.script",
+      { path: "hello.js", shell: "node", args: 'one "two words"' },
+      { dryRun: false },
+    );
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe("one|two words\n");
+  });
+
+  it("run.script preserves Windows-style backslashes in args", async () => {
+    await writeFile(
+      join(dir, "hello.js"),
+      "console.log(process.argv.slice(2).join('|'));\n",
+    );
+    const r = await run(
+      "run.script",
+      { path: "hello.js", shell: "node", args: String.raw`C:\Temp\file one\ two` },
+      { dryRun: false },
+    );
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe(String.raw`C:\Temp\file|one two` + "\n");
+  });
+
+  it("run.script auto-selects the platform PowerShell command", async () => {
+    await writeFile(join(dir, "hello.ps1"), "Write-Output hi\n");
+    const r = await run(
+      "run.script",
+      { path: "hello.ps1", shell: "auto" },
+      { dryRun: true },
+    );
+    const expected = process.platform === "win32" ? "powershell.exe" : "pwsh";
+    expect(r.stdout).toContain(expected);
+  });
+
+  it("edit.file dry-runs with the selected editor", async () => {
+    await writeFile(join(dir, "note.txt"), "hi\n");
+    const r = await run(
+      "edit.file",
+      { path: "note.txt", editor: "code", wait: true },
+      { dryRun: true },
+    );
+    expect(r.simulated).toBe(true);
+    expect(r.stdout).toContain("[dry-run] would open editor:");
+    expect(r.stdout).toContain("code --wait");
+    expect(r.stdout).toContain("note.txt");
+  });
+
+  it("open.editor dry-runs with the file= parameter", async () => {
+    await writeFile(join(dir, "note.txt"), "hi\n");
+    const r = await run(
+      "open.editor",
+      { file: "note.txt", editor: "code", wait: true },
+      { dryRun: true },
+    );
+    expect(r.simulated).toBe(true);
+    expect(r.stdout).toContain("[dry-run] would open editor:");
+    expect(r.stdout).toContain("code --wait");
+    expect(r.stdout).toContain("note.txt");
+  });
+
+  it("edit.file fails cleanly outside an interactive TTY", async () => {
+    await writeFile(join(dir, "note.txt"), "hi\n");
+    const r = await run(
+      "edit.file",
+      { path: "note.txt", editor: "nano" },
+      { dryRun: false, interactive: false },
+    );
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toMatch(/interactive terminal/i);
+  });
+
+  it("open.editor fails cleanly outside an interactive TTY", async () => {
+    await writeFile(join(dir, "note.txt"), "hi\n");
+    const r = await run(
+      "open.editor",
+      { file: "note.txt", editor: "nano" },
+      { dryRun: false, interactive: false },
+    );
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toMatch(/open\.editor requires an interactive terminal/i);
   });
 
   it("returns a failure result (exit 1) when a required path is missing", async () => {

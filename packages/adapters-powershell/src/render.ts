@@ -16,6 +16,14 @@
 
 import type { AdapterSpec, ParamValue } from "@openexecution/types";
 
+export interface RenderArgvOptions {
+  /**
+   * Insert `--` immediately before the first positional value. This is opt-in
+   * because not every CLI accepts `--` in every argument position.
+   */
+  endOfOptionsBeforeValues?: boolean;
+}
+
 /** A param value is "present" when defined and not the empty string. */
 function isPresent(value: ParamValue | undefined): value is ParamValue {
   return value !== undefined && value !== "";
@@ -31,8 +39,10 @@ function isPresent(value: ParamValue | undefined): value is ParamValue {
 export function renderArgv(
   spec: AdapterSpec,
   params: Record<string, ParamValue>,
+  opts: RenderArgvOptions = {},
 ): string[] {
   const argv: string[] = [];
+  let insertedEndOfOptions = false;
 
   /** Defensive: never let an empty string into argv. */
   const push = (s: string): void => {
@@ -58,7 +68,13 @@ export function renderArgv(
       case "value": {
         // Emit [String(value)] as one positional when present; else skip.
         const value = params[arg.param];
-        if (isPresent(value)) push(String(value));
+        if (isPresent(value)) {
+          if (opts.endOfOptionsBeforeValues && !insertedEndOfOptions) {
+            push("--");
+            insertedEndOfOptions = true;
+          }
+          push(String(value));
+        }
         break;
       }
       case "literal": {

@@ -52,4 +52,10 @@ export const SAFETY_FLOORS: readonly SafetyFloor[] = [
     description:
       "Destructive verb invoked with an empty or missing target parameter. Blocked: classified at least HIGH.",
   },
+  {
+    code: "protected-system-path",
+    level: "HIGH",
+    description:
+      "Destructive operation targeting an OS-managed tree (/etc, /usr, /var, /System, C:\\Windows, Program Files, and equivalents). Always at least HIGH.",
+  },
 ];

@@ -1,0 +1,1767 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="idel-api-auth" content="__IDEL_API_AUTH_TOKEN__" />
+    <title>IDEL Terminal</title>
+    <link rel="stylesheet" href="/vendor/xterm/xterm.css" />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body class="terminal-page">
+    <header class="term-bar">
+      <a href="/" class="brand small"
+        >OpenExecution<span class="brand-dot">·</span>IDEL</a
+      >
+      <span class="term-status" id="status">connecting…</span>
+      <button
+        class="term-tool-btn"
+        id="connect-open"
+        type="button"
+        title="Connect to an IDEL server"
+      >
+        Connect
+      </button>
+      <span class="term-modes">
+        <button
+          class="mode-btn active"
+          id="mode-idel"
+          type="button"
+          title="Type IDEL commands"
+        >
+          IDEL
+        </button>
+        <button
+          class="mode-btn"
+          id="mode-ask"
+          type="button"
+          title="Ask AI in natural language"
+        >
+          Ask AI
+        </button>
+      </span>
+      <button
+        class="term-tool-btn header-menu-trigger color-summary"
+        id="appearance-menu-open"
+        type="button"
+        title="Terminal appearance"
+        aria-haspopup="dialog"
+        aria-controls="appearance-menu-dialog"
+      >
+        <span
+          class="selected-palette-swatch palette-cyan"
+          id="palette-selected-swatch"
+          aria-hidden="true"
+        ></span>
+        <span id="palette-selected">Cyan</span>
+      </button>
+      <button
+        class="term-tool-btn header-menu-trigger"
+        id="actions-menu-open"
+        type="button"
+        title="Open menu"
+        aria-haspopup="dialog"
+        aria-controls="actions-menu-dialog"
+      >
+        Menu
+      </button>
+    </header>
+
+    <dialog
+      class="header-menu-dialog appearance-menu-dialog"
+      id="appearance-menu-dialog"
+      aria-label="Terminal appearance"
+    >
+      <div class="header-menu-panel appearance-panel">
+        <section>
+          <span class="header-menu-label">Theme</span>
+          <span class="theme-toggle" role="group" aria-label="Theme">
+            <button
+              class="theme-btn active"
+              type="button"
+              data-theme="dark"
+              title="Dark theme"
+            >
+              Dark
+            </button>
+            <button
+              class="theme-btn"
+              type="button"
+              data-theme="light"
+              title="Light theme"
+            >
+              Light
+            </button>
+          </span>
+        </section>
+        <section>
+          <span class="header-menu-label">Accent</span>
+          <span
+            class="palette-controls"
+            role="group"
+            aria-label="Accent palette"
+          >
+            <button
+              class="palette-btn palette-cyan active"
+              type="button"
+              data-palette="cyan"
+              title="Cyan palette"
+              aria-label="Cyan palette"
+            ></button>
+            <button
+              class="palette-btn palette-blue"
+              type="button"
+              data-palette="blue"
+              title="Blue palette"
+              aria-label="Blue palette"
+            ></button>
+            <button
+              class="palette-btn palette-sky"
+              type="button"
+              data-palette="sky"
+              title="Sky palette"
+              aria-label="Sky palette"
+            ></button>
+            <button
+              class="palette-btn palette-teal"
+              type="button"
+              data-palette="teal"
+              title="Teal palette"
+              aria-label="Teal palette"
+            ></button>
+            <button
+              class="palette-btn palette-mint"
+              type="button"
+              data-palette="mint"
+              title="Mint palette"
+              aria-label="Mint palette"
+            ></button>
+            <button
+              class="palette-btn palette-green"
+              type="button"
+              data-palette="green"
+              title="Green palette"
+              aria-label="Green palette"
+            ></button>
+            <button
+              class="palette-btn palette-lime"
+              type="button"
+              data-palette="lime"
+              title="Lime palette"
+              aria-label="Lime palette"
+            ></button>
+            <button
+              class="palette-btn palette-amber"
+              type="button"
+              data-palette="amber"
+              title="Amber palette"
+              aria-label="Amber palette"
+            ></button>
+            <button
+              class="palette-btn palette-orange"
+              type="button"
+              data-palette="orange"
+              title="Orange palette"
+              aria-label="Orange palette"
+            ></button>
+            <button
+              class="palette-btn palette-rose"
+              type="button"
+              data-palette="rose"
+              title="Rose palette"
+              aria-label="Rose palette"
+            ></button>
+            <button
+              class="palette-btn palette-red"
+              type="button"
+              data-palette="red"
+              title="Red palette"
+              aria-label="Red palette"
+            ></button>
+            <button
+              class="palette-btn palette-fuchsia"
+              type="button"
+              data-palette="fuchsia"
+              title="Fuchsia palette"
+              aria-label="Fuchsia palette"
+            ></button>
+            <button
+              class="palette-btn palette-violet"
+              type="button"
+              data-palette="violet"
+              title="Violet palette"
+              aria-label="Violet palette"
+            ></button>
+            <button
+              class="palette-btn palette-indigo"
+              type="button"
+              data-palette="indigo"
+              title="Indigo palette"
+              aria-label="Indigo palette"
+            ></button>
+            <button
+              class="palette-btn palette-slate"
+              type="button"
+              data-palette="slate"
+              title="Slate palette"
+              aria-label="Slate palette"
+            ></button>
+            <button
+              class="palette-btn palette-stone"
+              type="button"
+              data-palette="stone"
+              title="Stone palette"
+              aria-label="Stone palette"
+            ></button>
+          </span>
+        </section>
+      </div>
+    </dialog>
+
+    <dialog
+      class="header-menu-dialog actions-menu-dialog"
+      id="actions-menu-dialog"
+      aria-label="Menu"
+    >
+      <div class="header-menu-panel actions-panel">
+        <button
+          class="term-tool-btn"
+          id="search-open"
+          type="button"
+          title="Open advanced search"
+        >
+          Search
+        </button>
+        <button
+          class="term-tool-btn"
+          id="palette-open"
+          type="button"
+          title="Open command palette"
+        >
+          Palette
+        </button>
+        <button
+          class="term-tool-btn"
+          id="workflow-open"
+          type="button"
+          title="Open saved workflows"
+        >
+          Workflows
+        </button>
+        <button
+          class="term-tool-btn"
+          id="native-sessions-open"
+          type="button"
+          title="Manage native shell sessions"
+        >
+          Shells
+        </button>
+        <button
+          class="term-tool-btn"
+          id="dictionary-open"
+          type="button"
+          title="Open command dictionary"
+        >
+          Dictionary
+        </button>
+        <button
+          class="term-tool-btn"
+          id="knowledge-open"
+          type="button"
+          title="Open command knowledge base"
+        >
+          Knowledge
+        </button>
+        <button
+          class="term-tool-btn"
+          id="policy-open"
+          type="button"
+          title="Simulate policy without executing"
+        >
+          Policy Studio
+        </button>
+        <button
+          class="term-tool-btn"
+          id="setup-open"
+          type="button"
+          title="Open setup checklist"
+        >
+          Setup
+        </button>
+        <button
+          class="term-tool-btn"
+          id="preferences-open"
+          type="button"
+          title="Preferences"
+        >
+          Preferences
+        </button>
+      </div>
+    </dialog>
+
+    <dialog
+      class="connect-dialog"
+      id="policy-dialog"
+      aria-labelledby="policy-title"
+    >
+      <div class="connect-panel policy-panel">
+        <div class="preferences-head">
+          <div>
+            <h2 id="policy-title">Policy Studio</h2>
+            <p>Simulate a command without executing or logging it</p>
+          </div>
+          <button class="icon-btn" id="policy-close" type="button" aria-label="Close Policy Studio">x</button>
+        </div>
+        <div class="connect-body">
+          <label class="connect-field">
+            <span>Command to evaluate</span>
+            <input
+              id="policy-command"
+              type="text"
+              spellcheck="false"
+              autocomplete="off"
+              placeholder="remove.folder name=dist recursive=true"
+            />
+          </label>
+          <div class="connect-actions">
+            <button class="mode-btn active" id="policy-evaluate" type="button">Evaluate</button>
+          </div>
+          <div class="policy-result" id="policy-result" role="status" aria-live="polite">
+            Enter a command to inspect its adapter translation, risk findings, and matched policy action.
+          </div>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog
+      class="connect-dialog"
+      id="connect-dialog"
+      aria-labelledby="connect-title"
+    >
+      <div class="connect-panel">
+        <div class="preferences-head">
+          <div>
+            <h2 id="connect-title">Connect</h2>
+            <p>IDEL server</p>
+          </div>
+          <button
+            class="icon-btn"
+            id="connect-close"
+            type="button"
+            title="Close"
+            aria-label="Close connect"
+          >
+            x
+          </button>
+        </div>
+        <div class="connect-body">
+          <label class="connect-field">
+            <span>Server URL</span>
+            <input
+              id="connect-url"
+              type="url"
+              spellcheck="false"
+              autocomplete="off"
+              placeholder="http://127.0.0.1:8787"
+            />
+          </label>
+          <label class="connect-field">
+            <span>Bearer token</span>
+            <input
+              id="connect-token"
+              type="password"
+              spellcheck="false"
+              autocomplete="off"
+              placeholder="IDEL_SERVER_AUTH_TOKEN"
+            />
+            <small>Kept only in this page session. Required for remote or SSH-tunneled servers.</small>
+          </label>
+          <div class="connect-grid">
+            <label class="connect-field">
+              <span>Host</span>
+              <input
+                id="connect-host"
+                type="text"
+                spellcheck="false"
+                autocomplete="off"
+                placeholder="server.example.com"
+              />
+            </label>
+            <label class="connect-field">
+              <span>User</span>
+              <input
+                id="connect-user"
+                type="text"
+                spellcheck="false"
+                autocomplete="username"
+                placeholder="ubuntu"
+              />
+            </label>
+            <label class="connect-field">
+              <span>Local port</span>
+              <input id="connect-local-port" type="number" min="1" max="65535" value="8787" />
+            </label>
+            <label class="connect-field">
+              <span>Remote port</span>
+              <input id="connect-remote-port" type="number" min="1" max="65535" value="7878" />
+            </label>
+          </div>
+          <label class="connect-field">
+            <span>SSH tunnel</span>
+            <output id="connect-ssh-command" class="connect-command"></output>
+          </label>
+          <div class="connect-actions">
+            <button class="term-tool-btn" id="connect-copy-ssh" type="button">Copy SSH</button>
+            <button class="term-tool-btn" id="connect-reset" type="button">Local</button>
+            <button class="mode-btn" id="connect-test" type="button">Test</button>
+            <button class="mode-btn active" id="connect-apply" type="button">Connect</button>
+          </div>
+          <div class="connect-status" id="connect-status"></div>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog
+      class="search-dialog"
+      id="search-dialog"
+      aria-labelledby="search-title"
+    >
+      <div class="search-panel">
+        <div class="preferences-head">
+          <div>
+            <h2 id="search-title">Search</h2>
+            <p>Terminal history</p>
+          </div>
+          <button
+            class="icon-btn"
+            id="search-close"
+            type="button"
+            title="Close"
+            aria-label="Close search"
+          >
+            x
+          </button>
+        </div>
+
+        <div class="search-bar">
+          <label class="sr-only" for="search-input"
+            >Search terminal history</label
+          >
+          <input
+            id="search-input"
+            type="search"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="Search prompts, answers, commands, replies"
+          />
+          <span class="search-options" role="group" aria-label="Search options">
+            <button
+              class="theme-btn"
+              id="search-case"
+              type="button"
+              title="Match case"
+              aria-pressed="false"
+            >
+              Aa
+            </button>
+            <button
+              class="theme-btn"
+              id="search-regex"
+              type="button"
+              title="Use regular expression"
+              aria-pressed="false"
+            >
+              .*
+            </button>
+          </span>
+        </div>
+
+        <div class="search-scopes" role="group" aria-label="Search scope">
+          <button
+            class="theme-btn active"
+            type="button"
+            data-search-scope="all"
+          >
+            All
+          </button>
+          <button class="theme-btn" type="button" data-search-scope="ai-prompt">
+            AI prompts
+          </button>
+          <button class="theme-btn" type="button" data-search-scope="ai-answer">
+            AI answers
+          </button>
+          <button
+            class="theme-btn"
+            type="button"
+            data-search-scope="idel-command"
+          >
+            IDEL commands
+          </button>
+          <button
+            class="theme-btn"
+            type="button"
+            data-search-scope="idel-reply"
+          >
+            IDEL replies
+          </button>
+        </div>
+
+        <div class="search-meta">
+          <span id="search-count">0 results</span>
+        </div>
+        <div class="search-results" id="search-results"></div>
+        <div class="search-empty" id="search-empty">No matches.</div>
+      </div>
+    </dialog>
+
+    <main class="term-main">
+      <div class="workspace-tabs">
+        <div id="tabs" class="workspace-tab-list" role="tablist" aria-label="Workspace tabs"></div>
+        <button
+          class="tab-new"
+          id="new-terminal"
+          type="button"
+          title="New terminal"
+          aria-label="New IDEL terminal"
+        >
+          +
+        </button>
+        <button
+          class="tab-new native-new"
+          id="new-native-terminal"
+          type="button"
+          title="New native shell"
+          aria-label="New native shell"
+        >
+          sh
+        </button>
+      </div>
+      <section class="term-output" id="output" role="log" aria-label="Terminal output">
+        <section class="welcome-card" aria-labelledby="welcome-title">
+          <p class="welcome-kicker">Safe execution workspace</p>
+          <h2 id="welcome-title">Start with intent. Review before execution.</h2>
+          <p>
+            Every command is translated, risk-classified, checked by policy,
+            and added to the signed audit trail.
+          </p>
+          <div class="welcome-steps" aria-label="Execution flow">
+            <span>1 · Write intent</span><span>2 · Review evidence</span><span>3 · Execute or decline</span>
+          </div>
+          <div class="welcome-actions">
+            <button type="button" data-starter-command="list.folder name=.">Try a safe command</button>
+            <button type="button" data-starter-command="create.file name=hello.txt">Preview a write</button>
+            <button type="button" id="welcome-ask">Ask AI</button>
+          </div>
+        </section>
+      </section>
+      <div class="sr-only" id="terminal-announcer" role="status" aria-live="polite"></div>
+
+      <form class="term-input" id="form" autocomplete="off">
+        <span class="term-prompt" id="prompt">idel&gt;</span>
+        <textarea
+          id="input"
+          rows="1"
+          spellcheck="false"
+          autocapitalize="off"
+          autocomplete="off"
+          placeholder="verb.scope param=value   (Tab to complete, ↑/↓ history)"
+          aria-label="command input"
+        ></textarea>
+        <span
+          class="ai-input-progress"
+          id="ai-input-progress"
+          role="status"
+          aria-live="polite"
+          hidden
+        >
+          <span class="ai-input-spinner" aria-hidden="true"></span>
+          <span id="ai-input-progress-text">Asking AI</span>
+        </span>
+        <span
+          class="risk-indicator risk-indicator--empty"
+          id="risk-indicator"
+          role="status"
+          aria-live="polite"
+          title="Command risk preview"
+        >
+          <span class="risk-indicator-dot" aria-hidden="true"></span>
+          <span class="risk-indicator-label">risk</span>
+        </span>
+        <button
+          class="input-toggle"
+          id="batch-toggle"
+          type="button"
+          aria-pressed="false"
+          title="Multiline batch input. Ctrl+B toggles; Ctrl+Enter runs."
+        >
+          Batch
+        </button>
+      </form>
+      <ul class="completions" id="completions" hidden></ul>
+    </main>
+
+    <aside class="term-side">
+      <div class="side-head">
+        <span>Audit trail</span>
+        <span class="side-head-actions">
+          <button id="verify-logs" type="button" title="Verify signed log chain">Verify</button>
+          <button id="refresh-logs" type="button" title="Reload audit records" aria-label="Reload audit records">↻</button>
+        </span>
+      </div>
+      <div class="audit-tools">
+        <label>
+          <span class="sr-only">Filter audit records</span>
+          <select id="audit-filter">
+            <option value="all">All activity</option>
+            <option value="attention">Needs attention</option>
+            <option value="agent">Agent activity</option>
+            <option value="writes">Real executions</option>
+          </select>
+        </label>
+        <output id="audit-verify-status" role="status" aria-live="polite"></output>
+      </div>
+      <div class="logs" id="logs" aria-label="Recent audit records"></div>
+    </aside>
+
+    <dialog
+      class="preferences-dialog"
+      id="preferences-dialog"
+      aria-labelledby="preferences-title"
+    >
+      <div class="preferences-panel">
+        <div class="preferences-head">
+          <div>
+            <h2 id="preferences-title">Preferences</h2>
+            <p>Terminal settings</p>
+          </div>
+          <button
+            class="icon-btn"
+            id="preferences-close"
+            type="button"
+            title="Close"
+            aria-label="Close preferences"
+          >
+            x
+          </button>
+        </div>
+
+        <section class="preference-row">
+          <div class="preference-copy">
+            <span>Theme</span>
+            <small>Dark or light chrome</small>
+          </div>
+          <span class="theme-toggle" role="group" aria-label="Theme preference">
+            <button
+              class="theme-btn active"
+              type="button"
+              data-theme="dark"
+              title="Dark theme"
+            >
+              Dark
+            </button>
+            <button
+              class="theme-btn"
+              type="button"
+              data-theme="light"
+              title="Light theme"
+            >
+              Light
+            </button>
+          </span>
+        </section>
+
+        <section class="preference-row">
+          <div class="preference-copy">
+            <span>Palette</span>
+            <small>Accent color</small>
+          </div>
+          <span
+            class="palette-controls"
+            role="group"
+            aria-label="Accent palette preference"
+          >
+            <button
+              class="palette-btn palette-cyan active"
+              type="button"
+              data-palette="cyan"
+              title="Cyan palette"
+              aria-label="Cyan palette"
+            ></button>
+            <button
+              class="palette-btn palette-blue"
+              type="button"
+              data-palette="blue"
+              title="Blue palette"
+              aria-label="Blue palette"
+            ></button>
+            <button
+              class="palette-btn palette-sky"
+              type="button"
+              data-palette="sky"
+              title="Sky palette"
+              aria-label="Sky palette"
+            ></button>
+            <button
+              class="palette-btn palette-teal"
+              type="button"
+              data-palette="teal"
+              title="Teal palette"
+              aria-label="Teal palette"
+            ></button>
+            <button
+              class="palette-btn palette-mint"
+              type="button"
+              data-palette="mint"
+              title="Mint palette"
+              aria-label="Mint palette"
+            ></button>
+            <button
+              class="palette-btn palette-green"
+              type="button"
+              data-palette="green"
+              title="Green palette"
+              aria-label="Green palette"
+            ></button>
+            <button
+              class="palette-btn palette-lime"
+              type="button"
+              data-palette="lime"
+              title="Lime palette"
+              aria-label="Lime palette"
+            ></button>
+            <button
+              class="palette-btn palette-amber"
+              type="button"
+              data-palette="amber"
+              title="Amber palette"
+              aria-label="Amber palette"
+            ></button>
+            <button
+              class="palette-btn palette-orange"
+              type="button"
+              data-palette="orange"
+              title="Orange palette"
+              aria-label="Orange palette"
+            ></button>
+            <button
+              class="palette-btn palette-rose"
+              type="button"
+              data-palette="rose"
+              title="Rose palette"
+              aria-label="Rose palette"
+            ></button>
+            <button
+              class="palette-btn palette-red"
+              type="button"
+              data-palette="red"
+              title="Red palette"
+              aria-label="Red palette"
+            ></button>
+            <button
+              class="palette-btn palette-fuchsia"
+              type="button"
+              data-palette="fuchsia"
+              title="Fuchsia palette"
+              aria-label="Fuchsia palette"
+            ></button>
+            <button
+              class="palette-btn palette-violet"
+              type="button"
+              data-palette="violet"
+              title="Violet palette"
+              aria-label="Violet palette"
+            ></button>
+            <button
+              class="palette-btn palette-indigo"
+              type="button"
+              data-palette="indigo"
+              title="Indigo palette"
+              aria-label="Indigo palette"
+            ></button>
+            <button
+              class="palette-btn palette-slate"
+              type="button"
+              data-palette="slate"
+              title="Slate palette"
+              aria-label="Slate palette"
+            ></button>
+            <button
+              class="palette-btn palette-stone"
+              type="button"
+              data-palette="stone"
+              title="Stone palette"
+              aria-label="Stone palette"
+            ></button>
+          </span>
+        </section>
+
+        <section class="preference-row">
+          <div class="preference-copy">
+            <span>Font size</span>
+            <small>Terminal and editor text</small>
+          </div>
+          <span
+            class="theme-toggle"
+            role="group"
+            aria-label="Font size preference"
+          >
+            <button
+              class="theme-btn"
+              type="button"
+              data-font-size="small"
+              title="Small font"
+            >
+              Small
+            </button>
+            <button
+              class="theme-btn active"
+              type="button"
+              data-font-size="normal"
+              title="Normal font"
+            >
+              Normal
+            </button>
+            <button
+              class="theme-btn"
+              type="button"
+              data-font-size="large"
+              title="Large font"
+            >
+              Large
+            </button>
+            <button
+              class="theme-btn"
+              type="button"
+              data-font-size="xlarge"
+              title="Extra large font"
+              aria-label="Extra large font"
+            >
+              XL
+            </button>
+          </span>
+        </section>
+
+        <section class="preference-row">
+          <div class="preference-copy">
+            <span>Effects</span>
+            <small>Optional terminal atmosphere</small>
+          </div>
+          <span
+            class="theme-toggle effect-toggle"
+            role="group"
+            aria-label="Terminal effects preference"
+          >
+            <button
+              class="theme-btn active"
+              type="button"
+              data-effect="none"
+              title="No visual effect"
+            >
+              Off
+            </button>
+            <button
+              class="theme-btn"
+              type="button"
+              data-effect="matrix"
+              title="Matrix rain effect"
+            >
+              Matrix
+            </button>
+            <button
+              class="theme-btn"
+              type="button"
+              data-effect="scanlines"
+              title="CRT scanlines effect"
+            >
+              Scanlines
+            </button>
+            <button
+              class="theme-btn"
+              type="button"
+              data-effect="glow"
+              title="Soft terminal glow effect"
+            >
+              Glow
+            </button>
+            <button
+              class="theme-btn"
+              type="button"
+              data-effect="pulse"
+              title="Terminal pulse effect"
+            >
+              Pulse
+            </button>
+          </span>
+        </section>
+
+        <section class="preference-row">
+          <div class="preference-copy">
+            <span>Block paste</span>
+            <small>Prevent clipboard text from entering terminal input</small>
+          </div>
+          <label class="switch" title="Block paste into terminal input">
+            <input id="pref-block-paste" type="checkbox" />
+            <span aria-hidden="true"></span>
+          </label>
+        </section>
+
+        <section class="preference-row">
+          <div class="preference-copy">
+            <span>Block copy</span>
+            <small>Disable terminal copy actions and selection copy</small>
+          </div>
+          <label class="switch" title="Block terminal copy actions">
+            <input id="pref-block-copy" type="checkbox" />
+            <span aria-hidden="true"></span>
+          </label>
+        </section>
+
+        <section class="preference-row ask-context-row">
+          <div class="preference-copy">
+            <span>Ask AI context</span>
+            <small
+              >Send previous Q/A so Ask AI can continue the conversation</small
+            >
+          </div>
+          <span class="ask-context-controls">
+            <span
+              class="theme-toggle ask-context-toggle"
+              role="group"
+              aria-label="Ask AI context preference"
+            >
+              <button
+                class="theme-btn active"
+                type="button"
+                data-ask-context-mode="none"
+                title="Start each Ask AI request fresh"
+              >
+                Off
+              </button>
+              <button
+                class="theme-btn"
+                type="button"
+                data-ask-context-mode="auto"
+                title="Automatically send relevant recent Ask AI turns"
+              >
+                Auto
+              </button>
+              <button
+                class="theme-btn"
+                type="button"
+                data-ask-context-mode="all"
+                title="Send recent Ask AI turns"
+              >
+                All
+              </button>
+              <button
+                class="theme-btn"
+                type="button"
+                data-ask-context-mode="selected"
+                title="Send only picked Ask AI turns"
+              >
+                Pick
+              </button>
+            </span>
+            <button
+              class="editor-btn ask-context-pick"
+              id="ask-context-pick"
+              type="button"
+            >
+              Choose
+            </button>
+            <span class="ask-context-count" id="ask-context-count"
+              >0 saved</span
+            >
+          </span>
+        </section>
+
+        <section class="preference-row auto-approve-row">
+          <div class="preference-copy">
+            <span>Auto approve</span>
+            <small
+              >Approve matching Ask AI commands after dry-run checks</small
+            >
+          </div>
+          <label
+            class="switch"
+            title="Auto approve matching Ask AI real-run requests"
+          >
+            <input id="pref-auto-approve" type="checkbox" />
+            <span aria-hidden="true"></span>
+          </label>
+        </section>
+
+        <section class="preference-row auto-approve-rules">
+          <div class="preference-copy">
+            <span>Auto approve rules</span>
+            <small
+              >Command globs, one per line. The max risk still applies.</small
+            >
+          </div>
+          <div class="auto-approve-controls">
+            <span
+              class="theme-toggle auto-approve-risk-toggle"
+              role="group"
+              aria-label="Auto approve maximum risk"
+            >
+              <button
+                class="theme-btn active"
+                type="button"
+                data-auto-approve-risk="LOW"
+                title="Only auto approve LOW risk matches"
+              >
+                LOW
+              </button>
+              <button
+                class="theme-btn"
+                type="button"
+                data-auto-approve-risk="MEDIUM"
+                title="Auto approve LOW and MEDIUM risk matches"
+              >
+                MED
+              </button>
+            </span>
+            <label class="sr-only" for="pref-auto-approve-patterns"
+              >Auto approve command patterns</label
+            >
+            <textarea
+              id="pref-auto-approve-patterns"
+              class="auto-approve-patterns"
+              rows="4"
+              spellcheck="false"
+              autocomplete="off"
+            >
+list.*&#10;show.*&#10;explain.*&#10;check.*</textarea
+            >
+          </div>
+        </section>
+
+        <section class="preference-row">
+          <div class="preference-copy">
+            <span>Audit panel</span>
+            <small>Recent command log</small>
+          </div>
+          <label class="switch" title="Show audit panel">
+            <input id="pref-show-logs" type="checkbox" checked />
+            <span aria-hidden="true"></span>
+          </label>
+        </section>
+      </div>
+    </dialog>
+
+    <dialog
+      class="ask-context-dialog"
+      id="ask-context-dialog"
+      aria-labelledby="ask-context-title"
+    >
+      <div class="ask-context-panel">
+        <div class="preferences-head">
+          <div>
+            <h2 id="ask-context-title">Ask AI Context</h2>
+            <p>
+              Pick prior questions and answers to send with the next request
+            </p>
+          </div>
+          <button
+            class="icon-btn"
+            id="ask-context-close"
+            type="button"
+            title="Close"
+            aria-label="Close Ask AI context"
+          >
+            x
+          </button>
+        </div>
+
+        <div class="ask-context-toolbar">
+          <button class="editor-btn" id="ask-context-select-all" type="button">
+            Select All
+          </button>
+          <button class="editor-btn" id="ask-context-clear" type="button">
+            Clear
+          </button>
+          <button
+            class="editor-btn"
+            id="ask-context-clear-memory"
+            type="button"
+          >
+            Delete Saved
+          </button>
+        </div>
+        <div class="ask-context-list" id="ask-context-list"></div>
+        <div class="ask-context-empty" id="ask-context-empty" hidden>
+          No Ask AI conversation saved yet.
+        </div>
+        <div class="ask-context-actions">
+          <span id="ask-context-dialog-count">0 selected</span>
+          <button class="editor-btn" id="ask-context-apply" type="button">
+            Done
+          </button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog
+      class="palette-dialog"
+      id="palette-dialog"
+      aria-labelledby="palette-title"
+    >
+      <div class="palette-panel">
+        <div class="palette-search">
+          <label class="sr-only" for="palette-search"
+            >Search commands, files, workflows, and actions</label
+          >
+          <input
+            id="palette-search"
+            type="search"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="Search commands, workflows, actions..."
+          />
+          <button
+            class="icon-btn"
+            id="palette-close"
+            type="button"
+            title="Close"
+            aria-label="Close command palette"
+          >
+            x
+          </button>
+        </div>
+        <div
+          class="palette-results"
+          id="palette-results"
+          role="listbox"
+          aria-labelledby="palette-title"
+        ></div>
+        <div class="palette-empty" id="palette-empty" hidden>
+          No matching actions.
+        </div>
+      </div>
+    </dialog>
+
+    <dialog
+      class="workflow-dialog"
+      id="workflow-dialog"
+      aria-labelledby="workflow-title"
+    >
+      <div class="workflow-panel">
+        <div class="preferences-head">
+          <div>
+            <h2 id="workflow-title">Workflows</h2>
+            <p>Saved batches for repeated work</p>
+          </div>
+          <button
+            class="icon-btn"
+            id="workflow-close"
+            type="button"
+            title="Close"
+            aria-label="Close workflows"
+          >
+            x
+          </button>
+        </div>
+
+        <section class="workflow-editor">
+          <input
+            id="workflow-name"
+            type="text"
+            autocomplete="off"
+            placeholder="workflow name"
+            aria-label="Workflow name"
+          />
+          <textarea
+            id="workflow-command"
+            rows="4"
+            spellcheck="false"
+            placeholder="one IDEL command per line, or a && batch"
+            aria-label="Workflow commands"
+          ></textarea>
+          <div class="workflow-editor-actions">
+            <button class="editor-btn" id="workflow-save" type="button">
+              Save
+            </button>
+            <button class="editor-btn" id="workflow-fill-current" type="button">
+              Use Current Input
+            </button>
+          </div>
+        </section>
+
+        <div class="workflow-list" id="workflow-list"></div>
+        <div class="workflow-empty" id="workflow-empty" hidden>
+          No saved workflows.
+        </div>
+      </div>
+    </dialog>
+
+    <dialog
+      class="native-sessions-dialog"
+      id="native-sessions-dialog"
+      aria-labelledby="native-sessions-title"
+    >
+      <div class="native-sessions-panel">
+        <div class="preferences-head">
+          <div>
+            <h2 id="native-sessions-title">Shell Sessions</h2>
+            <p>Running native shells in this IDEL server</p>
+          </div>
+          <button
+            class="icon-btn"
+            id="native-sessions-close"
+            type="button"
+            title="Close"
+            aria-label="Close shell sessions"
+          >
+            x
+          </button>
+        </div>
+
+        <div class="native-sessions-actions">
+          <button class="editor-btn" id="native-sessions-refresh" type="button">
+            Refresh
+          </button>
+          <button
+            class="editor-btn"
+            id="native-sessions-close-all"
+            type="button"
+          >
+            Close All
+          </button>
+        </div>
+
+        <div class="native-sessions-list" id="native-sessions-list"></div>
+        <div class="native-sessions-empty" id="native-sessions-empty" hidden>
+          No running native shell sessions.
+        </div>
+      </div>
+    </dialog>
+
+    <dialog
+      class="setup-check-dialog"
+      id="setup-check-dialog"
+      aria-labelledby="setup-check-title"
+    >
+      <div class="setup-check-panel">
+        <div class="preferences-head">
+          <div>
+            <h2 id="setup-check-title">Setup Checklist</h2>
+            <p>Local readiness for a complete IDEL workspace</p>
+          </div>
+          <button
+            class="icon-btn"
+            id="setup-close"
+            type="button"
+            title="Close"
+            aria-label="Close setup checklist"
+          >
+            x
+          </button>
+        </div>
+
+        <div class="setup-checks" id="setup-checks"></div>
+        <div class="setup-actions">
+          <button class="editor-btn" id="setup-open-dictionary" type="button">
+            Dictionary
+          </button>
+          <button class="editor-btn" id="setup-open-workflows" type="button">
+            Workflows
+          </button>
+          <button class="editor-btn" id="setup-open-ai" type="button">
+            AI Setup
+          </button>
+          <button class="editor-btn" id="setup-dismiss" type="button">
+            Done
+          </button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog
+      class="knowledge-dialog"
+      id="knowledge-dialog"
+      aria-labelledby="knowledge-title"
+    >
+      <div class="knowledge-panel">
+        <div class="preferences-head">
+          <div>
+            <h2 id="knowledge-title">Knowledge Base</h2>
+            <p>
+              <span id="knowledge-platform">Detecting OS</span> guidance for
+              batch, wait, native, elevation, and packages
+            </p>
+          </div>
+          <button
+            class="icon-btn"
+            id="knowledge-close"
+            type="button"
+            title="Close"
+            aria-label="Close knowledge base"
+          >
+            x
+          </button>
+        </div>
+
+        <section class="knowledge-body">
+          <article class="knowledge-section">
+            <h3>Batch Commands</h3>
+            <p>
+              Use top-level <code>&amp;&amp;</code> to run IDEL commands one
+              after another. The next step starts only after the previous step
+              succeeds.
+            </p>
+            <pre><code id="knowledge-batch-example">create.folder name=demo &amp;&amp; create.file name=demo/readme.md &amp;&amp; read.file name=demo/readme.md</code></pre>
+            <p class="knowledge-note">
+              Turn on the Batch input toggle for multiple lines, then use
+              Ctrl+Enter to run. A native line that starts with
+              <code>!</code> is kept as one shell command, so
+              <code>&amp;&amp;</code> inside it belongs to the shell.
+            </p>
+          </article>
+
+          <article class="knowledge-section">
+            <h3>Wait Between Steps</h3>
+            <p>
+              Use <code>wait.time</code> when a batch needs a short pause before
+              the next command reads a file, checks a log, or talks to a
+              service.
+            </p>
+            <pre><code id="knowledge-wait-example">run.script path=./scripts/start.sh shell=bash &amp;&amp; wait.time seconds=2 &amp;&amp; tail.file file=app.log lines=40</code></pre>
+            <pre><code id="knowledge-wait-short-example">create.file name=ready.txt &amp;&amp; wait.time ms=500 &amp;&amp; read.file name=ready.txt</code></pre>
+          </article>
+
+          <article class="knowledge-section">
+            <h3>Native Passthrough</h3>
+            <p>
+              Use <code>!</code> when you need a real OS command that IDEL does
+              not model yet. It is still risk-scanned, policy-checked, and
+              logged, but it is less structured than a native IDEL command.
+            </p>
+            <pre><code id="knowledge-native-example">! sudo apt install git</code></pre>
+            <pre><code id="knowledge-native-quoted-example">! "sudo apt install git"</code></pre>
+            <p class="knowledge-note">
+              The quoted form is accepted for convenience. IDEL sends both
+              examples to the shell as
+              <code id="knowledge-native-shell-example"
+                >sudo apt install git</code
+              >.
+            </p>
+            <pre><code id="knowledge-native-tab-example">sudo apt install git</code></pre>
+            <p class="knowledge-note">
+              For interactive commands, open a <code>sh</code> tab. Native shell
+              tabs send Tab, arrows, Ctrl+C, and password prompts directly to
+              the OS shell.
+            </p>
+          </article>
+
+          <article class="knowledge-section">
+            <h3 id="knowledge-package-title">Elevation And Packages</h3>
+            <p>
+              Package-manager commands should be explicit because search,
+              install, remove, upgrade, and source edits have very different
+              risks. Prefer curated IDEL commands when available; use
+              <code>!</code> for one-off native work.
+            </p>
+            <pre><code id="knowledge-package-examples">! sudo apt update
+! sudo apt install git
+! apt search git</code></pre>
+            <p class="knowledge-note" id="knowledge-package-note">
+              Interactive sudo password prompts work best in a real terminal. In
+              the web terminal, prefer commands that do not need an interactive
+              password prompt, or run the server from a session where sudo is
+              already ready.
+            </p>
+          </article>
+
+          <article class="knowledge-section">
+            <h3>Clear Scrollback</h3>
+            <p>
+              Clear commands affect only the visible rows in the active terminal
+              tab. They do not delete files, audit logs, or command history.
+            </p>
+            <pre><code>clear.all
+clear.last limit=10
+clear.first limit=5
+clear.range from=2 to=8</code></pre>
+            <p class="knowledge-note">
+              <code>clear.range</code> uses 1-based row numbers and includes
+              both ends of the range.
+            </p>
+          </article>
+
+          <article class="knowledge-section">
+            <h3>Learning CLIs</h3>
+            <p>
+              <code>learn.cli</code> drafts commands from help text. Some tools,
+              like <code>apt</code>, expose broad subcommands without enough
+              safe parameter detail, so learning may produce no accepted
+              definitions.
+            </p>
+            <pre><code>learn.cli cli=git write=true
+learn.cli cli=apt</code></pre>
+            <p class="knowledge-note">
+              Good apt mappings should be curated, for example
+              <code>search.apt.package</code>, <code>show.apt.package</code>,
+              <code>update.apt.index</code>, and
+              <code>install.apt.package</code>, each with its own risk and
+              approval rules.
+            </p>
+          </article>
+        </section>
+      </div>
+    </dialog>
+
+    <dialog
+      class="dictionary-dialog"
+      id="dictionary-dialog"
+      aria-labelledby="dictionary-title"
+    >
+      <div class="dictionary-panel">
+        <div class="preferences-head">
+          <div>
+            <h2 id="dictionary-title">Command Dictionary</h2>
+            <p>
+              IDEL commands mapped for
+              <span id="dictionary-platform">detected OS</span>
+            </p>
+          </div>
+          <button
+            class="icon-btn"
+            id="dictionary-close"
+            type="button"
+            title="Close"
+            aria-label="Close command dictionary"
+          >
+            x
+          </button>
+        </div>
+
+        <div class="dictionary-search">
+          <input
+            id="dictionary-search"
+            type="search"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="Search IDEL, OS command, or example: mkdir abc"
+            aria-label="Search command dictionary"
+          />
+          <span id="dictionary-count">Loading...</span>
+        </div>
+
+        <div class="dictionary-results" id="dictionary-results"></div>
+        <div class="dictionary-empty" id="dictionary-empty" hidden>
+          No matching commands.
+        </div>
+      </div>
+    </dialog>
+
+    <dialog
+      class="claude-setup-dialog"
+      id="claude-setup-dialog"
+      aria-labelledby="claude-setup-title"
+    >
+      <div class="preferences-panel">
+        <div class="preferences-head">
+          <div>
+            <h2 id="claude-setup-title">Set Up Ask AI</h2>
+            <p id="claude-setup-status" aria-live="polite">
+              Ask AI is not configured on this server.
+            </p>
+          </div>
+          <button
+            class="icon-btn"
+            id="claude-setup-close"
+            type="button"
+            title="Close"
+            aria-label="Close setup guide"
+          >
+            x
+          </button>
+        </div>
+
+        <section class="setup-body">
+          <p>
+            Ask AI runs inside the local <code>idel serve</code> process.
+            Keys entered below cross only the authenticated loopback connection,
+            then remain in that host process for this session.
+          </p>
+
+          <div class="setup-option">
+            <strong>Provider catalog</strong>
+            <span>Choose among the providers configured when this server started:</span>
+            <label class="ai-provider-picker" for="ai-provider-select">
+              <span>Provider for new Ask AI requests</span>
+              <select id="ai-provider-select" aria-label="Ask AI provider">
+                <option value="">No configured provider</option>
+              </select>
+            </label>
+            <ul class="ai-provider-list">
+              <li data-ai-provider="cli"><span>Claude Code</span><em>Supported</em></li>
+              <li data-ai-provider="api"><span>Claude API</span><em>Supported</em></li>
+              <li data-ai-provider="openai"><span>ChatGPT / OpenAI</span><em>Supported</em></li>
+              <li data-ai-provider="gemini"><span>Google Gemini</span><em>Supported</em></li>
+              <li><span>Microsoft Copilot</span><em>Planned</em></li>
+              <li><span>Perplexity</span><em>Planned</em></li>
+              <li><span>Mistral</span><em>Planned</em></li>
+              <li><span>Grok</span><em>Planned</em></li>
+              <li><span>Llama / local models</span><em>Planned</em></li>
+            </ul>
+          </div>
+
+          <div class="setup-option">
+            <strong>Use Claude Code</strong>
+            <span
+              >Install Claude Code so <code>claude</code> is on PATH, then
+              authenticate once:</span
+            >
+            <pre><code>claude login</code></pre>
+          </div>
+
+          <div class="setup-option">
+            <strong>Connect an API provider</strong>
+            <span>
+              The key is sent over the authenticated local connection, kept only
+              in the running IDEL host, and cleared from this form immediately.
+            </span>
+            <form class="ai-key-form" id="ai-key-form" autocomplete="off">
+              <label class="ai-key-field" for="ai-key-provider">
+                <span>Provider</span>
+                <select id="ai-key-provider" aria-label="API key provider">
+                  <option value="openai">ChatGPT / OpenAI</option>
+                  <option value="api">Claude API</option>
+                  <option value="gemini">Google Gemini</option>
+                </select>
+              </label>
+              <label class="ai-key-field" for="ai-api-key">
+                <span>API key</span>
+                <span class="ai-secret-field">
+                  <input
+                    id="ai-api-key"
+                    type="password"
+                    autocomplete="off"
+                    autocapitalize="off"
+                    spellcheck="false"
+                    maxlength="4096"
+                    placeholder="Paste API key"
+                    aria-describedby="ai-key-privacy"
+                  />
+                  <button
+                    class="editor-btn ai-key-visibility"
+                    id="ai-key-visibility"
+                    type="button"
+                    aria-controls="ai-api-key"
+                    aria-pressed="false"
+                  >
+                    Show
+                  </button>
+                </span>
+              </label>
+              <small id="ai-key-privacy">
+                Session only. The key is never returned by the API or written to IDEL storage.
+              </small>
+              <button class="editor-btn ai-key-connect" id="ai-key-connect" type="submit" disabled>
+                Connect provider
+              </button>
+            </form>
+          </div>
+
+          <div class="setup-option">
+            <strong>Environment variable alternative</strong>
+            <span>Keys can still be provided before starting the desktop or UI:</span>
+            <pre><code>export ANTHROPIC_API_KEY=your_anthropic_key
+export OPENAI_API_KEY=your_openai_key
+export GEMINI_API_KEY=your_gemini_key
+
+# optional default: cli | api | openai | gemini
+export IDEL_AI_PROVIDER=openai</code></pre>
+          </div>
+
+          <p class="setup-note">
+            Dialog-provided keys last until the IDEL host exits. Restart only
+            when changing environment variables. Model overrides:
+            <code>IDEL_OPENAI_MODEL</code> and <code>IDEL_GEMINI_MODEL</code>.
+          </p>
+        </section>
+
+        <div class="setup-actions">
+          <button class="editor-btn" id="claude-setup-check" type="button">
+            Check Again
+          </button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog
+      class="screenshot-dialog"
+      id="screenshot-dialog"
+      aria-labelledby="screenshot-title"
+    >
+      <div class="preferences-panel">
+        <div class="preferences-head">
+          <div>
+            <h2 id="screenshot-title">Screenshot</h2>
+            <p>Terminal capture</p>
+          </div>
+          <button
+            class="icon-btn"
+            id="screenshot-close"
+            type="button"
+            title="Close"
+            aria-label="Close screenshot options"
+          >
+            x
+          </button>
+        </div>
+
+        <section class="preference-row">
+          <div class="preference-copy">
+            <span>Area</span>
+            <small>Visible viewport or full scrollback</small>
+          </div>
+          <span class="theme-toggle" role="group" aria-label="Screenshot area">
+            <button
+              class="theme-btn active"
+              type="button"
+              data-screenshot-scope="visible"
+              title="Visible terminal area"
+            >
+              Visible
+            </button>
+            <button
+              class="theme-btn"
+              type="button"
+              data-screenshot-scope="full"
+              title="Full terminal scrollback"
+            >
+              Full
+            </button>
+          </span>
+        </section>
+
+        <section class="preference-row">
+          <div class="preference-copy">
+            <span>Redaction</span>
+            <small>Hide secrets before export</small>
+          </div>
+          <label class="switch" title="Hide sensitive text">
+            <input id="screenshot-redact" type="checkbox" checked />
+            <span aria-hidden="true"></span>
+          </label>
+        </section>
+
+        <section class="screenshot-redact-extra">
+          <label for="screenshot-redact-text">Also hide</label>
+          <input
+            id="screenshot-redact-text"
+            type="text"
+            autocomplete="off"
+            placeholder="comma-separated words or tokens"
+          />
+        </section>
+
+        <div class="screenshot-actions">
+          <button class="editor-btn" id="screenshot-copy" type="button">
+            Copy PNG
+          </button>
+          <button class="editor-btn" id="screenshot-download" type="button">
+            Download PNG
+          </button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog
+      class="page-reload-dialog"
+      id="page-reload-dialog"
+      aria-labelledby="page-reload-title"
+      aria-describedby="page-reload-copy"
+    >
+      <div class="preferences-panel">
+        <div class="preferences-head">
+          <div>
+            <h2 id="page-reload-title">Reload IDEL?</h2>
+            <p>Session state</p>
+          </div>
+          <button
+            class="icon-btn"
+            id="page-reload-stay-x"
+            type="button"
+            title="Stay"
+            aria-label="Stay on this page"
+          >
+            x
+          </button>
+        </div>
+
+        <section class="page-reload-body" id="page-reload-copy">
+          <p>
+            Current terminal output, running commands, and unsaved editor
+            changes may be lost.
+          </p>
+        </section>
+
+        <div class="page-reload-actions">
+          <button class="editor-btn" id="page-reload-stay" type="button">
+            Stay
+          </button>
+          <button
+            class="editor-btn page-reload-confirm"
+            id="page-reload-confirm"
+            type="button"
+          >
+            Reload
+          </button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog
+      class="paste-confirm-dialog"
+      id="paste-confirm-dialog"
+      aria-labelledby="paste-confirm-title"
+      aria-describedby="paste-confirm-copy"
+    >
+      <div class="preferences-panel">
+        <div class="preferences-head">
+          <div>
+            <h2 id="paste-confirm-title">Paste into shell?</h2>
+            <p>Native input</p>
+          </div>
+          <button
+            class="icon-btn"
+            id="paste-confirm-cancel-x"
+            type="button"
+            title="Cancel"
+            aria-label="Cancel paste"
+          >
+            x
+          </button>
+        </div>
+
+        <section class="paste-confirm-body" id="paste-confirm-copy">
+          <p>
+            This paste contains multiple lines, control characters, or enough
+            text to run unintended shell input.
+          </p>
+          <pre id="paste-confirm-preview"></pre>
+        </section>
+
+        <div class="paste-confirm-actions">
+          <button class="editor-btn" id="paste-confirm-cancel" type="button">
+            Cancel
+          </button>
+          <button
+            class="editor-btn paste-confirm-run"
+            id="paste-confirm-run"
+            type="button"
+          >
+            Paste
+          </button>
+        </div>
+      </div>
+    </dialog>
+
+    <script src="/vendor/xterm/xterm.js"></script>
+    <script src="/vendor/xterm/addon-fit.js"></script>
+    <script src="/terminal.js" type="module"></script>
+  </body>
+</html>

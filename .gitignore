@@ -1,6 +1,16 @@
 node_modules/
+/package-lock.json
+/dist/
 packages/*/dist/
+packages/registry/registries/
 packages/*/*.tsbuildinfo
 *.tsbuildinfo
 .DS_Store
 *.log
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.pfx
+packages/cli/web/

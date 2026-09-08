@@ -7,11 +7,14 @@
   "include": ["src/**/*"],
   "exclude": ["src/**/*.test.ts"],
   "references": [
+    { "path": "../function" },
     { "path": "../types" },
     { "path": "../runtime" },
     { "path": "../registry" },
     { "path": "../parser" },
     { "path": "../openlogs" },
-    { "path": "../policy" }
+    { "path": "../policy" },
+    { "path": "../server" },
+    { "path": "../agent" }
   ]
 }

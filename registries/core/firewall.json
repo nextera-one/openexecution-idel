@@ -1,0 +1,377 @@
+[
+  {
+    "id": "list.firewall",
+    "version": "0.1.0",
+    "summary": "List firewall rules through an installed firewall adapter.",
+    "category": "firewall",
+    "riskDefault": "LOW",
+    "params": {
+      "target": { "type": "string", "default": "local", "description": "Firewall target, usually local or a named remote backend." },
+      "format": { "type": "string", "default": "text", "enum": ["text", "json"], "description": "Output format." }
+    },
+    "adapters": {},
+    "support": {
+      "domain": "network",
+      "targets": {
+        "linux-nftables": { "status": "requires_adapter_install", "adapter": "linux-nftables", "platform": "linux", "requires": ["nft", "root-or-cap_net_admin"] },
+        "linux-iptables": { "status": "requires_adapter_install", "adapter": "linux-iptables", "platform": "linux", "requires": ["iptables", "root-or-cap_net_admin"] },
+        "windows-firewall": { "status": "requires_adapter_install", "adapter": "windows-firewall", "platform": "windows", "requires": ["administrator"] },
+        "macos-pf": { "status": "requires_adapter_install", "adapter": "macos-pf", "platform": "macos", "requires": ["pfctl", "root"] },
+        "unix-pf": { "status": "requires_adapter_install", "adapter": "unix-pf", "platform": "unix-bsd", "requires": ["pfctl", "root"] },
+        "android-root": { "status": "requires_capability", "adapter": "android-shell", "platform": "android", "requires": ["root", "iptables-or-nft"] }
+      }
+    },
+    "examples": ["list.firewall", "list.firewall format=json"],
+    "tests": [{ "input": "list.firewall", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "show.firewall.rule",
+    "version": "0.1.0",
+    "summary": "Show one firewall rule by adapter-native id or handle.",
+    "category": "firewall",
+    "riskDefault": "LOW",
+    "params": {
+      "id": { "type": "string", "required": true, "description": "Rule id or handle." },
+      "target": { "type": "string", "default": "local", "description": "Firewall target." }
+    },
+    "adapters": {},
+    "support": {
+      "domain": "network",
+      "targets": {
+        "linux-nftables": { "status": "requires_adapter_install", "adapter": "linux-nftables", "platform": "linux" },
+        "linux-iptables": { "status": "requires_adapter_install", "adapter": "linux-iptables", "platform": "linux" },
+        "windows-firewall": { "status": "requires_adapter_install", "adapter": "windows-firewall", "platform": "windows" },
+        "macos-pf": { "status": "requires_adapter_install", "adapter": "macos-pf", "platform": "macos" },
+        "unix-pf": { "status": "requires_adapter_install", "adapter": "unix-pf", "platform": "unix-bsd" },
+        "android-root": { "status": "requires_capability", "adapter": "android-shell", "platform": "android", "requires": ["root"] }
+      }
+    },
+    "examples": ["show.firewall.rule id=42"],
+    "tests": [{ "input": "show.firewall.rule id=42", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "allow.network",
+    "version": "0.1.0",
+    "summary": "Allow network traffic matching source, destination, protocol, port, and direction.",
+    "category": "network",
+    "riskDefault": "MEDIUM",
+    "params": {
+      "from": { "type": "string", "required": true, "description": "Source CIDR, host, or any." },
+      "to": { "type": "string", "default": "any", "description": "Destination CIDR, host, or any." },
+      "port": { "type": "string", "required": true, "description": "Port number, range, service name, or any." },
+      "protocol": { "type": "string", "default": "tcp", "enum": ["tcp", "udp", "icmp", "any"], "description": "Protocol." },
+      "direction": { "type": "string", "default": "in", "enum": ["in", "out", "both"], "description": "Traffic direction." },
+      "target": { "type": "string", "default": "local", "description": "Firewall target." },
+      "reason": { "type": "string", "description": "Human reason recorded in audit logs and adapter metadata." }
+    },
+    "adapters": {},
+    "support": {
+      "domain": "network",
+      "targets": {
+        "linux-nftables": { "status": "requires_adapter_install", "adapter": "linux-nftables", "platform": "linux", "requires": ["nft", "root-or-cap_net_admin"] },
+        "linux-iptables": { "status": "requires_adapter_install", "adapter": "linux-iptables", "platform": "linux", "requires": ["iptables", "root-or-cap_net_admin"] },
+        "windows-firewall": { "status": "requires_adapter_install", "adapter": "windows-firewall", "platform": "windows", "requires": ["administrator"] },
+        "macos-pf": { "status": "requires_adapter_install", "adapter": "macos-pf", "platform": "macos", "requires": ["pfctl", "root"] },
+        "unix-pf": { "status": "requires_adapter_install", "adapter": "unix-pf", "platform": "unix-bsd", "requires": ["pfctl", "root"] },
+        "android-root": { "status": "requires_capability", "adapter": "android-shell", "platform": "android", "requires": ["root", "iptables-or-nft"] }
+      }
+    },
+    "examples": [
+      "allow.network from=10.0.0.0/24 to=any port=443 protocol=tcp",
+      "allow.network from=any to=host port=22 protocol=tcp reason=\"temporary ssh\""
+    ],
+    "tests": [
+      { "input": "allow.network from=10.0.0.0/24 port=443", "expectRisk": "MEDIUM" },
+      { "input": "allow.network from=any to=any port=any protocol=any", "expectRisk": "CRITICAL" },
+      { "input": "allow.network from=0.0.0.0/0 to=any port=22", "expectRisk": "CRITICAL" }
+    ]
+  },
+  {
+    "id": "deny.network",
+    "version": "0.1.0",
+    "summary": "Deny network traffic matching source, destination, protocol, port, and direction.",
+    "category": "network",
+    "riskDefault": "MEDIUM",
+    "params": {
+      "from": { "type": "string", "default": "any", "description": "Source CIDR, host, or any." },
+      "to": { "type": "string", "default": "any", "description": "Destination CIDR, host, or any." },
+      "port": { "type": "string", "required": true, "description": "Port number, range, service name, or any." },
+      "protocol": { "type": "string", "default": "tcp", "enum": ["tcp", "udp", "icmp", "any"], "description": "Protocol." },
+      "direction": { "type": "string", "default": "in", "enum": ["in", "out", "both"], "description": "Traffic direction." },
+      "target": { "type": "string", "default": "local", "description": "Firewall target." },
+      "reason": { "type": "string", "description": "Human reason recorded in audit logs and adapter metadata." }
+    },
+    "adapters": {},
+    "support": {
+      "domain": "network",
+      "targets": {
+        "linux-nftables": { "status": "requires_adapter_install", "adapter": "linux-nftables", "platform": "linux", "requires": ["nft", "root-or-cap_net_admin"] },
+        "linux-iptables": { "status": "requires_adapter_install", "adapter": "linux-iptables", "platform": "linux", "requires": ["iptables", "root-or-cap_net_admin"] },
+        "windows-firewall": { "status": "requires_adapter_install", "adapter": "windows-firewall", "platform": "windows", "requires": ["administrator"] },
+        "macos-pf": { "status": "requires_adapter_install", "adapter": "macos-pf", "platform": "macos", "requires": ["pfctl", "root"] },
+        "unix-pf": { "status": "requires_adapter_install", "adapter": "unix-pf", "platform": "unix-bsd", "requires": ["pfctl", "root"] },
+        "android-root": { "status": "requires_capability", "adapter": "android-shell", "platform": "android", "requires": ["root", "iptables-or-nft"] }
+      }
+    },
+    "examples": [
+      "deny.network from=any to=host port=22 protocol=tcp",
+      "deny.network from=203.0.113.0/24 to=any port=443 protocol=tcp"
+    ],
+    "tests": [
+      { "input": "deny.network port=443", "expectRisk": "MEDIUM" },
+      { "input": "deny.network from=any to=any port=any", "expectRisk": "CRITICAL" },
+      { "input": "deny.network port=22", "expectRisk": "HIGH" }
+    ]
+  },
+  {
+    "id": "remove.firewall.rule",
+    "version": "0.1.0",
+    "summary": "Remove one firewall rule by adapter-native id or handle.",
+    "category": "firewall",
+    "riskDefault": "HIGH",
+    "params": {
+      "id": { "type": "string", "required": true, "description": "Rule id or handle." },
+      "target": { "type": "string", "default": "local", "description": "Firewall target." },
+      "reason": { "type": "string", "description": "Human reason recorded in audit logs and adapter metadata." }
+    },
+    "adapters": {},
+    "support": {
+      "domain": "network",
+      "targets": {
+        "linux-nftables": { "status": "requires_adapter_install", "adapter": "linux-nftables", "platform": "linux" },
+        "linux-iptables": { "status": "requires_adapter_install", "adapter": "linux-iptables", "platform": "linux" },
+        "windows-firewall": { "status": "requires_adapter_install", "adapter": "windows-firewall", "platform": "windows" },
+        "macos-pf": { "status": "requires_adapter_install", "adapter": "macos-pf", "platform": "macos" },
+        "unix-pf": { "status": "requires_adapter_install", "adapter": "unix-pf", "platform": "unix-bsd" },
+        "android-root": { "status": "requires_capability", "adapter": "android-shell", "platform": "android", "requires": ["root"] }
+      }
+    },
+    "examples": ["remove.firewall.rule id=42 reason=\"old temporary rule\""],
+    "tests": [{ "input": "remove.firewall.rule id=42", "expectRisk": "HIGH" }]
+  },
+  {
+    "id": "enable.firewall",
+    "version": "0.1.0",
+    "summary": "Enable firewall enforcement through an installed firewall adapter.",
+    "category": "firewall",
+    "riskDefault": "HIGH",
+    "params": {
+      "target": { "type": "string", "default": "local", "description": "Firewall target." }
+    },
+    "adapters": {},
+    "support": {
+      "domain": "network",
+      "targets": {
+        "linux-nftables": { "status": "requires_adapter_install", "adapter": "linux-nftables", "platform": "linux", "requires": ["root-or-cap_net_admin"] },
+        "windows-firewall": { "status": "requires_adapter_install", "adapter": "windows-firewall", "platform": "windows", "requires": ["administrator"] },
+        "macos-pf": { "status": "requires_adapter_install", "adapter": "macos-pf", "platform": "macos", "requires": ["root"] },
+        "unix-pf": { "status": "requires_adapter_install", "adapter": "unix-pf", "platform": "unix-bsd", "requires": ["root"] },
+        "android-root": { "status": "requires_capability", "adapter": "android-shell", "platform": "android", "requires": ["root"] }
+      }
+    },
+    "examples": ["enable.firewall"],
+    "tests": [{ "input": "enable.firewall", "expectRisk": "HIGH" }]
+  },
+  {
+    "id": "disable.firewall",
+    "version": "0.1.0",
+    "summary": "Disable firewall enforcement through an installed firewall adapter.",
+    "category": "firewall",
+    "riskDefault": "CRITICAL",
+    "params": {
+      "target": { "type": "string", "default": "local", "description": "Firewall target." },
+      "reason": { "type": "string", "description": "Human reason recorded in audit logs and adapter metadata." }
+    },
+    "adapters": {},
+    "support": {
+      "domain": "network",
+      "targets": {
+        "linux-nftables": { "status": "requires_adapter_install", "adapter": "linux-nftables", "platform": "linux", "requires": ["root-or-cap_net_admin"] },
+        "windows-firewall": { "status": "requires_adapter_install", "adapter": "windows-firewall", "platform": "windows", "requires": ["administrator"] },
+        "macos-pf": { "status": "requires_adapter_install", "adapter": "macos-pf", "platform": "macos", "requires": ["root"] },
+        "unix-pf": { "status": "requires_adapter_install", "adapter": "unix-pf", "platform": "unix-bsd", "requires": ["root"] },
+        "android-root": { "status": "requires_capability", "adapter": "android-shell", "platform": "android", "requires": ["root"] }
+      }
+    },
+    "examples": ["disable.firewall reason=\"maintenance window\""],
+    "tests": [{ "input": "disable.firewall", "expectRisk": "CRITICAL" }]
+  },
+  {
+    "id": "flush.firewall",
+    "version": "0.1.0",
+    "summary": "Remove firewall rules through an installed firewall adapter.",
+    "category": "firewall",
+    "riskDefault": "CRITICAL",
+    "params": {
+      "target": { "type": "string", "default": "local", "description": "Firewall target." },
+      "scope": { "type": "string", "default": "all", "enum": ["all", "runtime", "temporary"], "description": "Rule scope to flush when the adapter can distinguish it." },
+      "reason": { "type": "string", "description": "Human reason recorded in audit logs and adapter metadata." }
+    },
+    "adapters": {},
+    "support": {
+      "domain": "network",
+      "targets": {
+        "linux-nftables": { "status": "requires_adapter_install", "adapter": "linux-nftables", "platform": "linux", "requires": ["root-or-cap_net_admin"] },
+        "linux-iptables": { "status": "requires_adapter_install", "adapter": "linux-iptables", "platform": "linux", "requires": ["root-or-cap_net_admin"] },
+        "windows-firewall": { "status": "requires_adapter_install", "adapter": "windows-firewall", "platform": "windows", "requires": ["administrator"] },
+        "macos-pf": { "status": "requires_adapter_install", "adapter": "macos-pf", "platform": "macos", "requires": ["root"] },
+        "unix-pf": { "status": "requires_adapter_install", "adapter": "unix-pf", "platform": "unix-bsd", "requires": ["root"] },
+        "android-root": { "status": "requires_capability", "adapter": "android-shell", "platform": "android", "requires": ["root"] }
+      }
+    },
+    "examples": ["flush.firewall scope=temporary reason=\"clear test rules\""],
+    "tests": [{ "input": "flush.firewall", "expectRisk": "CRITICAL" }]
+  },
+  {
+    "id": "simulate.network",
+    "version": "0.1.0",
+    "summary": "Simulate whether traffic would be allowed by installed network/firewall adapters.",
+    "category": "network",
+    "riskDefault": "LOW",
+    "params": {
+      "from": { "type": "string", "required": true, "description": "Source CIDR, host, or any." },
+      "to": { "type": "string", "required": true, "description": "Destination CIDR, host, or any." },
+      "port": { "type": "string", "required": true, "description": "Port number, range, service name, or any." },
+      "protocol": { "type": "string", "default": "tcp", "enum": ["tcp", "udp", "icmp", "any"], "description": "Protocol." },
+      "target": { "type": "string", "default": "local", "description": "Firewall target." }
+    },
+    "adapters": {},
+    "support": {
+      "domain": "network",
+      "targets": {
+        "linux-nftables": { "status": "requires_adapter_install", "adapter": "linux-nftables", "platform": "linux" },
+        "linux-iptables": { "status": "requires_adapter_install", "adapter": "linux-iptables", "platform": "linux" },
+        "windows-firewall": { "status": "requires_adapter_install", "adapter": "windows-firewall", "platform": "windows" },
+        "macos-pf": { "status": "requires_adapter_install", "adapter": "macos-pf", "platform": "macos" },
+        "unix-pf": { "status": "requires_adapter_install", "adapter": "unix-pf", "platform": "unix-bsd" },
+        "android-root": { "status": "requires_capability", "adapter": "android-shell", "platform": "android", "requires": ["root"] }
+      }
+    },
+    "examples": ["simulate.network from=1.2.3.4 to=api.internal port=443"],
+    "tests": [{ "input": "simulate.network from=1.2.3.4 to=api.internal port=443", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "test.network",
+    "version": "0.1.0",
+    "summary": "Test network reachability through an installed network adapter.",
+    "category": "network",
+    "riskDefault": "LOW",
+    "params": {
+      "to": { "type": "string", "required": true, "description": "Destination host or IP." },
+      "port": { "type": "string", "description": "Optional destination port." },
+      "protocol": { "type": "string", "default": "tcp", "enum": ["tcp", "udp", "icmp"], "description": "Protocol." },
+      "timeoutMs": { "type": "number", "default": 3000, "description": "Timeout in milliseconds." }
+    },
+    "adapters": {},
+    "support": {
+      "domain": "network",
+      "targets": {
+        "linux-nftables": { "status": "requires_adapter_install", "adapter": "linux-nftables", "platform": "linux" },
+        "windows-firewall": { "status": "requires_adapter_install", "adapter": "windows-firewall", "platform": "windows" },
+        "macos-pf": { "status": "requires_adapter_install", "adapter": "macos-pf", "platform": "macos" },
+        "unix-pf": { "status": "requires_adapter_install", "adapter": "unix-pf", "platform": "unix-bsd" },
+        "android-root": { "status": "requires_adapter_install", "adapter": "android-shell", "platform": "android" }
+      }
+    },
+    "examples": ["test.network to=api.internal port=443"],
+    "tests": [{ "input": "test.network to=api.internal port=443", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "list.network.interfaces",
+    "version": "0.1.0",
+    "summary": "List network interfaces through an installed network adapter.",
+    "category": "network",
+    "riskDefault": "LOW",
+    "params": {
+      "format": { "type": "string", "default": "text", "enum": ["text", "json"], "description": "Output format." }
+    },
+    "adapters": {},
+    "support": {
+      "domain": "network",
+      "targets": {
+        "linux-nftables": { "status": "requires_adapter_install", "adapter": "linux-nftables", "platform": "linux" },
+        "windows-firewall": { "status": "requires_adapter_install", "adapter": "windows-firewall", "platform": "windows" },
+        "macos-pf": { "status": "requires_adapter_install", "adapter": "macos-pf", "platform": "macos" },
+        "unix-pf": { "status": "requires_adapter_install", "adapter": "unix-pf", "platform": "unix-bsd" },
+        "android-root": { "status": "requires_adapter_install", "adapter": "android-shell", "platform": "android" }
+      }
+    },
+    "examples": ["list.network.interfaces"],
+    "tests": [{ "input": "list.network.interfaces", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "show.network.routes",
+    "version": "0.1.0",
+    "summary": "Show network routes through an installed network adapter.",
+    "category": "network",
+    "riskDefault": "LOW",
+    "params": {
+      "format": { "type": "string", "default": "text", "enum": ["text", "json"], "description": "Output format." }
+    },
+    "adapters": {},
+    "support": {
+      "domain": "network",
+      "targets": {
+        "linux-nftables": { "status": "requires_adapter_install", "adapter": "linux-nftables", "platform": "linux" },
+        "windows-firewall": { "status": "requires_adapter_install", "adapter": "windows-firewall", "platform": "windows" },
+        "macos-pf": { "status": "requires_adapter_install", "adapter": "macos-pf", "platform": "macos" },
+        "unix-pf": { "status": "requires_adapter_install", "adapter": "unix-pf", "platform": "unix-bsd" },
+        "android-root": { "status": "requires_adapter_install", "adapter": "android-shell", "platform": "android" }
+      }
+    },
+    "examples": ["show.network.routes"],
+    "tests": [{ "input": "show.network.routes", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "add.network.route",
+    "version": "0.1.0",
+    "summary": "Add a network route through an installed network adapter.",
+    "category": "network",
+    "riskDefault": "HIGH",
+    "params": {
+      "destination": { "type": "string", "required": true, "description": "Destination CIDR." },
+      "gateway": { "type": "string", "required": true, "description": "Gateway IP or device, adapter-specific." },
+      "interface": { "type": "string", "description": "Optional interface name." },
+      "target": { "type": "string", "default": "local", "description": "Network target." },
+      "reason": { "type": "string", "description": "Human reason recorded in audit logs and adapter metadata." }
+    },
+    "adapters": {},
+    "support": {
+      "domain": "network",
+      "targets": {
+        "linux-nftables": { "status": "requires_adapter_install", "adapter": "linux-nftables", "platform": "linux", "requires": ["root-or-cap_net_admin"] },
+        "windows-firewall": { "status": "requires_adapter_install", "adapter": "windows-firewall", "platform": "windows", "requires": ["administrator"] },
+        "macos-pf": { "status": "requires_adapter_install", "adapter": "macos-pf", "platform": "macos", "requires": ["root"] },
+        "unix-pf": { "status": "requires_adapter_install", "adapter": "unix-pf", "platform": "unix-bsd", "requires": ["root"] },
+        "android-root": { "status": "requires_capability", "adapter": "android-shell", "platform": "android", "requires": ["root"] }
+      }
+    },
+    "examples": ["add.network.route destination=10.10.0.0/16 gateway=10.0.0.1"],
+    "tests": [{ "input": "add.network.route destination=0.0.0.0/0 gateway=10.0.0.1", "expectRisk": "HIGH" }]
+  },
+  {
+    "id": "remove.network.route",
+    "version": "0.1.0",
+    "summary": "Remove a network route through an installed network adapter.",
+    "category": "network",
+    "riskDefault": "HIGH",
+    "params": {
+      "destination": { "type": "string", "required": true, "description": "Destination CIDR." },
+      "target": { "type": "string", "default": "local", "description": "Network target." },
+      "reason": { "type": "string", "description": "Human reason recorded in audit logs and adapter metadata." }
+    },
+    "adapters": {},
+    "support": {
+      "domain": "network",
+      "targets": {
+        "linux-nftables": { "status": "requires_adapter_install", "adapter": "linux-nftables", "platform": "linux", "requires": ["root-or-cap_net_admin"] },
+        "windows-firewall": { "status": "requires_adapter_install", "adapter": "windows-firewall", "platform": "windows", "requires": ["administrator"] },
+        "macos-pf": { "status": "requires_adapter_install", "adapter": "macos-pf", "platform": "macos", "requires": ["root"] },
+        "unix-pf": { "status": "requires_adapter_install", "adapter": "unix-pf", "platform": "unix-bsd", "requires": ["root"] },
+        "android-root": { "status": "requires_capability", "adapter": "android-shell", "platform": "android", "requires": ["root"] }
+      }
+    },
+    "examples": ["remove.network.route destination=10.10.0.0/16"],
+    "tests": [{ "input": "remove.network.route destination=0.0.0.0/0", "expectRisk": "HIGH" }]
+  }
+]

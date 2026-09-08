@@ -47,14 +47,46 @@ describe("parseArgv", () => {
     expect(() => parseArgv(["create.file", "--policy"])).toThrow(/requires a value/);
   });
 
-  it("maps help / version / terminal / completion subcommands", () => {
+  it("maps help / version / terminal / connect / serve / completion subcommands", () => {
     expect(parseArgv([]).mode).toBe("help");
     expect(parseArgv(["help"]).mode).toBe("help");
     expect(parseArgv(["version"]).mode).toBe("version");
     expect(parseArgv(["terminal"]).mode).toBe("terminal");
+    const remote = parseArgv(["connect", "http://127.0.0.1:8787"]);
+    expect(remote.mode).toBe("connect");
+    expect(remote.command).toBe("http://127.0.0.1:8787");
+    expect(parseArgv(["serve"]).mode).toBe("serve");
     const c = parseArgv(["completion", "create."]);
     expect(c.mode).toBe("completion");
     expect(c.command).toBe("create.");
+  });
+
+  it("maps `ask` and `learn` subcommands", () => {
+    const a = parseArgv(["ask", "delete", "the", "dist", "folder"]);
+    expect(a.mode).toBe("ask");
+    expect(a.command).toBe("delete the dist folder");
+
+    const l = parseArgv(["learn", "gh"]);
+    expect(l.mode).toBe("learn");
+    expect(l.command).toBe("gh");
+    expect(l.flags.write).toBeFalsy();
+
+    const lw = parseArgv(["learn", "gh", "--write"]);
+    expect(lw.mode).toBe("learn");
+    expect(lw.command).toBe("gh");
+    expect(lw.flags.write).toBe(true);
+  });
+
+  it("maps editor aliases to edit.file", () => {
+    const simple = parseArgv(["editor", "README.md"]);
+    expect(simple.mode).toBe("run");
+    expect(simple.command).toBe("edit.file path=README.md");
+
+    const withParams = parseArgv(["edit", "path=README.md", "editor=code"]);
+    expect(withParams.command).toBe("edit.file path=README.md editor=code");
+
+    const spaced = parseArgv(["editor", "my file.txt", "editor=nano"]);
+    expect(spaced.command).toBe('edit.file path="my file.txt" editor=nano');
   });
 
   it("handles --no-native and --yes", () => {
@@ -62,5 +94,32 @@ describe("parseArgv", () => {
     expect(inv.flags.noNative).toBe(true);
     expect(inv.flags.yes).toBe(true);
     expect(inv.native).toBe(true);
+  });
+
+  it("parses serve flags (--port, --host, --static, --open)", () => {
+    const inv = parseArgv([
+      "serve",
+      "--port",
+      "9090",
+      "--host",
+      "0.0.0.0",
+      "--static",
+      "./www",
+      "--open",
+      "--cors",
+      "--enable-native-terminal",
+    ]);
+    expect(inv.mode).toBe("serve");
+    expect(inv.flags.port).toBe(9090);
+    expect(inv.flags.host).toBe("0.0.0.0");
+    expect(inv.flags.staticDir).toBe("./www");
+    expect(inv.flags.open).toBe(true);
+    expect(inv.flags.cors).toBe(true);
+    expect(inv.flags.enableNativeTerminal).toBe(true);
+  });
+
+  it("rejects an invalid --port", () => {
+    expect(() => parseArgv(["serve", "--port", "notaport"])).toThrow(/valid port/);
+    expect(() => parseArgv(["serve", "--port", "99999"])).toThrow(/valid port/);
   });
 });

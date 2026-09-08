@@ -21,6 +21,7 @@ import type {
   ParamSchema,
   ParamType,
   RiskLevel,
+  SupportStatus,
 } from "@openexecution/types";
 import { RegistryError } from "@openexecution/types";
 
@@ -50,6 +51,14 @@ const ADAPTER_NAMES: readonly AdapterName[] = [
 ] as const;
 
 const ADAPTER_KINDS = ["flag", "option", "value", "literal"] as const;
+
+const SUPPORT_STATUSES: readonly SupportStatus[] = [
+  "implemented",
+  "requires_adapter_install",
+  "requires_capability",
+  "unsupported",
+  "planned",
+] as const;
 
 /**
  * Command ids are 2–4 dotted lowercase segments, mirroring the parser's
@@ -200,6 +209,8 @@ function validateAdapterSpec(
   }
   if (!isNonEmptyString(raw.command)) {
     errors.push(`${scope}.command: must be a non-empty string`);
+  } else if (raw.command === "@node" && name !== "node") {
+    errors.push(`${scope}.command: @node is only valid on the node adapter`);
   }
   if (!Array.isArray(raw.args)) {
     errors.push(`${scope}.args: must be an array`);
@@ -235,6 +246,75 @@ function validateSafety(raw: unknown, errors: string[]): void {
   if (raw.targetParam !== undefined && typeof raw.targetParam !== "string") {
     errors.push(`safety.targetParam: must be a string when present`);
   }
+}
+
+function validateSupportTarget(
+  name: string,
+  raw: unknown,
+  errors: string[],
+): void {
+  const scope = `support.targets.${name}`;
+  if (!isObject(raw)) {
+    errors.push(`${scope}: must be an object`);
+    return;
+  }
+  if (!SUPPORT_STATUSES.includes(raw.status as SupportStatus)) {
+    errors.push(
+      `${scope}.status: must be one of ${SUPPORT_STATUSES.join(", ")} (got ${JSON.stringify(raw.status)})`,
+    );
+  }
+  if (raw.adapter !== undefined && typeof raw.adapter !== "string") {
+    errors.push(`${scope}.adapter: must be a string when present`);
+  }
+  if (raw.platform !== undefined && typeof raw.platform !== "string") {
+    errors.push(`${scope}.platform: must be a string when present`);
+  }
+  if (raw.requires !== undefined) {
+    if (!Array.isArray(raw.requires) || raw.requires.some((v) => typeof v !== "string")) {
+      errors.push(`${scope}.requires: must be an array of strings when present`);
+    }
+  }
+  if (raw.reason !== undefined && typeof raw.reason !== "string") {
+    errors.push(`${scope}.reason: must be a string when present`);
+  }
+}
+
+function validateSupport(raw: unknown, errors: string[]): void {
+  if (!isObject(raw)) {
+    errors.push(`support: must be an object when present`);
+    return;
+  }
+  if (raw.domain !== undefined && typeof raw.domain !== "string") {
+    errors.push(`support.domain: must be a string when present`);
+  }
+  if (!isObject(raw.targets)) {
+    errors.push(`support.targets: must be an object`);
+    return;
+  }
+  const entries = Object.entries(raw.targets);
+  if (entries.length === 0) {
+    errors.push(`support.targets: must not be empty`);
+  }
+  for (const [name, target] of entries) {
+    if (!/^[a-z0-9][a-z0-9._-]*$/.test(name)) {
+      errors.push(`support.targets.${name}: target id must be lowercase alnum plus '.', '_' or '-'`);
+    }
+    validateSupportTarget(name, target, errors);
+  }
+}
+
+function hasExternalAdapterSupport(obj: Record<string, unknown>): boolean {
+  const support = obj.support;
+  if (!isObject(support) || !isObject(support.targets)) return false;
+  return Object.values(support.targets).some((target) => {
+    if (!isObject(target)) return false;
+    return (
+      target.status === "requires_adapter_install" ||
+      target.status === "requires_capability" ||
+      target.status === "planned" ||
+      target.status === "unsupported"
+    );
+  });
 }
 
 function validateTests(raw: unknown, errors: string[]): void {
@@ -327,8 +407,14 @@ export function checkCommandDef(obj: unknown): ValidationResult {
     validateSafety(obj.safety, errors);
   }
 
+  if (obj.support !== undefined) {
+    validateSupport(obj.support, errors);
+  }
+
   // adapters — keys must be known adapter names. Empty adapters are allowed
-  // ONLY for the `meta` category (runtime-intercepted commands).
+  // for the `meta` category (runtime-intercepted commands), or when the def has
+  // an explicit support matrix showing that execution is delegated to
+  // installable/external adapters.
   if (!isObject(obj.adapters)) {
     errors.push(`adapters: must be an object (use {} for meta commands)`);
   } else {
@@ -342,9 +428,13 @@ export function checkCommandDef(obj: unknown): ValidationResult {
       }
       validateAdapterSpec(key, (obj.adapters as Record<string, unknown>)[key], errors);
     }
-    if (keys.length === 0 && category !== META_CATEGORY) {
+    if (
+      keys.length === 0 &&
+      category !== META_CATEGORY &&
+      !hasExternalAdapterSupport(obj)
+    ) {
       errors.push(
-        `adapters: must declare at least one adapter unless category is "${META_CATEGORY}"`,
+        `adapters: must declare at least one adapter unless category is "${META_CATEGORY}" or support declares external adapter coverage`,
       );
     }
   }
@@ -394,6 +484,7 @@ export {
   RISK_LEVELS,
   ADAPTER_NAMES,
   ADAPTER_KINDS,
+  SUPPORT_STATUSES,
   ID_RE,
   VERSION_RE,
   META_CATEGORY,

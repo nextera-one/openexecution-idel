@@ -9,7 +9,7 @@
  *     custom  >  official  >  core
  *
  * A higher layer's definition wins; the lower ones it hides are recorded as
- * `shadowed` so `registry.explain` can show the full picture. (Note: safety
+ * `shadowed` so `explain.registry` can show the full picture. (Note: safety
  * *floors* run the opposite direction — core-first — but that is the safety
  * package's job, not the registry's.)
  *
@@ -54,16 +54,22 @@ export function findCoreDir(start?: string): string {
   const from =
     start ?? dirname(fileURLToPath(import.meta.url));
   let current = resolve(from);
+  let found: string | undefined;
 
-  // Climb until `current/registries/core` exists or we can't go higher.
+  // Climb until we hit the filesystem root, remembering the highest
+  // `registries/core` candidate. In a source checkout, `packages/registry` may
+  // also contain a generated prepack copy; prefer the repo-root registry so
+  // development/tests do not read stale packed content. In a published package,
+  // the bundled package-local registry is the only candidate and still wins.
   // eslint-disable-next-line no-constant-condition
   while (true) {
     const candidate = join(current, "registries", "core");
-    if (existsSync(candidate)) return candidate;
+    if (existsSync(candidate)) found = candidate;
     const parent = dirname(current);
     if (parent === current) break; // reached FS root
     current = parent;
   }
+  if (found) return found;
   throw new RegistryError(
     `could not locate a "registries/core" directory walking up from ${from}`,
   );
@@ -95,7 +101,13 @@ export async function loadLayerFromDir(
 ): Promise<LoadLayerResult> {
   let entries: string[];
   try {
-    entries = (await readdir(dir)).filter((f) => f.endsWith(".json")).sort();
+    entries = (await readdir(dir))
+      .filter((f) => f.endsWith(".json"))
+      // `*.sig.json` files are detached signature manifests written alongside a
+      // promoted official def (see signing.ts / `idel promote`). They are
+      // registry metadata, not command defs — skip them so the layer loads.
+      .filter((f) => !f.endsWith(".sig.json"))
+      .sort();
   } catch (err) {
     throw new RegistryError(
       `cannot read registry layer "${source}" at ${dir}: ${(err as Error).message}`,
@@ -195,14 +207,40 @@ export class Registry {
       );
     }
     this.problems.push(...problems);
-    this.addLayer(source, defs);
+    this.replaceLayer(source, defs);
   }
 
-  /** Add already-validated defs to a layer (in-memory layers, tests, plugins). */
+  private prepareLayerDefs(source: CommandSource, defs: CommandDef[]): CommandDef[] {
+    const prepared: CommandDef[] = [];
+    for (const [i, def] of defs.entries()) {
+      const candidate = { ...def, source };
+      const { ok, errors } = checkCommandDef(candidate);
+      if (!ok) {
+        throw new RegistryError(
+          `registry layer "${source}" in-memory def[${i}] failed schema validation (fail closed):\n` +
+            `  - ${errors.join("\n  - ")}`,
+        );
+      }
+      prepared.push(candidate);
+    }
+    return prepared;
+  }
+
+  /** Add defs to a layer after schema validation (in-memory layers, tests, plugins). */
   addLayer(source: CommandSource, defs: CommandDef[]): void {
     const index = this.layers.get(source)!;
-    for (const def of defs) {
-      index.set(def.id, { ...def, source });
+    for (const def of this.prepareLayerDefs(source, defs)) {
+      index.set(def.id, def);
+    }
+  }
+
+  /** Replace a layer with schema-validated defs, used when reloading from disk. */
+  replaceLayer(source: CommandSource, defs: CommandDef[]): void {
+    const index = this.layers.get(source)!;
+    const prepared = this.prepareLayerDefs(source, defs);
+    index.clear();
+    for (const def of prepared) {
+      index.set(def.id, def);
     }
   }
 
@@ -240,9 +278,19 @@ export class Registry {
     return LAYER_ORDER.some((s) => this.layers.get(s)!.has(commandId));
   }
 
+  /** Return a command definition from one exact layer, bypassing precedence. */
+  layerDef(source: CommandSource, commandId: string): CommandDef | undefined {
+    return this.layers.get(source)!.get(commandId);
+  }
+
+  /** Return the core definition for a command, even when a higher layer shadows it. */
+  coreDef(commandId: string): CommandDef | undefined {
+    return this.layerDef("core", commandId);
+  }
+
   /**
    * The effective (winning) definition for every known id, sorted by id. This
-   * is what `registry.list` surfaces to the user.
+   * is what `list.registry` surfaces to the user.
    */
   list(): CommandDef[] {
     const ids = new Set<string>();
@@ -258,7 +306,7 @@ export class Registry {
   }
 
   /**
-   * Full per-layer view of a command for `registry.explain`: the resolved
+   * Full per-layer view of a command for `explain.registry`: the resolved
    * winner plus every layer that defines it (highest priority first).
    */
   explain(commandId: string): {

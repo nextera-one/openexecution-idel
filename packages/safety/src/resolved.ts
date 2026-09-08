@@ -32,11 +32,13 @@ import {
   readTargetString,
 } from "./ast.js";
 import {
+  hasGlob,
   isDevicePath,
   isDriveRoot,
   isHome,
   isRoot,
   normalizeTarget,
+  staticGlobPrefix,
 } from "./paths.js";
 
 /**
@@ -205,6 +207,55 @@ export async function assessResolved(
       destructive,
     }),
   );
+
+  // Once realpath reveals a forbidden root/home/device, no estimate can make
+  // execution permissible. Avoid walking the very tree we just blocked.
+  if (findings.some((finding) => finding.level === "CRITICAL")) {
+    return finalize("resolved", findings, def);
+  }
+
+  // --- Blast-radius estimate for a GLOB target ---------------------------
+  // A wildcard target never resolves to a single real path, so the literal
+  // lstat below would throw and silently leave the estimate undefined — making
+  // a glob that matches thousands of files look like an unmeasured MEDIUM. We
+  // instead walk the glob's *static prefix dir* to produce a deterministic
+  // lower-bound estimate, and surface a finding either way (fail-closed: if the
+  // prefix can't be walked we say so rather than going silent).
+  if (destructive && hasGlob(rawTarget)) {
+    const prefix = staticGlobPrefix(rawTarget, ast.cwd);
+    let estPaths: number | undefined;
+    let estBytes: number | undefined;
+    try {
+      const st = await fs.lstat(prefix);
+      if (st.isDirectory()) {
+        const walk = await walkCapped(prefix);
+        estPaths = walk.paths;
+        estBytes = walk.bytes;
+        findings.push({
+          code: "glob-estimate",
+          level: "LOW",
+          message: `Glob '${rawTarget}' can match up to ${walk.paths}${
+            walk.capped ? "+" : ""
+          } entries under ${prefix} (lower bound).`,
+        });
+      } else {
+        estPaths = 1;
+      }
+    } catch {
+      // The static prefix itself can't be stat'd/walked — we cannot bound the
+      // blast radius. Emit a deterministic finding instead of leaving the
+      // estimate undefined so the requiresAffectedPathEstimate gate can fire.
+      findings.push({
+        code: "glob-unbounded",
+        level: "MEDIUM",
+        message: `Glob '${rawTarget}' has no walkable static prefix; blast radius is unbounded.`,
+      });
+    }
+    const assessment = finalize("resolved", findings, def);
+    assessment.affectedPathsEstimate = estPaths;
+    assessment.affectedBytesEstimate = estBytes;
+    return assessment;
+  }
 
   // --- Blast-radius estimate for destructive ops -------------------------
   // Only worth walking when destructive AND the target is a directory that

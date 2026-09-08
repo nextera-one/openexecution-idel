@@ -1,0 +1,48 @@
+{
+  "name": "@openexecution/agent",
+  "version": "1.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --build"
+  },
+  "dependencies": {
+    "@openexecution/types": "workspace:*",
+    "@openexecution/server": "workspace:*",
+    "@openexecution/registry": "workspace:*",
+    "@anthropic-ai/sdk": "^0.104.2"
+  },
+  "devDependencies": {
+    "@openexecution/policy": "workspace:*",
+    "@openexecution/openlogs": "workspace:*",
+    "@openexecution/runtime": "workspace:*"
+  },
+  "files": [
+    "dist"
+  ],
+  "description": "Multi-provider AI agent loop that proposes IDEL commands through the OpenExecution Runtime.",
+  "license": "MIT",
+  "author": "Nextera One",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nextera-one/openexecution-idel.git",
+    "directory": "packages/agent"
+  },
+  "homepage": "https://github.com/nextera-one/openexecution-idel#readme",
+  "bugs": {
+    "url": "https://github.com/nextera-one/openexecution-idel/issues"
+  },
+  "engines": {
+    "node": ">=22.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

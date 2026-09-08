@@ -40,13 +40,20 @@ function riskColor(level: RiskLevel, s: string): string {
  * reason, what changed, and where the log is.
  */
 export function render(outcome: RuntimeOutcome): string {
-  const { record, result, risk, decision } = outcome;
+  const { record, result, risk, decision, plan } = outcome;
   const lines: string[] = [];
 
   lines.push(color.bold(`Command: ${record.command}`));
+  // Show what the IDEL command actually translates to on this platform — the
+  // real adapter invocation (e.g. `rm -r dist`, or an in-process node op). This
+  // is the "original command" preview: it makes the mapping from intent to
+  // execution visible at the call site, instead of hiding it behind the verb.
+  const translated = translateLine(outcome);
+  if (translated) lines.push(color.gray(`Translates to: ${translated}`));
   lines.push(riskColor(risk.level, formatRisk(risk)));
   lines.push(formatDecision(decision));
   lines.push(describeOutcome(record.result));
+  void plan;
 
   // Command output (stdout/stderr) when something actually ran.
   if (result) {
@@ -66,6 +73,8 @@ export function renderJson(outcome: RuntimeOutcome): string {
   return JSON.stringify(
     {
       command: outcome.record.command,
+      translatesTo: translateLine(outcome),
+      adapter: outcome.plan?.adapter,
       risk: outcome.risk.level,
       findings: outcome.risk.findings,
       decision: outcome.decision,
@@ -77,4 +86,22 @@ export function renderJson(outcome: RuntimeOutcome): string {
     null,
     2,
   );
+}
+
+/**
+ * Render the platform-specific "original command" an outcome maps to, for the
+ * preview line. Prefers the plan's own one-line `describe`; falls back to
+ * command + argv. Returns "" when there is no plan (e.g. a usage error or a
+ * meta command that runs in-process with nothing to show).
+ *
+ * For the in-process `@node` adapter the command is the `@node` sentinel, so we
+ * use the adapter's `describe` (e.g. `node:remove.file victim.txt`) which reads
+ * far better than `@node ...`.
+ */
+export function translateLine(outcome: RuntimeOutcome): string {
+  const plan = outcome.plan;
+  if (!plan) return "";
+  if (plan.command === "@node") return plan.describe || "";
+  const argv = plan.argv.length ? " " + plan.argv.join(" ") : "";
+  return `${plan.command}${argv}`;
 }

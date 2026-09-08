@@ -2,7 +2,6 @@
   "name": "@openexecution/policy",
   "version": "1.1.0",
   "type": "module",
-  "private": true,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -19,5 +18,23 @@
   },
   "files": [
     "dist"
-  ]
+  ],
+  "description": "Policy engine for mapping command risk to allow, warn, dry-run, approval, or block decisions.",
+  "license": "MIT",
+  "author": "Nextera One",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nextera-one/openexecution-idel.git",
+    "directory": "packages/policy"
+  },
+  "homepage": "https://github.com/nextera-one/openexecution-idel#readme",
+  "bugs": {
+    "url": "https://github.com/nextera-one/openexecution-idel/issues"
+  },
+  "engines": {
+    "node": ">=22.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }

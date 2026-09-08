@@ -1,0 +1,630 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenExecution IDEL Introduction</title>
+    <style>
+      @page {
+        size: 11in 8.5in;
+        margin: 0;
+      }
+
+      :root {
+        --bg: #080d14;
+        --panel: #111827;
+        --panel-2: #0f172a;
+        --ink: #eef4ff;
+        --muted: #a7b4ca;
+        --line: #253244;
+        --cyan: #5cc8ff;
+        --violet: #8b7cff;
+        --green: #4ade80;
+        --red: #ff5470;
+        --yellow: #fbbf24;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+      }
+
+      body {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+
+      code,
+      pre {
+        font-family:
+          "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas,
+          monospace;
+      }
+
+      .page {
+        width: 11in;
+        height: 8.5in;
+        max-height: 8.5in;
+        padding: 0.46in 0.58in;
+        break-after: page;
+        page-break-after: always;
+        break-inside: avoid;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .page:last-child {
+        page-break-after: auto;
+      }
+
+      .page::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background:
+          radial-gradient(circle at 80% 8%, rgba(92, 200, 255, 0.16), transparent 22%),
+          radial-gradient(circle at 18% 96%, rgba(139, 124, 255, 0.14), transparent 22%);
+        opacity: 0.75;
+      }
+
+      .content {
+        position: relative;
+        z-index: 1;
+      }
+
+      .kicker {
+        color: var(--cyan);
+        font-size: 0.15in;
+        font-weight: 800;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        margin: 0.12in 0 0.15in;
+        font-size: 0.68in;
+        line-height: 0.95;
+        letter-spacing: 0;
+      }
+
+      h2 {
+        margin: 0 0 0.13in;
+        font-size: 0.34in;
+        line-height: 1.05;
+        letter-spacing: 0;
+      }
+
+      h3 {
+        margin: 0 0 0.05in;
+        font-size: 0.17in;
+        line-height: 1.2;
+      }
+
+      p {
+        margin: 0 0 0.14in;
+        color: var(--muted);
+        font-size: 0.165in;
+        line-height: 1.42;
+      }
+
+      strong {
+        color: var(--ink);
+      }
+
+      .lede {
+        max-width: 7.8in;
+        color: #d8e3f6;
+        font-size: 0.24in;
+        line-height: 1.34;
+      }
+
+      .hero-grid {
+        display: grid;
+        grid-template-columns: 1.04fr 0.96fr;
+        gap: 0.28in;
+        align-items: end;
+        margin-top: 0.25in;
+      }
+
+      .hero-card,
+      .panel {
+        border: 1px solid var(--line);
+        border-radius: 0.08in;
+        background: rgba(15, 23, 42, 0.82);
+        box-shadow: 0 0.18in 0.55in rgba(0, 0, 0, 0.22);
+      }
+
+      .hero-card {
+        padding: 0.2in;
+      }
+
+      .hero-list {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 0.14in;
+        margin-top: 0.2in;
+      }
+
+      .mini {
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        border-radius: 0.07in;
+        padding: 0.14in;
+        background: rgba(255, 255, 255, 0.035);
+      }
+
+      .mini p {
+        margin: 0;
+        font-size: 0.132in;
+        line-height: 1.35;
+      }
+
+      .screen {
+        width: 100%;
+        max-height: 5.55in;
+        object-fit: contain;
+        display: block;
+        border: 1px solid var(--line);
+        border-radius: 0.08in;
+        box-shadow: 0 0.18in 0.58in rgba(0, 0, 0, 0.34);
+      }
+
+      .screen.hero-shot {
+        max-height: 3.55in;
+      }
+
+      .screen.compact-shot {
+        max-height: 2.75in;
+      }
+
+      .caption {
+        margin: 0.08in 0 0;
+        color: #8ea0ba;
+        font-size: 0.12in;
+      }
+
+      .two-col {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.24in;
+        align-items: start;
+      }
+
+      .three-col {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0.14in;
+      }
+
+      .panel {
+        padding: 0.18in;
+      }
+
+      .panel p {
+        font-size: 0.14in;
+      }
+
+      .console {
+        margin: 0;
+        padding: 0.18in;
+        border: 1px solid var(--line);
+        border-radius: 0.08in;
+        background: #030712;
+        color: #e5eefc;
+        font-size: 0.115in;
+        line-height: 1.37;
+        white-space: pre-wrap;
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+      }
+
+      .console .ok {
+        color: var(--green);
+        font-weight: 800;
+      }
+
+      .console .bad {
+        color: var(--red);
+        font-weight: 800;
+      }
+
+      .console .dim {
+        color: #94a3b8;
+      }
+
+      .flow {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        gap: 0.08in;
+        margin-top: 0.22in;
+      }
+
+      .step {
+        min-height: 0.82in;
+        border: 1px solid var(--line);
+        border-radius: 0.08in;
+        padding: 0.12in;
+        background: rgba(255, 255, 255, 0.04);
+      }
+
+      .step span {
+        display: block;
+        color: var(--cyan);
+        font-size: 0.12in;
+        font-weight: 800;
+        text-transform: uppercase;
+      }
+
+      .step strong {
+        display: block;
+        margin-top: 0.04in;
+        font-size: 0.145in;
+      }
+
+      .note {
+        border-left: 0.04in solid var(--cyan);
+        padding: 0.13in 0.16in;
+        background: rgba(92, 200, 255, 0.08);
+      }
+
+      .prompt-box {
+        border: 1px solid rgba(92, 200, 255, 0.32);
+        border-radius: 0.08in;
+        background: rgba(3, 7, 18, 0.92);
+        padding: 0.18in;
+        font-size: 0.135in;
+        line-height: 1.42;
+        white-space: pre-wrap;
+      }
+
+      .footer {
+        position: absolute;
+        left: 0.58in;
+        right: 0.58in;
+        bottom: 0.23in;
+        display: flex;
+        justify-content: space-between;
+        color: #65758d;
+        font-size: 0.1in;
+      }
+
+      .risk-low {
+        color: var(--green);
+      }
+
+      .risk-high {
+        color: var(--yellow);
+      }
+
+      .risk-critical {
+        color: var(--red);
+      }
+    </style>
+  </head>
+  <body>
+    <section class="page">
+      <div class="content">
+        <div class="kicker">OpenExecution Runtime + IDEL Terminal</div>
+        <h1>Not prettier Bash.</h1>
+        <p class="lede">
+          IDEL is a policy-aware execution runtime that turns human or AI intent
+          into safe, logged, cross-platform execution. The runtime parses intent,
+          resolves it through a registry, classifies risk, applies policy, runs
+          through an adapter, and writes a signed audit record before anything
+          touches disk.
+        </p>
+
+        <div class="hero-grid">
+          <div class="hero-card">
+            <h2>Why people should care</h2>
+            <div class="hero-list">
+              <div class="mini">
+                <h3>Safety at the call site</h3>
+                <p>
+                  Dangerous intent is explicit, and catastrophic targets such as
+                  root, home, drive roots, and raw devices are blocked by default.
+                </p>
+              </div>
+              <div class="mini">
+                <h3>Policy before execution</h3>
+                <p>
+                  Commands map to allow, warn, dry-run, approval, or block based
+                  on risk, command, params, source, and environment.
+                </p>
+              </div>
+              <div class="mini">
+                <h3>Audit by design</h3>
+                <p>
+                  Every decision, adapter, exit code, duration, and result lands
+                  in local signed OpenLogs with secret redaction.
+                </p>
+              </div>
+              <div class="mini">
+                <h3>AI stays behind the runtime</h3>
+                <p>
+                  ChatGPT or Claude can propose intent, but the runtime remains
+                  the enforcement boundary for execution.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <img
+              class="screen hero-shot"
+              src="intro-assets/landing.png"
+              alt="OpenExecution IDEL landing page screenshot"
+            />
+            <p class="caption">
+              The current web landing page, served by the local IDEL runtime.
+            </p>
+          </div>
+        </div>
+      </div>
+      <div class="footer">
+        <span>OpenExecution IDEL v1.1.0</span>
+        <span>Shareable introduction</span>
+      </div>
+    </section>
+
+    <section class="page">
+      <div class="content">
+        <div class="kicker">Live Web Terminal</div>
+        <h2>Same safety pipeline in the browser</h2>
+        <p>
+          The web terminal talks to <code>idel serve</code> over loopback. A
+          command typed in the GUI is parsed, risk-scanned, policy-checked,
+          executed or refused, and audited just like the CLI.
+        </p>
+        <img
+          class="screen"
+          src="intro-assets/web-terminal-demo.png"
+          alt="IDEL web terminal showing risk decisions"
+        />
+        <p class="caption">
+          Captured from the live terminal: a LOW-risk command executes, a
+          CRITICAL destructive command is blocked, and the registry explains how
+          <code>remove.folder</code> maps across adapters.
+        </p>
+      </div>
+      <div class="footer">
+        <span>Web terminal screenshot</span>
+        <span>Runtime online at capture time</span>
+      </div>
+    </section>
+
+    <section class="page">
+      <div class="content">
+        <div class="kicker">Console Proof</div>
+        <h2>The dangerous command never runs</h2>
+        <div class="two-col">
+          <div>
+            <h3>IDEL command form</h3>
+            <pre class="console">$ idel remove.folder name=/ recursive=true force=true
+
+Command: remove.folder
+Translates to: node:remove.folder name=/ recursive=true force=true dryRun=false
+Risk: <span class="bad">CRITICAL</span>
+  - [CRITICAL] root-delete: Destructive target resolves to the filesystem root (/).
+  - [HIGH] recursive-force: Destructive op uses recursive + force together on /.
+Decision: <span class="bad">BLOCK</span> [rule #0]
+Reason: Matched rule 0 (action: block).
+<span class="bad">BLOCKED. No files were changed.</span>
+Log: ~/.idel/logs/openlogs.jsonl</pre>
+          </div>
+          <div>
+            <h3>Native shell passthrough</h3>
+            <pre class="console">$ idel ! rm -rf /
+
+Command: rm -rf /
+Translates to: /bin/sh -c rm -rf /
+Risk: <span class="bad">CRITICAL</span>
+  - [CRITICAL] native-rm-rf-root: native `rm` with recursive+force flags
+  - [CRITICAL] native-rm-rf-root-target: native `rm` targeting root or home directory
+Decision: <span class="bad">BLOCK</span> [rule #0]
+Reason: Matched rule 0 (action: block).
+<span class="bad">BLOCKED. No files were changed.</span>
+Log: ~/.idel/logs/openlogs.jsonl</pre>
+          </div>
+        </div>
+
+        <div class="note" style="margin-top: 0.22in">
+          <p style="margin: 0">
+            The important claim is narrow and testable: a CRITICAL safety floor
+            cannot be bypassed with <code>--yes</code>, a lax policy, or native
+            passthrough. The block itself is still recorded as an audit event.
+          </p>
+        </div>
+      </div>
+      <div class="footer">
+        <span>CLI screenshots rendered from real command output</span>
+        <span>No filesystem changes were made</span>
+      </div>
+    </section>
+
+    <section class="page">
+      <div class="content">
+        <div class="kicker">Runtime Model</div>
+        <h2>One linear pipeline</h2>
+        <p>
+          IDEL is not a shell alias layer. Each command flows through the runtime
+          once, and the runtime decides what can happen.
+        </p>
+
+        <div class="flow">
+          <div class="step">
+            <span>01</span>
+            <strong>Parse</strong>
+            <p><code>verb.scope param=value</code> becomes a typed AST.</p>
+          </div>
+          <div class="step">
+            <span>02</span>
+            <strong>Resolve</strong>
+            <p>Registry lookup chooses the command definition and adapter set.</p>
+          </div>
+          <div class="step">
+            <span>03</span>
+            <strong>Classify</strong>
+            <p>AST and resolved paths produce LOW, MEDIUM, HIGH, or CRITICAL.</p>
+          </div>
+          <div class="step">
+            <span>04</span>
+            <strong>Policy</strong>
+            <p>Policy maps risk to allow, warn, dry-run, approval, or block.</p>
+          </div>
+          <div class="step">
+            <span>05</span>
+            <strong>Execute</strong>
+            <p>Adapters build real argv or in-process operations without string templates.</p>
+          </div>
+          <div class="step">
+            <span>06</span>
+            <strong>Audit</strong>
+            <p>OpenLogs records the result, redacted and signed.</p>
+          </div>
+        </div>
+
+        <div class="two-col" style="margin-top: 0.28in">
+          <div class="panel">
+            <h3>Registry precedence</h3>
+            <p>
+              Content can resolve custom -> official -> core, so a team can
+              teach or shadow commands.
+            </p>
+          </div>
+          <div class="panel">
+            <h3>Safety floor precedence</h3>
+            <p>
+              Safety floors resolve core -> everything. A CRITICAL classification
+              cannot be cleared by a custom command, policy file, or AI agent.
+            </p>
+          </div>
+        </div>
+      </div>
+      <div class="footer">
+        <span>Runtime pipeline</span>
+        <span>The runtime, not the model, is the boundary</span>
+      </div>
+    </section>
+
+    <section class="page">
+      <div class="content">
+        <div class="kicker">AI Introduction</div>
+        <h2>How to explain IDEL to ChatGPT or Claude</h2>
+        <div class="two-col">
+          <div>
+            <p>
+              The clean message for AI users: the model should suggest IDEL
+              intent, not directly own the shell. IDEL then translates the intent
+              to platform execution only after policy and risk checks.
+            </p>
+
+            <div class="three-col">
+              <div class="panel">
+                <h3>Human or AI</h3>
+                <p>Writes natural intent or an IDEL command.</p>
+              </div>
+              <div class="panel">
+                <h3>IDEL runtime</h3>
+                <p>Classifies, gates, executes or refuses, then audits.</p>
+              </div>
+              <div class="panel">
+                <h3>Operating system</h3>
+                <p>Receives only the allowed adapter invocation.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <h3>Pasteable prompt</h3>
+            <div class="prompt-box">I am evaluating OpenExecution IDEL, a policy-aware execution runtime for human and AI-proposed commands. Please review it as a safety and developer-experience concept, not as a shell syntax preference.
+
+Focus on:
+- whether the safety/policy/audit runtime boundary is clear;
+- whether CRITICAL floors for commands like root delete are defensible;
+- how ChatGPT or Claude should propose IDEL commands without bypassing the runtime;
+- what examples would best demonstrate the value to developers and teams.</div>
+          </div>
+        </div>
+
+        <div style="margin-top: 0.28in">
+          <img
+            class="screen compact-shot"
+            src="intro-assets/terminal-initial.png"
+            alt="IDEL terminal with audit panel"
+          />
+          <p class="caption">
+            The web terminal also includes Ask AI mode, native shell tabs,
+            registry completion, workflows, and a visible audit-log panel.
+          </p>
+        </div>
+      </div>
+      <div class="footer">
+        <span>AI-facing explanation</span>
+        <span>Use this page when sharing with ChatGPT or Claude</span>
+      </div>
+    </section>
+
+    <section class="page">
+      <div class="content">
+        <div class="kicker">Demo Script</div>
+        <h2>Short sequence for internet posts or calls</h2>
+        <div class="two-col">
+          <div class="panel">
+            <h3>Start the UI</h3>
+            <pre class="console">$ pnpm ui
+
+IDEL Server listening on http://127.0.0.1:7878
+UI serving packages/web/public at http://127.0.0.1:7878/</pre>
+          </div>
+          <div class="panel">
+            <h3>Run the proof</h3>
+            <pre class="console">$ idel remove.folder name=/ recursive=true force=true
+$ idel ! rm -rf /
+$ idel explain.registry command=remove.folder
+$ idel list.logs</pre>
+          </div>
+        </div>
+
+        <div class="two-col" style="margin-top: 0.22in">
+          <div class="panel">
+            <h3>What to say</h3>
+            <p>
+              "This is an execution runtime, not just nicer command syntax. It
+              turns intent into a policy decision, then into platform execution,
+              and records the decision."
+            </p>
+          </div>
+          <div class="panel">
+            <h3>What to show</h3>
+            <p>
+              Show a safe command succeeding, a destructive command blocked,
+              native passthrough blocked, and the audit trail listing both normal
+              execution and refused execution.
+            </p>
+          </div>
+        </div>
+
+        <div class="note" style="margin-top: 0.26in">
+          <p style="margin: 0">
+            Best first impression: do not lead with "new shell language." Lead
+            with "runtime-enforced safety and auditability for commands proposed
+            by humans or AI agents."
+          </p>
+        </div>
+      </div>
+      <div class="footer">
+        <span>Prepared from the local repository</span>
+        <span>docs/IDEL-introduction.pdf</span>
+      </div>
+    </section>
+  </body>
+</html>

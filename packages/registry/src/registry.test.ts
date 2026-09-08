@@ -8,6 +8,46 @@ import { checkCommandDef, validateCommandDef } from "./schema.js";
 import { Registry, findCoreDir, loadLayerFromDir } from "./loader.js";
 import { coerceParams } from "./coerce.js";
 
+const CORE_COMMAND_VERBS = new Set([
+  "add",
+  "allow",
+  "append",
+  "ask",
+  "change",
+  "check",
+  "clear",
+  "copy",
+  "create",
+  "deny",
+  "disable",
+  "edit",
+  "enable",
+  "explain",
+  "extract",
+  "find",
+  "flush",
+  "get",
+  "install",
+  "learn",
+  "list",
+  "move",
+  "open",
+  "read",
+  "remove",
+  "rename",
+  "run",
+  "save",
+  "search",
+  "set",
+  "show",
+  "simulate",
+  "tail",
+  "test",
+  "update",
+  "wait",
+  "write",
+]);
+
 // A minimal, valid command def used as a baseline to mutate in tests.
 function goodDef(over: Partial<CommandDef> = {}): unknown {
   return {
@@ -93,6 +133,15 @@ describe("schema — validateCommandDef", () => {
     expect(res.errors.join("\n")).toMatch(/unknown adapter/);
   });
 
+  it("rejects @node outside the node adapter", () => {
+    const bad = goodDef({
+      adapters: { powershell: { command: "@node", args: [] } },
+    });
+    const res = checkCommandDef(bad);
+    expect(res.ok).toBe(false);
+    expect(res.errors.join("\n")).toMatch(/@node is only valid/);
+  });
+
   it("rejects missing required fields (summary/category)", () => {
     expect(checkCommandDef(goodDef({ summary: "" })).ok).toBe(false);
     expect(checkCommandDef(goodDef({ category: "" })).ok).toBe(false);
@@ -113,7 +162,7 @@ describe("schema — validateCommandDef", () => {
     expect(checkCommandDef(goodDef({ category: "filesystem", adapters: {} })).ok).toBe(false);
     expect(
       checkCommandDef({
-        id: "registry.list",
+        id: "list.registry",
         version: "1.0.0",
         summary: "List commands.",
         category: "meta",
@@ -122,6 +171,44 @@ describe("schema — validateCommandDef", () => {
         adapters: {},
       }).ok,
     ).toBe(true);
+  });
+
+  it("allows empty adapters for commands that declare external adapter support", () => {
+    const res = checkCommandDef(
+      goodDef({
+        id: "allow.network",
+        category: "network",
+        adapters: {},
+        support: {
+          domain: "network",
+          targets: {
+            "linux-nftables": {
+              status: "requires_adapter_install",
+              adapter: "linux-nftables",
+              platform: "linux",
+            },
+          },
+        },
+      }),
+    );
+    expect(res.ok).toBe(true);
+  });
+
+  it("rejects malformed support metadata", () => {
+    const res = checkCommandDef(
+      goodDef({
+        id: "allow.network",
+        category: "network",
+        adapters: {},
+        support: {
+          targets: {
+            "linux-nftables": { status: "maybe" },
+          },
+        } as never,
+      }),
+    );
+    expect(res.ok).toBe(false);
+    expect(res.errors.join("\n")).toMatch(/support\.targets\.linux-nftables\.status/);
   });
 
   it("validateCommandDef throws a RegistryError with details", () => {
@@ -155,6 +242,8 @@ describe("loader — core registry", () => {
     expect(reg.size).toBeGreaterThanOrEqual(25);
     expect(reg.has("remove.folder")).toBe(true);
     expect(reg.has("create.file")).toBe(true);
+    expect(reg.has("list.logs")).toBe(true);
+    expect(reg.has("logs.list")).toBe(false);
   });
 
   it("list() returns effective defs sorted by id", async () => {
@@ -175,10 +264,49 @@ describe("loader — core registry", () => {
     }
   });
 
+  it("every core command id is verb-first", async () => {
+    const dir = findCoreDir();
+    const { defs } = await loadLayerFromDir(dir, "core");
+    const offenders = defs
+      .map((def) => def.id)
+      .filter((id) => !CORE_COMMAND_VERBS.has(id.split(".")[0] ?? ""));
+    expect(offenders).toEqual([]);
+  });
+
   it("tags loaded core defs with source=core", async () => {
     const reg = await Registry.loadCore();
     const resolved = reg.resolve("remove.folder");
     expect(resolved?.source).toBe("core");
+  });
+
+  it("skips *.sig.json signature manifests when loading a layer", async () => {
+    // `idel promote` writes promoted-<cli>.json (defs) alongside
+    // promoted-<cli>.sig.json (a signature manifest). The manifest is NOT a
+    // CommandDef array; the loader must skip it, not fail the whole layer.
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const dir = await mkdtemp(join(tmpdir(), "idel-sig-"));
+    try {
+      const def = {
+        id: "show.demo.status",
+        version: "0.1.0",
+        summary: "Demo.",
+        category: "demo",
+        riskDefault: "LOW",
+        params: {},
+        adapters: { posix: { command: "demo", args: [{ kind: "literal", value: "status" }] } },
+      };
+      await writeFile(join(dir, "promoted-demo.json"), JSON.stringify([def]));
+      await writeFile(
+        join(dir, "promoted-demo.sig.json"),
+        JSON.stringify({ manifestVersion: 1, entries: [] }),
+      );
+      const { defs, problems } = await loadLayerFromDir(dir, "official");
+      expect(problems).toEqual([]);
+      expect(defs.map((d) => d.id)).toEqual(["show.demo.status"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -236,6 +364,52 @@ describe("resolve — custom > official > core", () => {
     expect(resolved?.source).toBe("custom");
     expect(allLayers.map((l) => l.source)).toEqual(["custom", "core"]);
   });
+
+  it("replaceLayer clears stale commands from a reloaded layer", () => {
+    const reg = new Registry();
+    reg.addLayer("core", [def("create.file", "core", "1.0.0")]);
+    reg.addLayer("custom", [def("show.demo.status", "custom", "1.0.0")]);
+    expect(reg.has("show.demo.status")).toBe(true);
+
+    reg.replaceLayer("custom", [def("list.demo.items", "custom", "1.0.0")]);
+
+    expect(reg.has("show.demo.status")).toBe(false);
+    expect(reg.has("list.demo.items")).toBe(true);
+    expect(reg.has("create.file")).toBe(true);
+  });
+
+  it("validates in-memory addLayer defs fail-closed", () => {
+    const reg = new Registry();
+    expect(() =>
+      reg.addLayer("custom", [
+        def("show.demo.status", "custom", "1.0.0"),
+        { ...def("bad.demo.command", "custom", "1.0.0"), riskDefault: "SUPER" as never },
+      ]),
+    ).toThrow(RegistryError);
+    expect(reg.has("show.demo.status")).toBe(false);
+    expect(reg.has("bad.demo.command")).toBe(false);
+  });
+
+  it("validates in-memory replaceLayer defs before clearing the old layer", () => {
+    const reg = new Registry();
+    reg.addLayer("custom", [def("show.demo.status", "custom", "1.0.0")]);
+    expect(() =>
+      reg.replaceLayer("custom", [
+        { ...def("bad.demo.command", "custom", "1.0.0"), adapters: {} },
+      ]),
+    ).toThrow(RegistryError);
+    expect(reg.has("show.demo.status")).toBe(true);
+    expect(reg.has("bad.demo.command")).toBe(false);
+  });
+
+  it("can return the core def even when custom shadows it", () => {
+    const reg = new Registry();
+    reg.addLayer("core", [def("read.file", "core", "1.0.0")]);
+    reg.addLayer("custom", [def("read.file", "custom", "2.0.0")]);
+    expect(reg.resolve("read.file")?.source).toBe("custom");
+    expect(reg.coreDef("read.file")?.version).toBe("1.0.0");
+    expect(reg.layerDef("custom", "read.file")?.version).toBe("2.0.0");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -265,7 +439,7 @@ describe("coerceParams", () => {
 
   it("coerces numbers and errors on NaN", () => {
     const numDef: CommandDef = {
-      id: "logs.list",
+      id: "list.logs",
       version: "1.0.0",
       summary: "x",
       category: "meta",
@@ -278,9 +452,23 @@ describe("coerceParams", () => {
     expect(bad.errors.join("")).toMatch(/number/);
   });
 
+  it("rejects partial numeric strings", () => {
+    const numDef: CommandDef = {
+      id: "list.logs",
+      version: "1.0.0",
+      summary: "x",
+      category: "meta",
+      riskDefault: "LOW",
+      params: { limit: { type: "number", default: 20 } },
+      adapters: {},
+    };
+    expect(coerceParams(numDef, { limit: "10abc" }, {}).errors.join("")).toMatch(/number/);
+    expect(coerceParams(numDef, { limit: "" }, {}).errors.join("")).toMatch(/number/);
+  });
+
   it("validates octal mode and keeps it a string", () => {
     const modeDef: CommandDef = {
-      id: "permission.file.set",
+      id: "set.file.permission",
       version: "1.0.0",
       summary: "x",
       category: "permissions",

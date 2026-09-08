@@ -1,0 +1,39 @@
+[
+  {
+    "id": "run.script",
+    "version": "1.0.0",
+    "summary": "Run a local script through an explicit interpreter, with IDEL policy/logging around it.",
+    "category": "script",
+    "riskDefault": "MEDIUM",
+    "params": {
+      "path": { "type": "path", "required": true, "description": "Script file to run." },
+      "args": { "type": "string", "default": "", "description": "Optional script arguments as one command-line string." },
+      "shell": {
+        "type": "string",
+        "default": "auto",
+        "enum": ["auto", "bash", "sh", "node", "python", "powershell", "cmd", "direct"],
+        "description": "Interpreter to use. auto picks from the file extension where possible."
+      }
+    },
+    "safety": { "targetParam": "path" },
+    "adapters": {
+      "node": {
+        "command": "@node",
+        "args": [
+          { "kind": "value", "param": "path" },
+          { "kind": "value", "param": "args" },
+          { "kind": "value", "param": "shell" }
+        ],
+        "semanticNotes": "The runtime resolves and validates the script path, then spawns an interpreter with an argv array and shell:false. It does not parse or trust the script contents; policy should gate this command in sensitive environments."
+      }
+    },
+    "examples": [
+      "run.script path=./scripts/deploy.sh shell=bash",
+      "run.script path=./scripts/check.js shell=node args=\"--fix src\"",
+      "run.script path=\"scripts\\\\deploy.bat\" shell=cmd"
+    ],
+    "tests": [
+      { "input": "run.script path=./scripts/deploy.sh shell=bash", "expectRisk": "MEDIUM" }
+    ]
+  }
+]

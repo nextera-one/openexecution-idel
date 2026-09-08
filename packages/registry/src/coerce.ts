@@ -7,7 +7,7 @@
  * {@link ParamSchema}s:
  *
  *  - boolean  — "true"/"false" (case-insensitive) → real boolean
- *  - number   — parseFloat, error on NaN
+ *  - number   — strict finite number conversion; partial strings are rejected
  *  - mode     — validate an octal permission like 755 / 0755 / 644; kept as the
  *               original string so the adapter passes exactly what was typed
  *  - path     — stays a string (no filesystem touch here; safety resolves later)
@@ -56,9 +56,14 @@ function coerceBoolean(scope: string, raw: ParamValue, errors: string[]): boolea
 }
 
 function coerceNumber(scope: string, raw: ParamValue, errors: string[]): number {
-  if (typeof raw === "number") return raw;
-  const n = Number.parseFloat(String(raw));
-  if (Number.isNaN(n)) {
+  if (typeof raw === "number") {
+    if (Number.isFinite(raw)) return raw;
+    errors.push(`${scope}: expected a number, got ${JSON.stringify(raw)}`);
+    return 0;
+  }
+  const s = String(raw).trim();
+  const n = s === "" ? Number.NaN : Number(s);
+  if (!Number.isFinite(n)) {
     errors.push(`${scope}: expected a number, got ${JSON.stringify(raw)}`);
     return 0;
   }

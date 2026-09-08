@@ -21,15 +21,15 @@ jobs:
         # Spec §31 "Definition of Live": tests must pass on Linux/macOS and
         # Windows. The Windows leg also exercises the PowerShell adapter path
         # (and the one Windows-only test that is skipped elsewhere).
-        os: [ubuntu-latest, windows-latest]
-        node: [22]
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [22, 24]
     steps:
       - uses: actions/checkout@v4
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 10.0.0
+          version: 11.7.0
 
       - name: Set up Node ${{ matrix.node }}
         uses: actions/setup-node@v4
@@ -49,9 +49,21 @@ jobs:
       - name: Test
         run: pnpm test
 
-      # The smoke test is a bash script; run it only on Linux. It boots the real
-      # `idel` binary, asserts the thesis demo is BLOCKED, and verifies the
-      # signed OpenLogs chain end to end.
+      - name: Check static web assets
+        run: pnpm check:web
+
+      - name: Check publishable OpenLogs artifact
+        run: pnpm check:package
+
+      - name: Dry-run all publishable packages
+        if: matrix.os == 'ubuntu-latest' && matrix.node == 24
+        run: pnpm publish:dry-run
+
+      - name: Install and execute npm release tarballs
+        if: matrix.os == 'ubuntu-latest' && matrix.node == 24
+        run: pnpm check:npm
+
+      # Boots the real `idel` binary, asserts the thesis demo is BLOCKED, and
+      # verifies the signed OpenLogs chain end to end on every supported OS.
       - name: Smoke test (CLI + signed OpenLogs)
-        if: runner.os == 'Linux'
         run: pnpm smoke

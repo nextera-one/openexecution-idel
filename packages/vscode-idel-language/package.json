@@ -1,0 +1,92 @@
+{
+  "name": "idel-language",
+  "displayName": "IDEL Language",
+  "description": "IDEL Structure language support: syntax highlighting, diagnostics, completion, and hover documentation for .idel files.",
+  "version": "0.1.0",
+  "publisher": "nextera-one",
+  "private": true,
+  "license": "MIT",
+  "type": "commonjs",
+  "engines": {
+    "vscode": "^1.94.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "keywords": [
+    "idel",
+    "openexecution",
+    "structure",
+    "intent"
+  ],
+  "main": "./src/extension.cjs",
+  "extensionKind": [
+    "workspace",
+    "ui"
+  ],
+  "activationEvents": [
+    "onLanguage:idel"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "idel",
+        "aliases": [
+          "IDEL Structure",
+          "idel"
+        ],
+        "extensions": [
+          ".idel"
+        ],
+        "filenames": [
+          "idel.lock"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "idel",
+        "scopeName": "source.idel",
+        "path": "./syntaxes/idel.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "IDEL Language",
+      "properties": {
+        "idelLanguage.diagnostics": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Parse `.idel` documents as you type and surface syntax errors and lint warnings."
+        }
+      }
+    }
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    },
+    "virtualWorkspaces": true
+  },
+  "scripts": {
+    "check": "node --check src/extension.cjs"
+  },
+  "files": [
+    "src",
+    "lib",
+    "syntaxes",
+    "language-configuration.json",
+    "README.md",
+    "package.json"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nextera-one/openexecution-idel.git",
+    "directory": "packages/vscode-idel-language"
+  },
+  "homepage": "https://github.com/nextera-one/openexecution-idel#readme",
+  "bugs": {
+    "url": "https://github.com/nextera-one/openexecution-idel/issues"
+  }
+}

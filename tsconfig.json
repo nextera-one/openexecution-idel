@@ -2,6 +2,9 @@
   "files": [],
   "references": [
     { "path": "packages/types" },
+    { "path": "packages/structure" },
+    { "path": "packages/package" },
+    { "path": "packages/function" },
     { "path": "packages/parser" },
     { "path": "packages/registry" },
     { "path": "packages/safety" },
@@ -10,6 +13,8 @@
     { "path": "packages/adapters-posix" },
     { "path": "packages/adapters-powershell" },
     { "path": "packages/runtime" },
+    { "path": "packages/server" },
+    { "path": "packages/agent" },
     { "path": "packages/cli" }
   ]
 }

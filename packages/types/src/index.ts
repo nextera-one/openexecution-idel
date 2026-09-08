@@ -18,8 +18,13 @@
 // Parser
 // ---------------------------------------------------------------------------
 
-/** Where a command entered the runtime. */
-export type CommandOrigin = "idel" | "native" | "ci" | "api";
+/**
+ * Where a command entered the runtime. `agent` marks a command an AI proposed
+ * through {@link @openexecution/agent} — it still flows through the identical
+ * safety/policy/OpenLogs pipeline, but the signed audit record carries
+ * `source: "agent"` so AI-initiated actions are distinguishable from human ones.
+ */
+export type CommandOrigin = "idel" | "native" | "ci" | "api" | "agent";
 
 /** A scalar parameter value after type coercion against the schema. */
 export type ParamValue = string | number | boolean;
@@ -131,6 +136,33 @@ export interface RegistryTest {
 
 export type CommandSource = "core" | "official" | "custom";
 
+export type SupportStatus =
+  | "implemented"
+  | "requires_adapter_install"
+  | "requires_capability"
+  | "unsupported"
+  | "planned";
+
+export interface CommandSupportTarget {
+  /** Current execution state for this backend/platform. */
+  status: SupportStatus;
+  /** Installable adapter id, e.g. "linux-nftables" or "windows-firewall". */
+  adapter?: string;
+  /** Platform/backend label, e.g. "linux", "macos-pf", "android-root". */
+  platform?: string;
+  /** Capabilities required before execution, e.g. root/admin/CAP_NET_ADMIN. */
+  requires?: string[];
+  /** Human-facing reason when a backend is not ready or needs privileges. */
+  reason?: string;
+}
+
+export interface CommandSupport {
+  /** Short domain label such as "filesystem", "network", or "package". */
+  domain?: string;
+  /** Backend/platform support keyed by stable target id. */
+  targets: Record<string, CommandSupportTarget>;
+}
+
 export interface CommandDef {
   id: string;
   version: string;
@@ -142,6 +174,12 @@ export interface CommandDef {
   allowExtraArgs?: boolean;
   safety?: CommandSafety;
   adapters: Partial<Record<AdapterName, AdapterSpec>>;
+  /**
+   * Explicit cross-platform/backend support matrix. Required when a command is
+   * real registry content but execution depends on an installable adapter that
+   * is not bundled with the core runtime.
+   */
+  support?: CommandSupport;
   examples?: string[];
   tests?: RegistryTest[];
   /** Set by the loader; not present in the JSON on disk. */
@@ -152,7 +190,7 @@ export interface ResolvedCommand {
   def: CommandDef;
   /** The layer the winning definition came from. */
   source: CommandSource;
-  /** Lower-priority definitions that were shadowed, for `registry.explain`. */
+  /** Lower-priority definitions that were shadowed, for `explain.registry`. */
   shadowed: { source: CommandSource; version: string }[];
 }
 
@@ -268,7 +306,37 @@ export interface Adapter extends AdapterCapabilities {
   /** Build a (possibly dry-run) plan from a resolved command + AST. */
   plan(resolved: ResolvedCommand, ast: CommandAst): ExecutionPlan;
   /** Execute a plan. Must honor dryRun by returning a simulated result. */
-  execute(plan: ExecutionPlan, opts: { dryRun: boolean; cwd: string }): Promise<ExecutionResult>;
+  execute(
+    plan: ExecutionPlan,
+    opts: { dryRun: boolean; cwd: string; interactive?: boolean; approved?: boolean },
+  ): Promise<ExecutionResult>;
+}
+
+export type AdapterTrust = "official" | "community" | "local";
+
+export interface AdapterRelease {
+  tarballUrl: string;
+  sha256: string;
+  signature?: string;
+}
+
+export interface AdapterManifest {
+  id: string;
+  name: string;
+  version: string;
+  summary: string;
+  /** Longer human-readable adapter description, usually from the adapter store. */
+  description?: string;
+  repo: string;
+  /** Path inside the public adapter repository, e.g. "adapters/linux-nftables". */
+  path?: string;
+  platforms: string[];
+  commands: string[];
+  capabilities: string[];
+  riskDomains: string[];
+  trust: AdapterTrust;
+  entry: string;
+  release?: AdapterRelease;
 }
 
 // ---------------------------------------------------------------------------
@@ -319,15 +387,40 @@ export interface RuntimeContext {
   environment?: string;
   /** CI mode: approval-required commands fail instead of prompting. */
   ci?: boolean;
+  /**
+   * Explicit approval decision supplied by a transport host. `true` proceeds
+   * past an approval_required policy decision; `false` records a refusal.
+   */
+  approval?: boolean;
   /** Force a dry-run regardless of policy. */
   dryRun?: boolean;
   /** Disallow native passthrough (e.g. in CI/production). */
   noNative?: boolean;
+  /**
+   * Allow commands that need to attach to the user's terminal, such as
+   * `open.editor` / `edit.file`. HTTP, CI, and agent hosts leave this false so
+   * interactive commands fail cleanly instead of hanging on a non-existent TTY.
+   */
+  interactive?: boolean;
+  /**
+   * Override the command origin. When omitted, the runtime infers `"ci"` or
+   * `"idel"`. Policy rules may match this source, and OpenLogs records it, so
+   * transport hosts must derive it rather than accepting an untrusted value.
+   */
+  origin?: CommandOrigin;
 }
 
 export interface RuntimeOutcome {
   record: OpenLogRecord;
   result?: ExecutionResult;
+  plan?: ExecutionPlan;
+  decision: PolicyDecision;
+  risk: RiskAssessment;
+}
+
+/** A non-executing, non-logging view of how the runtime would classify a command. */
+export interface RuntimePreview {
+  ast: { command: string; params: Record<string, ParamValue> };
   plan?: ExecutionPlan;
   decision: PolicyDecision;
   risk: RiskAssessment;

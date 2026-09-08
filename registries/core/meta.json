@@ -1,6 +1,6 @@
 [
   {
-    "id": "registry.list",
+    "id": "list.registry",
     "version": "1.0.0",
     "summary": "List all known commands and the layer each resolves from.",
     "category": "meta",
@@ -9,11 +9,11 @@
       "category": { "type": "string", "description": "Filter to a single category." }
     },
     "adapters": {},
-    "examples": ["registry.list", "registry.list category=filesystem"],
-    "tests": [{ "input": "registry.list", "expectRisk": "LOW" }]
+    "examples": ["list.registry", "list.registry category=filesystem"],
+    "tests": [{ "input": "list.registry", "expectRisk": "LOW" }]
   },
   {
-    "id": "registry.explain",
+    "id": "explain.registry",
     "version": "1.0.0",
     "summary": "Explain how a command resolves: the winning layer plus any shadowed definitions.",
     "category": "meta",
@@ -22,24 +22,269 @@
       "command": { "type": "string", "required": true, "description": "Command id to explain, e.g. remove.folder." }
     },
     "adapters": {},
-    "examples": ["registry.explain command=remove.folder"],
-    "tests": [{ "input": "registry.explain command=remove.folder", "expectRisk": "LOW" }]
+    "examples": ["explain.registry command=remove.folder"],
+    "tests": [{ "input": "explain.registry command=remove.folder", "expectRisk": "LOW" }]
   },
   {
-    "id": "policy.check",
+    "id": "check.policy",
     "version": "1.0.0",
     "summary": "Evaluate the active policy against a hypothetical command without running it.",
     "category": "meta",
     "riskDefault": "LOW",
     "params": {
-      "command": { "type": "string", "required": true, "description": "The IDEL command line to evaluate." }
+      "command": { "type": "string", "description": "Optional IDEL command line to evaluate in a future policy-preview mode." }
     },
     "adapters": {},
-    "examples": ["policy.check command=\"remove.folder name=dist recursive=true\""],
-    "tests": [{ "input": "policy.check command=\"remove.folder name=dist\"", "expectRisk": "LOW" }]
+    "examples": ["check.policy command=\"remove.folder name=dist recursive=true\""],
+    "tests": [{ "input": "check.policy command=\"remove.folder name=dist\"", "expectRisk": "LOW" }]
   },
   {
-    "id": "logs.list",
+    "id": "ask.ai",
+    "version": "1.0.0",
+    "summary": "Ask the configured AI agent to propose IDEL commands through the audited runtime.",
+    "category": "meta",
+    "riskDefault": "LOW",
+    "params": {
+      "prompt": { "type": "string", "required": true, "description": "Natural-language request for the AI agent." }
+    },
+    "adapters": {},
+    "examples": [
+      "ask.ai prompt=\"clean the build directory\"",
+      "ask.ai prompt=\"open package.json and explain the scripts\""
+    ]
+  },
+  {
+    "id": "learn.cli",
+    "version": "1.0.0",
+    "summary": "Learn draft IDEL commands from an installed CLI's help output.",
+    "category": "meta",
+    "riskDefault": "LOW",
+    "params": {
+      "cli": { "type": "string", "required": true, "description": "Installed CLI executable to introspect, e.g. git." },
+      "write": { "type": "boolean", "default": false, "description": "Write accepted drafts to the custom registry layer." }
+    },
+    "adapters": {},
+    "examples": [
+      "learn.cli cli=git",
+      "learn.cli cli=git write=true"
+    ]
+  },
+  {
+    "id": "list.adapters",
+    "version": "0.1.0",
+    "summary": "List official installable adapters known to this runtime.",
+    "category": "meta",
+    "riskDefault": "LOW",
+    "params": {
+      "domain": { "type": "string", "description": "Filter by risk domain, e.g. network." },
+      "platform": { "type": "string", "description": "Filter by platform, e.g. linux or windows." }
+    },
+    "adapters": {},
+    "examples": ["list.adapters", "list.adapters domain=network"],
+    "tests": [{ "input": "list.adapters", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "search.adapters",
+    "version": "0.1.0",
+    "summary": "Search official installable adapters by id, command, platform, or domain.",
+    "category": "meta",
+    "riskDefault": "LOW",
+    "params": {
+      "query": { "type": "string", "required": true, "description": "Search text." }
+    },
+    "adapters": {},
+    "examples": ["search.adapters query=firewall", "search.adapters query=nftables"],
+    "tests": [{ "input": "search.adapters query=firewall", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "check.adapter",
+    "version": "0.1.0",
+    "summary": "Show install status, capabilities, and verified release metadata for an adapter.",
+    "category": "meta",
+    "riskDefault": "LOW",
+    "params": {
+      "name": { "type": "string", "required": true, "description": "Adapter id, e.g. linux-nftables." }
+    },
+    "adapters": {},
+    "examples": ["check.adapter name=linux-nftables"],
+    "tests": [{ "input": "check.adapter name=linux-nftables", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "install.adapter",
+    "version": "0.1.0",
+    "summary": "Prepare an official adapter installation plan from verified GitHub release metadata.",
+    "category": "meta",
+    "riskDefault": "MEDIUM",
+    "params": {
+      "name": { "type": "string", "required": true, "description": "Adapter id, e.g. linux-nftables." },
+      "dryRun": { "type": "boolean", "default": true, "description": "Show the verified install plan without writing adapter files." }
+    },
+    "adapters": {},
+    "examples": ["install.adapter name=linux-nftables", "install.adapter name=windows-firewall dryRun=true"],
+    "tests": [{ "input": "install.adapter name=linux-nftables", "expectRisk": "MEDIUM" }]
+  },
+  {
+    "id": "remove.adapter",
+    "version": "0.1.0",
+    "summary": "Remove an installed adapter from the local adapter cache.",
+    "category": "meta",
+    "riskDefault": "MEDIUM",
+    "params": {
+      "name": { "type": "string", "required": true, "description": "Adapter id, e.g. linux-nftables." },
+      "dryRun": { "type": "boolean", "default": true, "description": "Show what would be removed without deleting files." }
+    },
+    "adapters": {},
+    "examples": ["remove.adapter name=linux-nftables dryRun=true"],
+    "tests": [{ "input": "remove.adapter name=linux-nftables", "expectRisk": "MEDIUM" }]
+  },
+  {
+    "id": "wait.time",
+    "version": "1.0.0",
+    "summary": "Pause execution for a short duration before continuing.",
+    "category": "meta",
+    "riskDefault": "LOW",
+    "params": {
+      "seconds": { "type": "number", "default": 1, "description": "Seconds to wait. Maximum 60." },
+      "ms": { "type": "number", "description": "Milliseconds to wait. Overrides seconds when provided. Maximum 60000." }
+    },
+    "adapters": {},
+    "examples": [
+      "wait.time seconds=2",
+      "create.file name=a.txt && wait.time ms=500 && read.file name=a.txt"
+    ],
+    "tests": [{ "input": "wait.time ms=1", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "list.history",
+    "version": "1.0.0",
+    "summary": "List recent audited command history, up to 1000 commands.",
+    "category": "meta",
+    "riskDefault": "LOW",
+    "params": {
+      "limit": { "type": "number", "default": 1000, "description": "Maximum commands to list. Capped at 1000." }
+    },
+    "adapters": {},
+    "examples": [
+      "list.history",
+      "list.history limit=100"
+    ],
+    "tests": [{ "input": "list.history limit=10", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "clear.all",
+    "version": "1.0.0",
+    "summary": "Clear all visible scrollback lines in the active terminal tab.",
+    "category": "meta",
+    "riskDefault": "LOW",
+    "params": {},
+    "adapters": {},
+    "examples": ["clear.all"],
+    "tests": [{ "input": "clear.all", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "clear.last",
+    "version": "1.0.0",
+    "summary": "Clear the last visible scrollback lines in the active terminal tab.",
+    "category": "meta",
+    "riskDefault": "LOW",
+    "params": {
+      "limit": { "type": "number", "default": 1, "description": "Number of trailing visible rows to remove." }
+    },
+    "adapters": {},
+    "examples": ["clear.last", "clear.last limit=10"],
+    "tests": [{ "input": "clear.last limit=1", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "clear.first",
+    "version": "1.0.0",
+    "summary": "Clear the first visible scrollback lines in the active terminal tab.",
+    "category": "meta",
+    "riskDefault": "LOW",
+    "params": {
+      "limit": { "type": "number", "default": 1, "description": "Number of leading visible rows to remove." }
+    },
+    "adapters": {},
+    "examples": ["clear.first", "clear.first limit=10"],
+    "tests": [{ "input": "clear.first limit=1", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "clear.range",
+    "version": "1.0.0",
+    "summary": "Clear a 1-based inclusive range of visible scrollback rows in the active terminal tab.",
+    "category": "meta",
+    "riskDefault": "LOW",
+    "params": {
+      "from": { "type": "number", "required": true, "description": "First visible row number to remove, starting at 1." },
+      "to": { "type": "number", "required": true, "description": "Last visible row number to remove, inclusive." }
+    },
+    "adapters": {},
+    "examples": ["clear.range from=2 to=5"],
+    "tests": [{ "input": "clear.range from=1 to=2", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "save.workflow",
+    "version": "1.0.0",
+    "summary": "Save a named workflow in the web terminal.",
+    "category": "meta",
+    "riskDefault": "LOW",
+    "params": {
+      "name": { "type": "string", "required": true, "description": "Workflow name." },
+      "command": { "type": "string", "required": true, "description": "IDEL command, multiline batch, or && batch to save." }
+    },
+    "adapters": {},
+    "examples": ["save.workflow name=setup command=\"create.folder name=tmp && list.folder path=.\""],
+    "tests": [{ "input": "save.workflow name=setup command=\"list.folder path=.\"", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "list.workflows",
+    "version": "1.0.0",
+    "summary": "List saved web terminal workflows.",
+    "category": "meta",
+    "riskDefault": "LOW",
+    "params": {},
+    "adapters": {},
+    "examples": ["list.workflows"],
+    "tests": [{ "input": "list.workflows", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "run.workflow",
+    "version": "1.0.0",
+    "summary": "Run a saved web terminal workflow by name.",
+    "category": "meta",
+    "riskDefault": "LOW",
+    "params": {
+      "name": { "type": "string", "required": true, "description": "Saved workflow name." }
+    },
+    "adapters": {},
+    "examples": ["run.workflow name=setup"],
+    "tests": [{ "input": "run.workflow name=setup", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "remove.workflow",
+    "version": "1.0.0",
+    "summary": "Remove a saved web terminal workflow by name.",
+    "category": "meta",
+    "riskDefault": "LOW",
+    "params": {
+      "name": { "type": "string", "required": true, "description": "Saved workflow name." }
+    },
+    "adapters": {},
+    "examples": ["remove.workflow name=setup"],
+    "tests": [{ "input": "remove.workflow name=setup", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "open.workflows",
+    "version": "1.0.0",
+    "summary": "Open the web terminal workflow manager.",
+    "category": "meta",
+    "riskDefault": "LOW",
+    "params": {},
+    "adapters": {},
+    "examples": ["open.workflows"],
+    "tests": [{ "input": "open.workflows", "expectRisk": "LOW" }]
+  },
+  {
+    "id": "list.logs",
     "version": "1.0.0",
     "summary": "List recent OpenLog audit records for this session or user.",
     "category": "meta",
@@ -48,11 +293,11 @@
       "limit": { "type": "number", "default": 20, "description": "Maximum number of records to list." }
     },
     "adapters": {},
-    "examples": ["logs.list", "logs.list limit=50"],
-    "tests": [{ "input": "logs.list limit=10", "expectRisk": "LOW" }]
+    "examples": ["list.logs", "list.logs limit=50"],
+    "tests": [{ "input": "list.logs limit=10", "expectRisk": "LOW" }]
   },
   {
-    "id": "logs.show",
+    "id": "show.logs",
     "version": "1.0.0",
     "summary": "Show the full OpenLog record for a single command by id.",
     "category": "meta",
@@ -61,7 +306,7 @@
       "id": { "type": "string", "required": true, "description": "The log record id to show." }
     },
     "adapters": {},
-    "examples": ["logs.show id=01J2X..."],
-    "tests": [{ "input": "logs.show id=abc123", "expectRisk": "LOW" }]
+    "examples": ["show.logs id=01J2X..."],
+    "tests": [{ "input": "show.logs id=abc123", "expectRisk": "LOW" }]
   }
 ]

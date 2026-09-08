@@ -2,7 +2,6 @@
   "name": "@openexecution/openlogs",
   "version": "1.1.0",
   "type": "module",
-  "private": true,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -16,10 +15,35 @@
   },
   "dependencies": {
     "@nextera.one/openlogs-sdk": "^2.2.0",
-    "@nextera.one/tps-standard": "^0.8.0",
-    "@openexecution/types": "workspace:*"
+    "@nextera.one/tps-standard": "0.8.1",
+    "@noble/ed25519": "^3.1.0",
+    "@noble/hashes": "^2.2.0",
+    "@openexecution/types": "workspace:*",
+    "ulid": "^3.0.2"
   },
   "files": [
     "dist"
-  ]
+  ],
+  "bundledDependencies": [
+    "@nextera.one/openlogs-sdk",
+    "@nextera.one/tps-standard"
+  ],
+  "description": "Signed OpenLogs audit writer and verifier integration for IDEL runtime events.",
+  "license": "MIT",
+  "author": "Nextera One",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nextera-one/openexecution-idel.git",
+    "directory": "packages/openlogs"
+  },
+  "homepage": "https://github.com/nextera-one/openexecution-idel#readme",
+  "bugs": {
+    "url": "https://github.com/nextera-one/openexecution-idel/issues"
+  },
+  "engines": {
+    "node": ">=22.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }

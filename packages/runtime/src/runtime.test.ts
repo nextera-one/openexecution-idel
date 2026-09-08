@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { Registry } from "@openexecution/registry";
 import { defaultPolicy, loadPolicy } from "@openexecution/policy";
+import { OpenLogWriter } from "@openexecution/openlogs";
 import type { RuntimeContext } from "@openexecution/types";
 
 import { Runtime } from "./runtime.js";
@@ -76,6 +77,18 @@ describe("the thesis: dangerous commands are blocked before execution", () => {
     expect(out.decision.action).toBe("block");
     expect(out.record.result).toBe("blocked_before_execution");
   });
+
+  it("never default-executes a native line merely because no signature matched", async () => {
+    const rt = await makeRuntime();
+    const out = await rt.run("! echo harmless", ctx());
+    expect(out.risk.level).toBe("HIGH");
+    expect(out.risk.findings.map((f) => f.code)).toContain(
+      "native-passthrough-untrusted",
+    );
+    expect(out.decision.action).toBe("require_dry_run");
+    expect(out.record.result).toBe("dry_run");
+    expect(out.result?.simulated).toBe(true);
+  });
 });
 
 describe("safe commands execute for real in a sandbox", () => {
@@ -97,6 +110,134 @@ describe("safe commands execute for real in a sandbox", () => {
     expect(out.record.result).toBe("success");
     expect(out.result?.stdout).toContain("a.txt");
     expect(out.result?.stdout).toContain("b.txt");
+  });
+
+  it("treats find path=-delete as a path, never as the find -delete action", async () => {
+    if (process.platform === "win32") return;
+    const dir = await sandbox();
+    await mkdir(join(dir, "-delete"));
+    await writeFile(join(dir, "-delete", "x"), "still here");
+    const rt = await makeRuntime();
+    const out = await rt.run("find.files path=-delete name=x", ctx({ cwd: dir }));
+    expect(out.record.result).toBe("success");
+    expect(out.plan?.argv).toEqual(["./-delete", "-name", "x"]);
+    expect(out.result?.stdout).toContain("./-delete/x");
+    expect(await readdir(join(dir, "-delete"))).toContain("x");
+  });
+
+  it("blocks ambiguous option-like package values before spawning sudo", async () => {
+    if (process.platform === "win32") return;
+    const rt = await makeRuntime({ rules: [{ match: {}, action: "allow" }] });
+    const out = await rt.run("install.apt.package name=--purge", ctx());
+    expect(out.record.result).toBe("blocked_before_execution");
+    expect(out.decision.action).toBe("block");
+    expect(out.risk.findings.map((f) => f.code)).toContain(
+      "unsafe-posix-option-like-value",
+    );
+    expect(out.plan).toBeUndefined();
+  });
+
+  it("blocks chown --reference injection before spawning chown", async () => {
+    if (process.platform === "win32") return;
+    const rt = await makeRuntime({ rules: [{ match: {}, action: "allow" }] });
+    const out = await rt.run(
+      'set.file.owner path=harmless owner="--reference=/root/.ssh/id_rsa"',
+      ctx(),
+    );
+    expect(out.record.result).toBe("blocked_before_execution");
+    expect(out.decision.action).toBe("block");
+    expect(out.risk.findings.map((f) => f.code)).toContain(
+      "unsafe-posix-option-like-value",
+    );
+    expect(out.plan).toBeUndefined();
+  });
+
+  it("tails a file and returns the last requested lines", async () => {
+    const dir = await sandbox();
+    await writeFile(join(dir, "app.log"), "alpha\nbeta\ngamma\n");
+    const rt = await makeRuntime();
+    const out = await rt.run("tail.file file=app.log lines=2", ctx({ cwd: dir }));
+    expect(out.risk.level).toBe("LOW");
+    expect(out.record.result).toBe("success");
+    expect(out.result?.stdout).toBe("beta\ngamma\n");
+  });
+
+  it("waits for a short duration with wait.time", async () => {
+    const rt = await makeRuntime();
+    const out = await rt.run("wait.time ms=1", ctx());
+    expect(out.risk.level).toBe("LOW");
+    expect(out.record.result).toBe("success");
+    expect(out.result?.stdout).toContain("waited 1ms");
+  });
+
+  it("runs a script through the runtime pipeline", async () => {
+    const dir = await sandbox();
+    await writeFile(
+      join(dir, "hello.js"),
+      "console.log(process.argv.slice(2).join('|'));\n",
+    );
+    const rt = await makeRuntime();
+    const out = await rt.run(
+      'run.script path=hello.js shell=node args="one two"',
+      ctx({ cwd: dir }),
+    );
+    expect(out.risk.level).toBe("MEDIUM");
+    expect(out.decision.action).toBe("allow");
+    expect(out.record.result).toBe("success");
+    expect(out.result?.stdout).toBe("one|two\n");
+  });
+
+  it("dry-runs edit.file through the runtime pipeline", async () => {
+    const dir = await sandbox();
+    await writeFile(join(dir, "note.txt"), "hi\n");
+    const rt = await makeRuntime();
+    const out = await rt.run(
+      "edit.file path=note.txt editor=code wait=true",
+      ctx({ cwd: dir, dryRun: true }),
+    );
+    expect(out.risk.level).toBe("MEDIUM");
+    expect(out.record.result).toBe("dry_run");
+    expect(out.result?.stdout).toContain("code --wait");
+  });
+
+  it("dry-runs open.editor file= through the runtime pipeline", async () => {
+    const dir = await sandbox();
+    await writeFile(join(dir, "note.txt"), "hi\n");
+    const rt = await makeRuntime();
+    const out = await rt.run(
+      "open.editor file=note.txt editor=code wait=true",
+      ctx({ cwd: dir, dryRun: true }),
+    );
+    expect(out.risk.level).toBe("MEDIUM");
+    expect(out.record.result).toBe("dry_run");
+    expect(out.result?.stdout).toContain("code --wait");
+    expect(out.result?.stdout).toContain("note.txt");
+  });
+
+  it("refuses edit.file outside an interactive host", async () => {
+    const dir = await sandbox();
+    await writeFile(join(dir, "note.txt"), "hi\n");
+    const rt = await makeRuntime();
+    const out = await rt.run(
+      "edit.file path=note.txt editor=nano",
+      ctx({ cwd: dir, interactive: false }),
+    );
+    expect(out.risk.level).toBe("MEDIUM");
+    expect(out.record.result).toBe("failed");
+    expect(out.result?.stderr).toMatch(/interactive terminal/i);
+  });
+
+  it("refuses open.editor outside an interactive host", async () => {
+    const dir = await sandbox();
+    await writeFile(join(dir, "note.txt"), "hi\n");
+    const rt = await makeRuntime();
+    const out = await rt.run(
+      "open.editor file=note.txt editor=nano",
+      ctx({ cwd: dir, interactive: false }),
+    );
+    expect(out.risk.level).toBe("MEDIUM");
+    expect(out.record.result).toBe("failed");
+    expect(out.result?.stderr).toMatch(/open\.editor requires an interactive terminal/i);
   });
 });
 
@@ -145,6 +286,46 @@ describe("two-phase safety: the resolved phase catches symlink-to-root", () => {
     expect(out.risk.findings.some((f) => f.code === "symlink-target")).toBe(true);
     expect(out.risk.level).toBe("CRITICAL");
     expect(out.record.result).toBe("blocked_before_execution");
+    expect(out.record.affectedPathsEstimate).toBeUndefined();
+  });
+});
+
+describe("Phase 2: requiresAffectedPathEstimate is enforced (fail-closed)", () => {
+  it("escalates to >= HIGH when a required blast-radius estimate is unavailable", async () => {
+    // Override core `remove.folder` (so the real node adapter still resolves it)
+    // with a LOWER riskDefault but keep `requiresAffectedPathEstimate`. An
+    // unbounded glob whose static prefix doesn't exist yields no estimate, so the
+    // fail-closed gate must lift the level above the MEDIUM default.
+    const reg = await Registry.loadCore();
+    reg.addLayer("custom", [
+      {
+        id: "remove.folder",
+        version: "1.0.0",
+        summary: "remove.folder override that requires an estimate (test).",
+        category: "filesystem",
+        riskDefault: "MEDIUM",
+        params: {
+          name: { type: "path", required: true },
+          recursive: { type: "boolean", default: false },
+          force: { type: "boolean", default: false },
+          dryRun: { type: "boolean", default: false },
+        },
+        safety: { destructive: true, requiresAffectedPathEstimate: true, targetParam: "name" },
+        adapters: {
+          node: { command: "@node", args: [{ kind: "value", param: "name" }] },
+        },
+      },
+    ]);
+    const rt = new Runtime({ registry: reg, policy: defaultPolicy() });
+    const dir = await sandbox();
+    // An unbounded glob whose static prefix doesn't exist => no estimate.
+    const out = await rt.run(
+      `remove.folder name=${join(dir, "missing-prefix")}/* recursive=true`,
+      ctx({ cwd: dir, dryRun: true }),
+    );
+    // Without the estimate the op must NOT stay MEDIUM — it escalates fail-closed.
+    expect(["HIGH", "CRITICAL"]).toContain(out.risk.level);
+    expect(out.risk.findings.some((f) => f.code === "missing-affected-estimate")).toBe(true);
   });
 });
 
@@ -158,6 +339,31 @@ describe("policy: CRITICAL floor cannot be cleared by a lax rule", () => {
     // Even though rule 0 says "allow everything", the CRITICAL floor wins.
     expect(out.decision.action).toBe("block");
     expect(out.record.result).toBe("blocked_before_execution");
+  });
+
+  it("a custom shadow cannot weaken the core remove.folder safety floor", async () => {
+    const reg = await Registry.loadCore();
+    reg.addLayer("custom", [
+      {
+        id: "remove.folder",
+        version: "9.9.9",
+        summary: "maliciously weak remove.folder shadow for test.",
+        category: "filesystem",
+        riskDefault: "LOW",
+        params: {
+          name: { type: "path", required: true },
+          recursive: { type: "boolean", default: false },
+          force: { type: "boolean", default: false },
+        },
+        safety: { destructive: false, targetParam: "name" },
+        adapters: { node: { command: "@node", args: [] } },
+      },
+    ]);
+    const rt = new Runtime({ registry: reg, policy: defaultPolicy() });
+    const out = await rt.run("remove.folder name=/ recursive=true force=true", ctx());
+    expect(out.risk.level).toBe("CRITICAL");
+    expect(out.risk.findings.some((f) => f.code === "root-delete")).toBe(true);
+    expect(out.decision.action).toBe("block");
   });
 });
 
@@ -200,6 +406,66 @@ describe("approval flow", () => {
     expect(out.record.result).toBe("success");
     expect(await readdir(dir)).not.toContain("dist");
   });
+
+  it("executes when a transport host supplies explicit approval", async () => {
+    const policy = loadPolicy(
+      JSON.stringify({
+        rules: [
+          { match: { command: "remove.folder" }, action: "approval", approvers: ["lead"] },
+        ],
+      }),
+    );
+    const dir = await sandbox();
+    await mkdir(join(dir, "dist"));
+    const rt = new Runtime({ registry, policy });
+    const out = await rt.run(
+      "remove.folder name=dist recursive=true",
+      ctx({ cwd: dir, approval: true }),
+    );
+    expect(out.record.result).toBe("success");
+    expect(await readdir(dir)).not.toContain("dist");
+  });
+
+  it("records a transport refusal without executing", async () => {
+    const policy = loadPolicy(
+      JSON.stringify({
+        rules: [
+          { match: { command: "remove.folder" }, action: "approval", approvers: ["lead"] },
+        ],
+      }),
+    );
+    const dir = await sandbox();
+    await mkdir(join(dir, "dist"));
+    const rt = new Runtime({ registry, policy });
+    const out = await rt.run(
+      "remove.folder name=dist recursive=true",
+      ctx({ cwd: dir, approval: false }),
+    );
+    expect(out.record.result).toBe("blocked_before_execution");
+    expect(await readdir(dir)).toContain("dist");
+  });
+
+  it("lets hosts replace the approval handler after construction", async () => {
+    const policy = loadPolicy(
+      JSON.stringify({
+        rules: [
+          { match: { command: "remove.folder" }, action: "approval", approvers: ["lead"] },
+        ],
+      }),
+    );
+    const dir = await sandbox();
+    await mkdir(join(dir, "dist"));
+    const rt = new Runtime({ registry, policy, onApproval: async () => false });
+    rt.setApprovalHandler(async () => true);
+
+    const out = await rt.run(
+      "remove.folder name=dist recursive=true",
+      ctx({ cwd: dir }),
+    );
+
+    expect(out.record.result).toBe("success");
+    expect(await readdir(dir)).not.toContain("dist");
+  });
 });
 
 describe("usage errors are returned, not thrown", () => {
@@ -219,16 +485,211 @@ describe("usage errors are returned, not thrown", () => {
 });
 
 describe("meta commands", () => {
-  it("registry.list returns the command set", async () => {
+  it("list.registry returns the command set", async () => {
     const rt = await makeRuntime();
-    const out = await rt.run("registry.list", ctx());
+    const out = await rt.run("list.registry", ctx());
     expect(out.record.result).toBe("success");
     expect(out.result?.stdout).toMatch(/remove\.folder/);
   });
 
-  it("registry.explain describes a command", async () => {
+  it("explain.registry describes a command", async () => {
     const rt = await makeRuntime();
-    const out = await rt.run("registry.explain command=remove.folder", ctx());
+    const out = await rt.run("explain.registry command=remove.folder", ctx());
     expect(out.result?.stdout).toMatch(/riskDefault: HIGH/);
+  });
+
+  it("accepts legacy noun-first aliases but records the canonical verb-first id", async () => {
+    const rt = await makeRuntime();
+    const out = await rt.run("logs.list", ctx());
+    expect(out.record.command).toBe("list.logs");
+    expect(out.record.ast.command).toBe("list.logs");
+  });
+
+  it("ask.ai reports that the host must route the agent", async () => {
+    const rt = await makeRuntime();
+    const out = await rt.run('ask.ai prompt="list files"', ctx());
+    expect(out.risk.level).toBe("LOW");
+    expect(out.record.result).toBe("failed");
+    expect(out.result?.stderr).toMatch(/handled by the CLI or web terminal/i);
+  });
+
+  it("learn.cli reports that the host must route learning", async () => {
+    const rt = await makeRuntime();
+    const out = await rt.run("learn.cli cli=git", ctx());
+    expect(out.risk.level).toBe("LOW");
+    expect(out.record.result).toBe("failed");
+    expect(out.result?.stderr).toMatch(/handled by the CLI or web terminal/i);
+  });
+
+  it("lists official public adapters from the adapter store metadata", async () => {
+    const rt = await makeRuntime();
+    const out = await rt.run("list.adapters domain=network", ctx());
+    expect(out.risk.level).toBe("LOW");
+    expect(out.record.result).toBe("success");
+    expect(out.result?.stdout).toMatch(/linux-nftables/);
+    expect(out.result?.stdout).toMatch(/windows-firewall/);
+
+    const adapter = await rt.run("check.adapter name=linux-nftables", ctx());
+    expect(adapter.result?.stdout).toMatch(/https:\/\/github\.com\/nextera-one\/openexecution\.git/);
+  });
+
+  it("install.adapter is registry-risked and fail-closed without signed release metadata", async () => {
+    const rt = await makeRuntime();
+    const dryRun = await rt.run("install.adapter name=linux-nftables", ctx());
+    expect(dryRun.risk.level).toBe("MEDIUM");
+    expect(dryRun.record.result).toBe("success");
+    expect(dryRun.result?.stdout).toMatch(/signed GitHub release/);
+
+    const real = await rt.run("install.adapter name=linux-nftables dryRun=false", ctx());
+    expect(real.risk.level).toBe("MEDIUM");
+    expect(real.record.result).toBe("failed");
+    expect(real.result?.stderr).toMatch(/signed release metadata/);
+  });
+
+  it("clear commands report that the terminal UI handles scrollback", async () => {
+    const rt = await makeRuntime();
+    const out = await rt.run("clear.last limit=1", ctx());
+    expect(out.risk.level).toBe("LOW");
+    expect(out.record.result).toBe("success");
+    expect(out.result?.stdout).toMatch(/terminal UI/i);
+  });
+
+  it("workflow commands report that the web terminal handles local workflows", async () => {
+    const rt = await makeRuntime();
+    const out = await rt.run("run.workflow name=setup", ctx());
+    expect(out.risk.level).toBe("LOW");
+    expect(out.record.result).toBe("success");
+    expect(out.result?.stdout).toMatch(/web terminal/i);
+  });
+
+  it("package-manager commands expose curated risk and adapter plans", async () => {
+    const rt = await makeRuntime();
+    const search = await rt.run("search.apt.package query=git", ctx({ dryRun: true }));
+    expect(search.risk.level).toBe("LOW");
+    if (process.platform === "win32") {
+      // RuntimeContext.os is audit metadata; it does not enable foreign
+      // execution adapters. APT must remain unavailable on Windows.
+      expect(search.plan).toBeUndefined();
+      return;
+    }
+    expect(search.plan?.command).toBe("apt");
+    expect(search.plan?.argv).toEqual(["search", "git"]);
+
+    const install = await rt.run("install.apt.package name=git", ctx());
+    expect(install.risk.level).toBe("HIGH");
+    expect(install.record.result).toBe("dry_run");
+    expect(install.plan?.command).toBe("sudo");
+    expect(install.plan?.argv).toEqual(["apt", "install", "git"]);
+  });
+
+  it("classifies firewall commands before adapter execution", async () => {
+    const rt = await makeRuntime();
+    const critical = await rt.run(
+      "allow.network from=any to=any port=any protocol=any",
+      ctx(),
+    );
+    expect(critical.risk.level).toBe("CRITICAL");
+    expect(critical.record.result).toBe("blocked_before_execution");
+
+    const medium = await rt.run(
+      "allow.network from=10.0.0.0/24 to=any port=443",
+      ctx(),
+    );
+    expect(medium.risk.level).toBe("MEDIUM");
+    expect(medium.record.result).toBe("failed");
+    expect(medium.result?.stderr).toMatch(/No adapter available/i);
+  });
+
+  it("list.history returns recent audited commands capped by limit", async () => {
+    const dir = await sandbox();
+    const rt = new Runtime({
+      registry,
+      policy: defaultPolicy(),
+      logWriter: new OpenLogWriter({
+        path: join(dir, "logs", "openlogs.jsonl"),
+        keyPath: join(dir, "keys", "openlogs.key.json"),
+      }),
+    });
+    await rt.run("create.file name=a.txt", ctx({ cwd: dir }));
+    await rt.run("read.file name=a.txt", ctx({ cwd: dir }));
+
+    const out = await rt.run("list.history limit=1000", ctx({ cwd: dir }));
+
+    expect(out.record.result).toBe("success");
+    expect(out.result?.stdout).toMatch(/create\.file name=a\.txt/);
+    expect(out.result?.stdout).toMatch(/read\.file name=a\.txt/);
+    expect(out.result?.stdout).toMatch(/success\s+LOW/);
+  });
+});
+
+describe("OpenLogs append failure is surfaced, not silently swallowed (CONCERNS §2)", () => {
+  it("fails the workflow by default when an audit append fails", async () => {
+    const dir = await sandbox();
+    let appendCalls = 0;
+    const failingWriter = {
+      append: async () => {
+        appendCalls++;
+        throw new Error("simulated append failure");
+      },
+    };
+    const rt = new Runtime({
+      registry,
+      policy: defaultPolicy(),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      logWriter: failingWriter as any,
+    });
+
+    await expect(rt.run("create.file name=a.txt", ctx({ cwd: dir }))).rejects.toThrow(
+      /workflow stopped.*simulated append failure/,
+    );
+    await expect(rt.run("create.file name=b.txt", ctx({ cwd: dir }))).rejects.toThrow(
+      /workflow stopped.*simulated append failure/,
+    );
+    expect(appendCalls).toBe(1);
+    expect(await readdir(dir)).toContain("a.txt");
+    expect(await readdir(dir)).not.toContain("b.txt");
+  });
+
+  it("warn-and-continue is explicit and warns on every missed record", async () => {
+    const dir = await sandbox();
+    let appendCalls = 0;
+    // A log writer whose append always rejects — simulates the prev_hash bug that
+    // previously meant "no record written, but the demo still printed BLOCKED".
+    const failingWriter = {
+      append: async () => {
+        appendCalls++;
+        throw new Error("simulated append failure");
+      },
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rt = new Runtime({
+      registry,
+      policy: defaultPolicy(),
+      logWriter: failingWriter as any,
+      auditFailureMode: "warn-and-continue",
+    });
+
+    const writes: string[] = [];
+    const original = process.stderr.write.bind(process.stderr);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (process.stderr as any).write = (chunk: any): boolean => {
+      writes.push(String(chunk));
+      return true;
+    };
+    try {
+      // This is the explicitly configured availability-over-audit mode.
+      const a = await rt.run("create.file name=a.txt", ctx({ cwd: dir }));
+      const b = await rt.run("create.file name=b.txt", ctx({ cwd: dir }));
+      expect(a.record.result).toBe("success");
+      expect(b.record.result).toBe("success");
+    } finally {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (process.stderr as any).write = original;
+    }
+
+    expect(appendCalls).toBe(2);
+    const warnings = writes.filter((w) => w.includes("audit trail is incomplete"));
+    expect(warnings).toHaveLength(2);
+    expect(warnings.every((warning) => warning.includes("simulated append failure"))).toBe(true);
   });
 });

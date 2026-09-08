@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist"
+  },
+  "include": ["src/**/*"],
+  "exclude": ["src/**/*.test.ts"],
+  "references": [
+    { "path": "../types" },
+    { "path": "../parser" },
+    { "path": "../runtime" },
+    { "path": "../registry" },
+    { "path": "../openlogs" },
+    { "path": "../policy" }
+  ]
+}

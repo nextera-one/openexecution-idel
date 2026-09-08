@@ -20,6 +20,7 @@ import type {
 import { isNativeAst } from "@openexecution/types";
 
 import { scanNative } from "./native.js";
+import { SAFETY_FLOORS } from "./floors.js";
 import {
   hasGlob,
   hasParentTraversal,
@@ -29,10 +30,12 @@ import {
   isHidden,
   isHome,
   isOutsideCwd,
+  isProtectedSystemPath,
   isRoot,
   normalizeTarget,
 } from "./paths.js";
-import { levelOfFindings } from "./risk.js";
+import { levelOfFindings, riskRank } from "./risk.js";
+import { classifyNetworkIntent, isNetworkCommand } from "./network.js";
 
 /**
  * Param names that may hold the primary filesystem target, in priority order.
@@ -179,6 +182,19 @@ export function classifyTarget(input: ClassifyInput): RiskFinding[] {
       });
     }
 
+    // --- OS-managed system trees — HIGH floor --------------------------
+    // Unlike root/home sentinels, these are useful subtrees, but destructive
+    // access can still make the machine unbootable or remove its security
+    // configuration. Catch both the tree itself and descendants, including
+    // Windows paths regardless of case.
+    if (isProtectedSystemPath(normalized)) {
+      findings.push({
+        code: "protected-system-path",
+        level: "HIGH",
+        message: `Destructive target lies in an operating-system-managed tree (${normalized}).`,
+      });
+    }
+
     // --- Permission recursive 777 on a broad target — CRITICAL ----------
     if (permission && recursive && isMode777(mode)) {
       const broad = isRoot(normalized) || isDriveRoot(normalized) || isHome(normalized);
@@ -277,20 +293,16 @@ export function assessAst(ast: AnyAst, def?: CommandDef): RiskAssessment {
 
   if (isNativeAst(ast)) {
     findings.push(...scanNative(ast.native));
-    // Native commands also get a baseline: an unmatched native command is
-    // MEDIUM by convention (passthrough is inherently less audited), unless a
-    // catastrophe pattern already pushed it higher.
-    const baseline: RiskFinding = {
-      code: "native-passthrough",
-      level: "MEDIUM",
-      message: "Native passthrough command (not registry-classified).",
-    };
-    findings.push(baseline);
     return finalize("ast", findings, def);
   }
 
   const destructive = isDestructive(ast, def);
   const rawTarget = readTargetString(ast, def);
+
+  if (isNetworkCommand(ast, def)) {
+    findings.push(...classifyNetworkIntent(ast, def));
+    return finalize("ast", findings, def);
+  }
 
   // --- Empty / missing target on a destructive verb — BLOCK/HIGH --------
   if (destructive && (rawTarget === undefined || rawTarget.trim() === "")) {
@@ -321,13 +333,27 @@ export function finalize(
   findings: RiskFinding[],
   def?: CommandDef,
 ): RiskAssessment {
+  applySafetyFloors(findings);
   let level = levelOfFindings(findings);
-  if (def?.riskDefault) {
-    // riskDefault is a floor, not a ceiling.
-    level = levelOfFindings([
-      ...findings,
-      { code: "risk-default", level: def.riskDefault, message: "command default risk" },
-    ]);
+  if (def?.riskDefault && riskRank(def.riskDefault) > riskRank(level)) {
+    // riskDefault is a floor, not a ceiling. Keep it as a real finding when it
+    // raises the level so downstream merged assessments do not lose the floor.
+    findings.push({
+      code: "risk-default",
+      level: def.riskDefault,
+      message: `Command default risk is ${def.riskDefault}.`,
+    });
+    level = def.riskDefault;
   }
   return { phase, level, findings };
+}
+
+function applySafetyFloors(findings: RiskFinding[]): void {
+  for (const finding of findings) {
+    const floor = SAFETY_FLOORS.find((f) => f.code === finding.code);
+    if (floor && riskRank(floor.level) > riskRank(finding.level)) {
+      finding.level = floor.level;
+      finding.message = `${finding.message} Safety floor: ${floor.description}`;
+    }
+  }
 }
