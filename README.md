@@ -1,10 +1,10 @@
 # OpenExecution Runtime & IDEL Terminal
 
-**Not prettier Bash — a policy-aware execution runtime that turns human or AI intent into safe, logged, cross-platform execution.**
+**Policy-controlled execution for developers and AI agents.** Inspect proposed commands, enforce execution policy, and retain signed audit records on your own machine.
 
 IDEL is an intent language (`verb.scope param=value`). The OpenExecution Runtime parses it, resolves it through a versioned command registry, classifies its risk, enforces policy, plans a platform-specific execution, runs it through an OS adapter, and records every decision to an append-only audit log. The CLI is `idel`.
 
-The bet of V1 is narrow and defensible: **prove that a runtime can prevent dangerous execution mistakes without slowing developers down.** Readability is a side benefit, not the pitch.
+The first pilot asks whether these controls help with project setup, controlled cleanup, and AI-assisted changes. [Try the three practice workflows](https://openexecution-idel.digital-pages.chatgpt.site/idel/pilot) or read the [pilot plan](docs/pilot/facilitator.md). Policy checks are not operating-system isolation.
 
 ---
 
@@ -262,7 +262,7 @@ Use IDEL tabs for the audited policy pipeline. Use a native `sh` tab only when y
 
 Every command rendered in the terminal — typed or AI-proposed — shows what it **translates to**: the real adapter invocation (e.g. `remove.file name=x force=true` → `rm -f x`, `list.folder` → `ls`), so the mapping from intent to execution is visible at the call site. In the interactive `idel terminal`, a sensitive (HIGH/CRITICAL) command is previewed with its translation and risk and held for confirmation before any real run (and a `require_dry_run`-policy command is shown as dry-run-only, never silently promoted).
 
-The web console can run commands **for real**, behind an explicit approval. Before any real run, the terminal shows the decision evidence plus **Approve / Decline** buttons. Direct command approvals are opaque, single-use capabilities bound server-side to the exact proposed command, cwd, and API origin; client-supplied `approve` or `origin` fields are ignored. Agent approvals park the agent (over `POST /api/agent/approve`) until you choose. A decline leaves the preview standing, expired/replayed approval IDs fail closed, and the agent never touches disk without a human "Approve." Interactive editor commands such as `open.editor` appear in the web registry and autocomplete, but actual editor launch is CLI/TTY-only; web/API/CI requests return a clear non-interactive failure instead of hanging.
+The web console executes typed commands according to policy. With the default policy, LOW/MEDIUM commands run when submitted, HIGH commands are dry-run only, and CRITICAL commands are blocked. Direct **Approve / Decline** buttons appear when the selected policy requires approval; they are not a universal confirmation step. Those approvals are opaque, single-use capabilities bound server-side to the exact proposed command, cwd, and API origin; client-supplied `approve` or `origin` fields are ignored. Ask AI real-run proposals use a separate approval gate and wait for the user's decision. Interactive editor commands such as `open.editor` remain CLI/TTY-only; web/API/CI requests return a non-interactive failure.
 
 **Teach IDEL an installed CLI.** `idel learn <cli>` introspects a CLI's own `--help`, drafts conservative IDEL command definitions locally, validates each against the registry schema (fail-closed), and **replays each def's declared `tests[]` through a real runtime** to prove its risk/policy classification. Accepted drafts land in the custom layer and are then governed by the same runtime — risk-classified, policy-gated, audited:
 

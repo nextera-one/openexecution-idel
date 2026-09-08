@@ -1,0 +1,1 @@
+session_ref,groups,os_version,architecture,app_version,install_outcome,first_command_seconds,task,task_outcome,task_seconds,hints,retries,shell_requested,ai_available,ai_provider_model,keep_file_unchanged,audit_understood,return_intent,observation,followup_owner,retest_condition

@@ -49,6 +49,9 @@ jobs:
       - name: Test
         run: pnpm test
 
+      - name: Verify pilot commands and preserved practice files
+        run: pnpm check:pilot
+
       - name: Check static web assets
         run: pnpm check:web
 

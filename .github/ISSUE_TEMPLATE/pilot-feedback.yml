@@ -1,0 +1,88 @@
+name: IDEL pilot feedback
+description: Share results from the three practice workflows, including installation blockers.
+title: "[Pilot 1]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        [Pilot guide](https://openexecution-idel.digital-pages.chatgpt.site/idel/pilot)
+        This feedback will be public. Omit keys, private paths, full logs, and private file contents.
+        You can instead return the downloadable feedback sheet to your inviter.
+        Use [private vulnerability reporting](https://github.com/nextera-one/openexecution-idel/security/advisories/new) for security-sensitive findings.
+  - type: dropdown
+    id: groups
+    attributes:
+      label: Participant groups
+      multiple: true
+      options:
+        - Developer using AI coding tools
+        - Terminal-focused developer
+        - Internal team member
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: App release, OS version, and architecture
+      placeholder: 1.1.0-preview.1; Windows 11 x64
+    validations:
+      required: true
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Installation outcome
+      options:
+        - Launched successfully
+        - Blocked by OS security
+        - Install or launch failed
+        - Not attempted
+    validations:
+      required: true
+  - type: textarea
+    id: outcomes
+    attributes:
+      label: Task outcomes
+      description: Use independent, with help, incomplete, unavailable, or not attempted. Approximate times are fine. Installation-only feedback is welcome.
+      value: |
+        First successful command (time, or not reached):
+        Project setup (result / minutes / help):
+        Controlled cleanup (result / minutes / help):
+        AI-assisted change (result / minutes / help):
+        Usual tool for these tasks:
+    validations:
+      required: true
+  - type: textarea
+    id: expectations
+    attributes:
+      label: Expectations and actual results
+      description: What did the recursive dry run and reversible file move do? Did keep-me.txt stay unchanged? Could you find and understand the audit records? If you used AI, name the provider/model and describe summary accuracy or unexpected proposals. Leave blank if you could not launch.
+  - type: textarea
+    id: friction
+    attributes:
+      label: Biggest obstacle
+      description: Describe an installation blocker, confusing moment, missing command, or point where you wanted a shell. Sanitized error text is enough.
+    validations:
+      required: true
+  - type: dropdown
+    id: return_intent
+    attributes:
+      label: Would you choose IDEL for another task?
+      options:
+        - "Yes"
+        - Maybe
+        - "No"
+        - Could not evaluate
+    validations:
+      required: true
+  - type: textarea
+    id: next_use
+    attributes:
+      label: Next use and one improvement
+      description: Which task would you use it for, or why would you stay with your current tool? What one change would help most?
+  - type: checkboxes
+    id: sharing
+    attributes:
+      label: Review before sharing
+      options:
+        - label: I understand this issue is public and have removed sensitive information.
+          required: true

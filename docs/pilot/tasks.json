@@ -1,0 +1,15 @@
+{
+  "pilotVersion": "1",
+  "appVersion": "1.1.0-preview.1",
+  "setup": [
+    "create.folder name=pilot-project",
+    "write.file name=pilot-project/README.md content=\"IDEL pilot project\"",
+    "read.file name=pilot-project/README.md"
+  ],
+  "cleanupPreview": "remove.folder name=pilot-cleanup recursive=true",
+  "cleanupMove": "move.file from=pilot-cleanup/generated.tmp to=pilot-project/review-later.tmp",
+  "cleanupVerify": "read.file name=pilot-cleanup/keep-me.txt",
+  "aiPrompt": "Read pilot-input/notes.txt and propose a three-bullet summary in pilot-project/SUMMARY.md. Use IDEL commands only. Do not use a native shell, install anything, or change any other file. I will review the proposed commands before approving them.",
+  "aiVerify": "read.file name=pilot-project/SUMMARY.md",
+  "audit": "list.logs limit=20"
+}
