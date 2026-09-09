@@ -1,6 +1,6 @@
 {
   "pilotVersion": "1",
-  "appVersion": "1.1.0-preview.1",
+  "appVersion": "1.1.0-preview.2",
   "setup": [
     "create.folder name=pilot-project",
     "write.file name=pilot-project/README.md content=\"IDEL pilot project\"",

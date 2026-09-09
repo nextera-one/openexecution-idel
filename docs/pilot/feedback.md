@@ -1,6 +1,6 @@
 # IDEL pilot feedback
 
-Pilot version: 1 · App release: 1.1.0-preview.1
+Pilot version: 1 · App release: 1.1.0-preview.2
 
 - Session reference (optional, no real name needed):
 - Groups that describe you: AI-tool developer / terminal-focused developer / internal team

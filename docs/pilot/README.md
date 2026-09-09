@@ -5,12 +5,12 @@ Developers using AI tools, terminal-focused developers, and internal team
 members are all welcome. Allow about 30 minutes; stopping early is useful feedback.
 
 [Public pilot guide](https://openexecution-idel.digital-pages.chatgpt.site/idel/pilot)
-· [Preview installers](https://github.com/nextera-one/openexecution-idel/releases/tag/v1.1.0-preview.1)
+· [Preview installers](https://github.com/nextera-one/openexecution-idel/releases/tag/v1.1.0-preview.2)
 · [Feedback form](https://github.com/nextera-one/openexecution-idel/issues/new?template=pilot-feedback.yml)
 
 ## Before you start
 
-Use preview 1.1.0-preview.1. It is unsigned, and macOS is not notarized. Read the
+Use preview 1.1.0-preview.2. It is unsigned, and macOS is not notarized. Read the
 release notes; if your system blocks installation, record that outcome and stop.
 You do not need to change OS security settings to participate.
 
