@@ -16,6 +16,16 @@ import {
 } from "./api-client.js";
 
 const $ = (id) => document.getElementById(id);
+const desktopWorkspace = $("desktop-workspace");
+if (desktopWorkspace && typeof window.idelDesktop?.chooseWorkspace === "function") {
+  desktopWorkspace.hidden = false;
+  desktopWorkspace.addEventListener("click", async () => {
+    desktopWorkspace.disabled = true;
+    try { await window.idelDesktop.chooseWorkspace(); }
+    catch { line("Could not open workspace selection. Restart IDEL and try again.", "err"); }
+    finally { desktopWorkspace.disabled = false; }
+  });
+}
 const initialOutput = $("output");
 const terminalAnnouncer = $("terminal-announcer");
 const welcomeAsk = $("welcome-ask");

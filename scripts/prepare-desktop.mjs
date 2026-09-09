@@ -25,6 +25,8 @@ await cp(join(root, 'registries/core'), join(stage, 'runtime/node_modules/@opene
 await cp(join(root, 'packages/web/public'), join(stage, 'runtime/web'), { recursive: true });
 await cp(join(root, 'scripts/artifact-smoke.mjs'), join(stage, 'runtime/artifact-smoke.mjs'));
 await cp(join(root, 'desktop/main.cjs'), join(stage, 'app/main.cjs'));
+await cp(join(root, 'desktop/preload.cjs'), join(stage, 'app/preload.cjs'));
+await cp(join(root, 'desktop/icon.png'), join(stage, 'app/icon.png'));
 await cp(join(root, 'LICENSE'), join(stage, 'app/LICENSE'));
 const metadata = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
 await writeFile(join(stage, 'app/package.json'), JSON.stringify({

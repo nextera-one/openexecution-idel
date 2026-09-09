@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, dialog, shell, utilityProcess } = require('electron');
+const { app, BrowserWindow, Menu, dialog, shell, utilityProcess, ipcMain } = require('electron');
 const { mkdir, readFile, writeFile } = require('node:fs/promises');
 const { join } = require('node:path');
 
@@ -24,6 +24,7 @@ else {
 
 async function start() {
   app.setName('OpenExecution IDEL');
+  Menu.setApplicationMenu(null);
   if (process.argv.includes('--idel-smoke')) {
     const worker = utilityProcess.fork(join(runtime, 'artifact-smoke.mjs'), [runtime], { stdio: 'pipe' });
     const timer = setTimeout(() => { worker.kill(); app.exit(1); }, 30000);
@@ -41,7 +42,8 @@ async function start() {
   win = new BrowserWindow({
     width: 1320, height: 860, minWidth: 800, minHeight: 580,
     title: 'OpenExecution IDEL', backgroundColor: '#0b0e14', show: false,
-    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true },
+    icon: join(__dirname, 'icon.png'),
+    webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true },
   });
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('https://')) void shell.openExternal(url);
@@ -53,30 +55,40 @@ async function start() {
   win.webContents.session.setPermissionRequestHandler((contents, permission, callback) => {
     callback(trusted(contents.getURL()) && ['clipboard-read', 'clipboard-sanitized-write'].includes(permission));
   });
-  Menu.setApplicationMenu(Menu.buildFromTemplate([
-    { label: 'IDEL', submenu: [
-      { label: 'Choose workspace…', click: chooseWorkspace },
-      { label: 'Open workspace folder', click: () => void shell.openPath(workspace) },
-      { type: 'separator' }, { role: 'quit' },
-    ] },
-    { label: 'Edit', submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
-    { label: 'View', submenu: [{ role: 'reload' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'togglefullscreen' }] },
-  ]));
+  ipcMain.handle('idel:choose-workspace', async event => {
+    if (event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame || !trusted(event.senderFrame.url)) {
+      throw new Error('Workspace selection is only available from the local desktop window.');
+    }
+    await chooseWorkspace();
+  });
+  // Native editing shortcuts on macOS normally come from the removed Edit menu.
+  win.webContents.on('before-input-event', (event, input) => {
+    if (process.platform !== 'darwin' || input.type !== 'keyDown' || !input.meta || input.control || input.alt) return;
+    const key = input.key.toLowerCase();
+    const action = key === 'z' ? (input.shift ? 'redo' : 'undo') : !input.shift ? { x: 'cut', c: 'copy', v: 'paste', a: 'selectAll' }[key] : undefined;
+    if (action) { event.preventDefault(); win.webContents[action](); }
+    else if (key === 'q' && !input.shift) { event.preventDefault(); app.quit(); }
+  });
   await startRuntime();
 }
 
+let choosingWorkspace = false;
 async function chooseWorkspace() {
-  const selection = await dialog.showOpenDialog(win, { title: 'Choose IDEL workspace', properties: ['openDirectory', 'createDirectory'] });
-  if (selection.canceled || !selection.filePaths[0]) return;
-  const confirmation = await dialog.showMessageBox(win, {
-    type: 'question', buttons: ['Change workspace', 'Cancel'], defaultId: 1, cancelId: 1,
-    message: 'Restart IDEL in this workspace?', detail: 'Active terminal sessions will close.',
-  });
-  if (confirmation.response !== 0) return;
-  workspace = selection.filePaths[0];
-  await mkdir(app.getPath('userData'), { recursive: true });
-  await writeFile(settingsPath(), JSON.stringify({ workspace }), { mode: 0o600 });
-  app.relaunch(); app.quit();
+  if (choosingWorkspace) return;
+  choosingWorkspace = true;
+  try {
+    const selection = await dialog.showOpenDialog(win, { title: 'Choose IDEL workspace', properties: ['openDirectory', 'createDirectory'] });
+    if (selection.canceled || !selection.filePaths[0]) return;
+    const confirmation = await dialog.showMessageBox(win, {
+      type: 'question', buttons: ['Change workspace', 'Cancel'], defaultId: 1, cancelId: 1,
+      message: 'Restart IDEL in this workspace?', detail: 'Active terminal sessions will close.',
+    });
+    if (confirmation.response !== 0) return;
+    workspace = selection.filePaths[0];
+    await mkdir(app.getPath('userData'), { recursive: true });
+    await writeFile(settingsPath(), JSON.stringify({ workspace }), { mode: 0o600 });
+    app.relaunch(); app.quit();
+  } finally { choosingWorkspace = false; }
 }
 
 async function startRuntime() {

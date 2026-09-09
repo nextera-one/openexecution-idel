@@ -3576,3 +3576,6 @@ body.logs-hidden .term-side {
     padding-block: 0.7rem;
   }
 }
+.term-bar #desktop-workspace[hidden] {
+  display: none;
+}

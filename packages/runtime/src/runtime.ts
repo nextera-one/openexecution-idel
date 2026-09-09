@@ -175,6 +175,12 @@ export class Runtime {
    */
   async run(input: string, ctx: RuntimeContext): Promise<RuntimeOutcome> {
     if (this.auditFailure) throw this.auditFailure;
+    if (this.auditFailureMode === "fail-closed" && this.openLogWriter?.assertReady) {
+      try { await this.openLogWriter.assertReady(); }
+      catch (cause) {
+        throw new Error(`Command was not executed: audit storage is not ready (${(cause as Error)?.message ?? String(cause)})`, { cause });
+      }
+    }
     // Origin attribution: an explicit ctx.origin (e.g. "agent" for an
     // AI-proposed command) wins; otherwise infer ci vs interactive. This only
     // labels the audit record — risk and policy are origin-independent.

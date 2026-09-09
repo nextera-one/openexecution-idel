@@ -269,6 +269,35 @@ export class OpenLogWriter {
     return queued;
   }
 
+  /** Detect existing audit damage before execution; append still rechecks under its own lock. */
+  async assertReady(): Promise<void> {
+    await this.ensureDir();
+    await this.withAppendLock(async () => {
+      const parsed = await this.readStrict();
+      if (parsed.error) throw new Error(`OpenLogs log is malformed at line ${parsed.index}: ${parsed.error}`);
+      const continuity = await this.readContinuity();
+      const stored = this.configuredTrustedKeys ?? await this.readTrustFile();
+      if (!stored) {
+        if (continuity || (parsed.records.length > 0 && !this.allowUnanchoredLegacyAdoption)) {
+          throw new Error("OpenLogs trust configuration is missing for existing history. Restore its trust files from backup, or explicitly archive the old history before starting a new audit log.");
+        }
+        if (!this.allowLocalDevelopmentTrustBootstrap) throw new Error("OpenLogs verifier trust configuration is missing and local-development self-pinning is disabled");
+        return; // First use: append creates the key, trust file, and checkpoint together.
+      }
+      const keys = validateTrustedKeys(stored);
+      if (!continuity) {
+        if (!this.allowUnanchoredLegacyAdoption && (parsed.records.length > 0 || !this.configuredTrustedKeys)) {
+          throw new Error("OpenLogs continuity checkpoint is missing. Restore the audit history and its checkpoint from backup; automatic reset is disabled.");
+        }
+      } else {
+        const checked = checkContinuity(parsed.records, continuity, keys);
+        if (!checked.ok) throw new Error(checked.error ?? "OpenLogs continuity check failed");
+      }
+      const verified = await this.verifyRecords(parsed.records, keys);
+      if (!cryptographicChecksOk(verified)) throw new Error(`OpenLogs existing chain failed verification: ${verified.error ?? "unknown verification failure"}`);
+    });
+  }
+
   private async appendLocked(record: OpenLogRecord): Promise<void> {
     await this.ensureDir();
     await this.withAppendLock(async () => {

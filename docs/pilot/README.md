@@ -15,7 +15,7 @@ release notes; if your system blocks installation, record that outcome and stop.
 You do not need to change OS security settings to participate.
 
 Download the practice ZIP from the guide and extract it to a **new folder under
-Documents**. In IDEL choose **IDEL → Choose workspace…**, select the extracted
+Documents**. In IDEL choose the **Workspace…** button, select the extracted
 `idel-pilot-v1` folder containing `pilot-input` and `pilot-cleanup`, and accept the
 workspace restart. Stay in IDEL mode and retain the default policy. Use the same
 new practice folder for all tasks; extract a fresh copy for a repeat session.
