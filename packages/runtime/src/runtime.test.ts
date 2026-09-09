@@ -623,6 +623,20 @@ describe("meta commands", () => {
 });
 
 describe("OpenLogs append failure is surfaced, not silently swallowed (CONCERNS §2)", () => {
+  it.each(["trust", "continuity"])("blocks the first mutation when existing audit %s metadata is missing", async (missing) => {
+    const dir = await sandbox();
+    const path = join(dir, "audit.jsonl");
+    const keyPath = join(dir, "audit.key.json");
+    const writer = new OpenLogWriter({ path, keyPath });
+    const rt = new Runtime({ registry, logWriter: writer });
+    await rt.run("create.file name=before.txt", ctx({ cwd: dir }));
+    await rm(missing === "trust" ? `${keyPath}.trust.json` : `${path}.continuity.json`);
+    await expect(rt.run("create.file name=after.txt", ctx({ cwd: dir }))).rejects.toThrow(/Command was not executed: audit storage is not ready/);
+    expect(await readdir(dir)).toContain("before.txt");
+    expect(await readdir(dir)).not.toContain("after.txt");
+    expect(await writer.read()).toHaveLength(1);
+  });
+
   it("fails the workflow by default when an audit append fails", async () => {
     const dir = await sandbox();
     let appendCalls = 0;

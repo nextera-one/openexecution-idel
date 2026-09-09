@@ -5,17 +5,17 @@ Developers using AI tools, terminal-focused developers, and internal team
 members are all welcome. Allow about 30 minutes; stopping early is useful feedback.
 
 [Public pilot guide](https://openexecution-idel.digital-pages.chatgpt.site/idel/pilot)
-· [Preview installers](https://github.com/nextera-one/openexecution-idel/releases/tag/v1.1.0-preview.1)
+· [Preview installers](https://github.com/nextera-one/openexecution-idel/releases/tag/v1.1.0-preview.2)
 · [Feedback form](https://github.com/nextera-one/openexecution-idel/issues/new?template=pilot-feedback.yml)
 
 ## Before you start
 
-Use preview 1.1.0-preview.1. It is unsigned, and macOS is not notarized. Read the
+Use preview 1.1.0-preview.2. It is unsigned, and macOS is not notarized. Read the
 release notes; if your system blocks installation, record that outcome and stop.
 You do not need to change OS security settings to participate.
 
 Download the practice ZIP from the guide and extract it to a **new folder under
-Documents**. In IDEL choose **IDEL → Choose workspace…**, select the extracted
+Documents**. In IDEL choose the **Workspace…** button, select the extracted
 `idel-pilot-v1` folder containing `pilot-input` and `pilot-cleanup`, and accept the
 workspace restart. Stay in IDEL mode and retain the default policy. Use the same
 new practice folder for all tasks; extract a fresh copy for a repeat session.

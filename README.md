@@ -209,7 +209,7 @@ pnpm desktop:package:windows  # NSIS setup EXE, build on Windows
 pnpm desktop:package:macos    # DMG for Apple Silicon + Intel, build on macOS
 ```
 
-The desktop app starts in `Documents/IDEL`. Use **IDEL → Choose workspace** to
+The desktop app starts in `Documents/IDEL`. Use the **Workspace…** button to
 select another folder. Native shell mode remains disabled by default. Release
 builds are currently candidates until platform testing and signing are complete.
 See [release instructions](docs/releasing.md).

@@ -8,7 +8,7 @@
     "build": "tsc --build",
     "clean": "tsc --build --clean && rimraf packages/*/dist packages/registry/registries",
     "sync:xterm": "node scripts/sync-xterm-assets.mjs",
-    "test": "vitest run",
+    "test": "vitest run && node --test desktop/shell.test.cjs",
     "test:watch": "vitest",
     "typecheck": "tsc --build --pretty false",
     "check:web": "node scripts/check-web.mjs",

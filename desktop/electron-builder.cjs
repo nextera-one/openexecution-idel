@@ -3,7 +3,7 @@ const { join, resolve } = require('node:path');
 module.exports = {
   appId: 'one.nextera.openexecution.idel', productName: 'OpenExecution IDEL',
   directories: { app: 'dist/desktop-stage/app', output: 'dist/installers' },
-  files: ['main.cjs', 'package.json', 'LICENSE'],
+  files: ['main.cjs', 'preload.cjs', 'icon.png', 'package.json', 'LICENSE'],
   afterPack: async context => {
     const resources = context.electronPlatformName === 'darwin'
       ? join(context.appOutDir, 'OpenExecution IDEL.app/Contents/Resources')
@@ -18,5 +18,5 @@ module.exports = {
   win: { target: [{ target: 'nsis', arch: ['x64'] }] },
   nsis: { oneClick: false, perMachine: false, allowToChangeInstallationDirectory: true, deleteAppDataOnUninstall: false },
   mac: { target: ['dmg'], category: 'public.app-category.developer-tools', hardenedRuntime: true },
-  linux: { target: ['AppImage', 'deb'], category: 'Development', maintainer: 'Nextera One', executableName: 'idel-desktop' },
+  linux: { target: ['AppImage', 'deb'], icon: 'desktop/icons', category: 'Development', maintainer: 'Nextera One', executableName: 'idel-desktop' },
 };
